@@ -83,6 +83,9 @@ extern void suite_edge_structural(void);
 extern void suite_lsp_resolution_probe(void);
 extern void suite_node_creation_probe(void);
 extern void suite_edge_types_probe(void);
+extern void suite_convergence_probe(void);
+extern void suite_matrix_known_classes(void);
+extern void suite_matrix_new_constructs(void);
 extern void suite_incremental(void);
 extern void suite_simhash(void);
 extern void suite_stack_overflow(void);
@@ -223,6 +226,9 @@ int main(void) {
     RUN_SUITE(lsp_resolution_probe);
     RUN_SUITE(node_creation_probe);
     RUN_SUITE(edge_types_probe);
+    RUN_SUITE(convergence_probe);
+    RUN_SUITE(matrix_known_classes);
+    RUN_SUITE(matrix_new_constructs);
 
     RUN_SUITE(incremental);
 
