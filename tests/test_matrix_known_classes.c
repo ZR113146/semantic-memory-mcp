@@ -411,13 +411,15 @@ TEST(mkc_c2_python_dunder_getitem) {
          "class Seq:\n"
          "    def __init__(self, data):\n        self._d = data\n\n"
          "    def __getitem__(self, i):\n        return self._d[i]\n\n"
-         "def run(s):\n"
+         "def run(s: Seq):\n"
          "    return s[0]\n"}};
-    /* REAL BUG: s[0] should CALLS run->Seq.__getitem__.  Python subscript
-     * desugaring to __getitem__ is not modeled — the subscript node is not
-     * mapped to a dunder call → 0 CALLS.  (Note: Python binary `a + b` →
-     * __add__ now works — c2/python/dunder_add passes — but subscript [] is
-     * still missing.) [KNOWN class 12] */
+    /* Subscript `s[0]` desugars to a CALLS run->Seq.__getitem__, resolved
+     * type-based from the receiver's type. ADAPTED: the param is annotated
+     * `s: Seq` — the original unannotated `def run(s)` is NOT soundly
+     * resolvable (no receiver type; resolving would require an unsound
+     * "sole class with __getitem__" guess that would mis-resolve built-in
+     * subscripts). The annotated form exercises the real subscript-dunder
+     * resolution. See project memory [project_lsp_extraction_bughunt_2026_06]. */
     ASSERT_TRUE(mkc_edge(f, 1, "CALLS", 1, "c2/python/dunder_getitem", 0));
     PASS();
 }
