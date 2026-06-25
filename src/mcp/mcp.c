@@ -1,8 +1,8 @@
 /*
- * mcp.c — MCP server: JSON-RPC 2.0 over stdio with 14 graph tools.
+ * mcp.c �?MCP server: JSON-RPC 2.0 over stdio with graph and memory tools.
  *
  * Uses yyjson for fast JSON parsing/building.
- * Single-threaded event loop: read line → parse → dispatch → respond.
+ * Single-threaded event loop: read line �?parse �?dispatch �?respond.
  */
 
 // operations
@@ -106,7 +106,7 @@ static char *heap_strdup(const char *s) {
 
 /* Write yyjson_mut_doc to heap-allocated JSON string.
  * ALLOW_INVALID_UNICODE: some database strings may contain non-UTF-8 bytes
- * from older indexing runs — don't fail serialization over it. */
+ * from older indexing runs �?don't fail serialization over it. */
 static char *yy_doc_to_str(yyjson_mut_doc *doc) {
     size_t len = 0;
     char *s = yyjson_mut_write(doc, YYJSON_WRITE_ALLOW_INVALID_UNICODE, &len);
@@ -295,11 +295,11 @@ static const tool_def_t TOOLS[] = {
      "Search the code knowledge graph for functions, classes, routes, and variables. Use INSTEAD "
      "OF grep/glob when finding code definitions, implementations, or relationships. Three search "
      "modes: (1) query='update settings' for BM25 ranked full-text search with camelCase "
-     "splitting and structural label boosting — recommended for natural-language discovery; "
+     "splitting and structural label boosting �?recommended for natural-language discovery; "
      "(2) name_pattern='.*regex.*' for exact pattern matching; (3) semantic_query=[...] for "
      "vector cosine search that bridges vocabulary (finds 'publish' when you search 'send'). "
      "The three modes are independent and can be combined in a single call. "
-     "PAGINATION: results are capped at limit (default 200) — broader queries are silently "
+     "PAGINATION: results are capped at limit (default 200) �?broader queries are silently "
      "truncated. The response always includes 'total' (full match count before limit) and "
      "'has_more' (true when total > offset+returned). Detect truncation with has_more, then "
      "page by re-calling with offset=offset+limit until has_more is false. Narrow first via "
@@ -307,7 +307,7 @@ static const tool_def_t TOOLS[] = {
      "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
      "\"query\":{\"type\":\"string\",\"description\":\"Natural-language or keyword full-text "
      "search using BM25 ranking. Tokens are split on whitespace; camelCase identifiers are "
-     "indexed as individual words (updateCloudClient → update, cloud, client). Results are "
+     "indexed as individual words (updateCloudClient �?update, cloud, client). Results are "
      "ranked with structural boosting: Functions/Methods +10, Routes +8, Classes/Interfaces +5. "
      "Noise labels (File/Folder/Module/Variable) are filtered out. When provided, name_pattern "
      "is ignored.\"},"
@@ -317,7 +317,7 @@ static const tool_def_t TOOLS[] = {
      "\"max_degree\":{\"type\":\"integer\"},\"exclude_entry_points\":{\"type\":\"boolean\"},"
      "\"include_connected\":{\"type\":\"boolean\"},\"semantic_query\":{"
      "\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"MUST be an ARRAY of "
-     "keyword strings (e.g. [\\\"send\\\",\\\"pubsub\\\",\\\"publish\\\"]) — NOT a single string. "
+     "keyword strings (e.g. [\\\"send\\\",\\\"pubsub\\\",\\\"publish\\\"]) �?NOT a single string. "
      "Each keyword is scored independently via per-keyword min-cosine; results reflect functions "
      "that score well on ALL keywords. Requires moderate/full index mode. Results appear in the "
      "'semantic_results' field (separate from 'results').\"},\"limit\":{\"type\":"
@@ -331,14 +331,14 @@ static const tool_def_t TOOLS[] = {
     {"query_graph",
      "Execute a Cypher query against the knowledge graph for complex multi-hop patterns, "
      "aggregations, and cross-service analysis. The response includes 'total' (returned "
-     "row count). There is a hard 100k row ceiling — for broad queries add LIMIT in the "
+     "row count). There is a hard 100k row ceiling �?for broad queries add LIMIT in the "
      "Cypher itself or use search_graph + offset/limit pagination instead. "
      "COMPLEXITY / BOTTLENECKS: every Function and Method node carries queryable complexity "
-     "properties — cyclomatic (complexity), cognitive, loop_count, loop_depth (max nested-loop "
+     "properties �?cyclomatic (complexity), cognitive, loop_count, loop_depth (max nested-loop "
      "depth, a polynomial-degree proxy), plus interprocedural transitive_loop_depth (worst-case "
      "nested-loop degree propagated along CALLS edges) and a recursive flag. Additional "
      "hot-path signals: linear_scan_in_loop (count of find/contains/indexOf-style scans inside a "
-     "loop — the hidden O(n^2) that loop_depth misses), alloc_in_loop (allocations/appends inside "
+     "loop �?the hidden O(n^2) that loop_depth misses), alloc_in_loop (allocations/appends inside "
      "a loop), recursion_in_loop (a self-call inside a loop), unguarded_recursion (recursion with "
      "no conditionally-guarded base case), param_count and max_access_depth (structure smells). "
      "Find all hot-path candidates in one query, e.g. MATCH (f:Function) WHERE "
@@ -348,7 +348,7 @@ static const tool_def_t TOOLS[] = {
      "query\"},\"project\":{\"type\":\"string\"},\"max_rows\":{\"type\":\"integer\","
      "\"description\":"
      "\"Optional row limit. Default: unlimited up to a 100k row "
-     "ceiling. No offset support — use search_graph for paginated browsing.\"}},"
+     "ceiling. No offset support �?use search_graph for paginated browsing.\"}},"
      "\"required\":[\"query\",\"project\"]}"},
 
     {"trace_path",
@@ -384,10 +384,10 @@ static const tool_def_t TOOLS[] = {
      "\"project\"]}"},
 
     {"get_architecture",
-     "Get high-level architecture overview — packages, services, dependencies, and project "
+     "Get high-level architecture overview �?packages, services, dependencies, and project "
      "structure at a glance. Includes 'clusters': Leiden community detection over the call/import "
      "graph, surfacing the de-facto modules (each with a label, member count, cohesion score, "
-     "representative top_nodes, and the packages/edge_types that bind it) — use these to grasp "
+     "representative top_nodes, and the packages/edge_types that bind it) �?use these to grasp "
      "the real architectural seams, which often cut across the folder layout.",
      "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},\"aspects\":{\"type\":"
      "\"array\",\"items\":{\"type\":\"string\"}}},\"required\":[\"project\"]}"},
@@ -396,11 +396,11 @@ static const tool_def_t TOOLS[] = {
      "Graph-augmented code search. Finds text patterns via grep, then enriches results with "
      "the knowledge graph: deduplicates matches into containing functions, ranks by structural "
      "importance (definitions first, popular functions next, tests last). "
-     "Modes: compact (default, signatures only — token efficient), full (with source), "
+     "Modes: compact (default, signatures only �?token efficient), full (with source), "
      "files (just file paths). Use path_filter regex to scope results. "
      "TRUNCATION: enriched results are capped at limit (default 10). Response carries "
      "'total_grep_matches' (raw grep hit count) and 'total_results' (deduplicated function "
-     "count) — compare to limit to detect truncation. There is no offset parameter; to see "
+     "count) �?compare to limit to detect truncation. There is no offset parameter; to see "
      "more, raise limit or narrow the query with file_pattern / path_filter.",
      "{\"type\":\"object\",\"properties\":{\"pattern\":{\"type\":\"string\"},\"project\":{\"type\":"
      "\"string\"},\"file_pattern\":{\"type\":\"string\",\"description\":\"Glob for grep "
@@ -413,7 +413,7 @@ static const tool_def_t TOOLS[] = {
      "\"regex\":{\"type\":\"boolean\",\"default\":false},\"limit\":{\"type\":\"integer\","
      "\"description\":\"Max enriched results per call. Default 10. Response includes "
      "'total_grep_matches' and 'total_results' so callers can detect truncation. No "
-     "offset parameter — raise limit or narrow with file_pattern / path_filter to see more."
+     "offset parameter �?raise limit or narrow with file_pattern / path_filter to see more."
      "\",\"default\":10}},\"required\":[\"pattern\",\"project\"]}"},
 
     {"list_projects", "List all indexed projects", "{\"type\":\"object\",\"properties\":{}}"},
@@ -433,16 +433,34 @@ static const tool_def_t TOOLS[] = {
      "\"Git ref or date to compare from (e.g. HEAD~5, v0.5.0, 2026-01-01)\"}},\"required\":"
      "[\"project\"]}"},
 
-    {"manage_adr", "Create or update Architecture Decision Records",
-     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},\"mode\":{\"type\":"
-     "\"string\",\"enum\":[\"get\",\"update\",\"sections\"]},\"content\":{\"type\":\"string\"},"
-     "\"sections\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}},\"required\":[\"project\"]"
-     "}"},
+    {"events", "Write a raw long-term memory event through the synchronous hot path",
+     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
+     "\"type\":{\"type\":\"string\"},\"source\":{\"type\":\"string\"},\"user\":{\"type\":\"string\"},"
+     "\"payload\":{},\"content\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"},"
+     "\"confidence\":{\"type\":\"number\"}},\"required\":[\"project\",\"payload\"]}"},
 
-    {"ingest_traces", "Ingest runtime traces to enhance the knowledge graph",
-     "{\"type\":\"object\",\"properties\":{\"traces\":{\"type\":\"array\",\"items\":{\"type\":"
-     "\"object\"}},\"project\":{\"type\":"
-     "\"string\"}},\"required\":[\"traces\",\"project\"]}"},
+    {"memories_retrieve", "Retrieve task-relevant long-term memories with structured filters",
+     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},\"user\":{\"type\":\"string\"},"
+     "\"task\":{\"type\":\"string\"},\"entity_key\":{\"type\":\"string\"},\"kind\":{\"type\":\"string\"},"
+     "\"query\":{\"type\":\"string\"},\"limit\":{\"type\":\"integer\"},"
+     "\"include_inactive\":{\"type\":\"boolean\"}},\"required\":[\"project\"]}"},
+
+    {"memories_inspect", "List memory items with entity_key, predicate, status for manual review",
+     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
+     "\"status\":{\"type\":\"string\",\"description\":\"Filter by status: candidate,active,deprecated,archived\"},"
+     "\"limit\":{\"type\":\"integer\"}},\"required\":[\"project\"]}"},
+
+    {"admin_consolidate", "Run the deterministic memory consolidation pass for candidate items",
+     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
+     "\"limit\":{\"type\":\"integer\"}},\"required\":[\"project\"]}"},
+
+    {"admin_decay", "Run explainable decay and archive stale active memories",
+     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
+     "\"limit\":{\"type\":\"integer\"}},\"required\":[\"project\"]}"},
+
+    {"memory_health", "Report long-term memory MVP health counters",
+     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"}},"
+     "\"required\":[\"project\"]}"},
 };
 
 static const int TOOL_COUNT = sizeof(TOOLS) / sizeof(TOOLS[0]);
@@ -759,11 +777,11 @@ static const char *project_db_path(const char *project, char *buf, size_t bufsz)
 /* ── Store resolution ──────────────────────────────────────────── */
 
 /* Open the right project's .db file for query tools.
- * Caches the connection — reopens only when project changes.
+ * Caches the connection �?reopens only when project changes.
  * Tracks last-access time so the event loop can evict idle stores. */
 static cbm_store_t *resolve_store(cbm_mcp_server_t *srv, const char *project) {
     if (!project) {
-        return NULL; /* project is required — no implicit fallback */
+        return NULL; /* project is required �?no implicit fallback */
     }
 
     srv->store_last_used = time(NULL);
@@ -779,16 +797,16 @@ static cbm_store_t *resolve_store(cbm_mcp_server_t *srv, const char *project) {
         srv->store = NULL;
     }
 
-    /* Open project's .db file — query-only open (no SQLITE_OPEN_CREATE) to
+    /* Open project's .db file �?query-only open (no SQLITE_OPEN_CREATE) to
      * prevent ghost .db file creation for unknown/unindexed projects. */
     char path[CBM_SZ_1K];
     project_db_path(project, path, sizeof(path));
     srv->store = cbm_store_open_path_query(path);
     if (srv->store) {
-        /* Check DB integrity — auto-clean corrupt databases */
+        /* Check DB integrity �?auto-clean corrupt databases */
         if (!cbm_store_check_integrity(srv->store)) {
             cbm_log_error("store.auto_clean", "project", project, "path", path, "action",
-                          "deleting corrupt db — re-index required");
+                          "deleting corrupt db �?re-index required");
             cbm_store_close(srv->store);
             srv->store = NULL;
             /* Delete the corrupt DB + WAL/SHM files */
@@ -821,10 +839,10 @@ static cbm_store_t *resolve_store(cbm_mcp_server_t *srv, const char *project) {
     return srv->store;
 }
 
-/* Forward decl — definition lives below alongside list_projects. */
+/* Forward decl �?definition lives below alongside list_projects. */
 static bool is_project_db_file(const char *name, size_t len);
 
-/* Forward decl — definition lives below in handle_trace_call_path's helpers. */
+/* Forward decl �?definition lives below in handle_trace_call_path's helpers. */
 static void free_node_contents(cbm_node_t *n);
 
 /* Scan cache dir for .db files, writing comma-separated quoted names into out.
@@ -902,10 +920,10 @@ static char *build_project_list_error(const char *reason) {
 /* Return true if filename is a valid project .db file (not temp/internal).
  *
  * Project names derived from /tmp/... source roots legitimately begin with
- * "tmp-" (cbm_project_name_from_path: "/tmp/bench/..." → "tmp-bench-...";
+ * "tmp-" (cbm_project_name_from_path: "/tmp/bench/..." �?"tmp-bench-...";
  * see tests/test_pipeline.c fixtures), so the prefix must NOT be excluded.
  * The "_" prefix is reserved for internal/hidden DBs, and ":memory:" is the
- * SQLite in-memory marker (defensive — never appears as a real file). */
+ * SQLite in-memory marker (defensive �?never appears as a real file). */
 static bool is_project_db_file(const char *name, size_t len) {
     if (len < MCP_MIN_DB_NAME || strcmp(name + len - MCP_DB_EXT, ".db") != 0) {
         return false;
@@ -955,7 +973,7 @@ static void build_project_json_entry(yyjson_mut_doc *doc, yyjson_mut_val *arr, c
 }
 
 /* list_projects: scan cache directory for .db files.
- * Each project is a single .db file — no central registry needed. */
+ * Each project is a single .db file �?no central registry needed. */
 static char *handle_list_projects(cbm_mcp_server_t *srv, const char *args) {
     (void)srv;
     (void)args;
@@ -1013,7 +1031,7 @@ static char *handle_list_projects(cbm_mcp_server_t *srv, const char *args) {
     return result;
 }
 
-/* verify_project_indexed — returns a heap-allocated error JSON string when the
+/* verify_project_indexed �?returns a heap-allocated error JSON string when the
  * named project has not been indexed yet, or NULL when the project exists.
  * resolve_store uses cbm_store_open_path_query (no SQLITE_OPEN_CREATE), so
  * store is NULL for missing .db files (REQUIRE_STORE fires first). This
@@ -1024,7 +1042,7 @@ static char *handle_list_projects(cbm_mcp_server_t *srv, const char *args) {
 static char *verify_project_indexed(cbm_store_t *store, const char *project) {
     cbm_project_t proj_check = {0};
     if (cbm_store_get_project(store, project, &proj_check) != CBM_STORE_OK) {
-        char *err = build_project_list_error("project not indexed — run index_repository first");
+        char *err = build_project_list_error("project not indexed �?run index_repository first");
         char *res = cbm_mcp_text_result(err, true);
         free(err);
         return res;
@@ -1079,23 +1097,6 @@ static char *handle_get_graph_schema(cbm_mcp_server_t *srv, const char *args) {
     }
     yyjson_mut_obj_add_val(doc, root, "edge_types", types);
 
-    /* Check ADR presence */
-    cbm_project_t proj_info = {0};
-    if (cbm_store_get_project(store, project, &proj_info) == 0 && proj_info.root_path) {
-        char adr_path[CBM_SZ_4K];
-        snprintf(adr_path, sizeof(adr_path), "%s/.codebase-memory/adr.md", proj_info.root_path);
-        struct stat adr_st;
-        bool adr_exists = (stat(adr_path, &adr_st) == 0);
-        yyjson_mut_obj_add_bool(doc, root, "adr_present", adr_exists);
-        if (!adr_exists) {
-            yyjson_mut_obj_add_str(
-                doc, root, "adr_hint",
-                "No ADR found. Use manage_adr(mode='update') to persist architectural "
-                "decisions across sessions. Run get_architecture(aspects=['all']) first.");
-        }
-        cbm_project_free_fields(&proj_info);
-    }
-
     char *json = yy_doc_to_str(doc);
     yyjson_mut_doc_free(doc);
     cbm_store_schema_free(&schema);
@@ -1135,7 +1136,7 @@ static void enrich_connected(yyjson_mut_doc *doc, yyjson_mut_val *item, cbm_stor
     const char *et[] = {relationship ? relationship : "CALLS"};
     yyjson_mut_val *conn = yyjson_mut_arr(doc);
 
-    /* BFS doesn't support "both" — run inbound + outbound separately. */
+    /* BFS doesn't support "both" �?run inbound + outbound separately. */
     cbm_traverse_result_t tr_in = {0};
     cbm_store_bfs(store, node_id, "inbound", et, SKIP_ONE, SKIP_ONE, MCP_DEFAULT_LIMIT, &tr_in);
     enrich_add_bfs(doc, conn, &tr_in);
@@ -1221,7 +1222,7 @@ static int bm25_build_match(const char *query, char *out, size_t out_size) {
         const char *sep = (tokens > 0) ? " OR " : "";
         size_t sep_len = strlen(sep);
         if (pos + sep_len + tok_len + BM25_SEP_RESERVE >= out_size) {
-            break; /* out of room — stop cleanly, keep what we have */
+            break; /* out of room �?stop cleanly, keep what we have */
         }
         memcpy(out + pos, sep, sep_len);
         pos += sep_len;
@@ -1253,7 +1254,7 @@ static char *bm25_search(cbm_store_t *store, const char *project, const char *qu
      * Flat queries of the form:
      *   SELECT ... FROM nodes_fts JOIN nodes WHERE MATCH ? AND n.project=? ORDER BY rank LIMIT N
      * block FTS5's WAND/MaxScore early-exit because the outer JOIN+WHERE conditions
-     * are invisible to the FTS5 planner — it must score every matching document before
+     * are invisible to the FTS5 planner �?it must score every matching document before
      * the project/label filter can discard any of them.  On a large codebase with 100K+
      * matches, this causes multi-minute queries.
      *
@@ -1290,7 +1291,7 @@ static char *bm25_search(cbm_store_t *store, const char *project, const char *qu
     sqlite3_bind_int(stmt, BM25_BIND_OFFSET, offset > 0 ? offset : 0);
     sqlite3_bind_int(stmt, BM25_BIND_INNER, BM25_INNER_LIMIT);
 
-    /* Count hits within the same inner-limit window — capped at BM25_INNER_LIMIT.
+    /* Count hits within the same inner-limit window �?capped at BM25_INNER_LIMIT.
      * Uses the identical subquery structure so the FTS5 early-exit applies here too. */
     int total = 0;
     {
@@ -1352,7 +1353,7 @@ static char *bm25_search(cbm_store_t *store, const char *project, const char *qu
     return json;
 }
 
-/* Forward declaration — defined later. enrich_node_properties parses the
+/* Forward declaration �?defined later. enrich_node_properties parses the
  * node's properties_json and grafts the parsed values onto the result item.
  * It returns the parsed yyjson_doc which must outlive the serialization
  * because yyjson_mut_obj_add_val uses zero-copy strings into that doc. */
@@ -1434,7 +1435,7 @@ static void emit_semantic_results(yyjson_mut_doc *doc, yyjson_mut_val *root,
 }
 
 /* Append the semantic_query vector-search results onto the doc.  Returns
- * true if semantic_query was provided as a non-array (type error — caller
+ * true if semantic_query was provided as a non-array (type error �?caller
  * should surface to the user). */
 static bool run_semantic_query(yyjson_mut_doc *doc, yyjson_mut_val *root, const char *args,
                                cbm_store_t *store, const char *project, int limit) {
@@ -1578,14 +1579,14 @@ static char *handle_search_graph(cbm_mcp_server_t *srv, const char *args) {
         free(relationship);
         return cbm_mcp_text_result(
             "semantic_query must be an array of keyword strings, e.g. "
-            "[\"send\",\"pubsub\",\"publish\"] — not a single string. Split your query "
+            "[\"send\",\"pubsub\",\"publish\"] �?not a single string. Split your query "
             "into individual keywords; each is scored independently via per-keyword "
             "min-cosine.",
             true);
     }
 
     char *json = yy_doc_to_str(doc);
-    /* Property docs are zero-copy referenced by the mut doc — they must
+    /* Property docs are zero-copy referenced by the mut doc �?they must
      * outlive yy_doc_to_str. Free them once serialization is complete. */
     for (int pi = 0; pi < props_doc_count; pi++) {
         yyjson_doc_free(props_docs[pi]);
@@ -2142,7 +2143,7 @@ static yyjson_doc *resolve_trace_edge_types(const char *args, const char *mode,
     }
 
     if (*out_count > 0) {
-        return et_doc; /* caller must keep alive — pointers reference doc memory */
+        return et_doc; /* caller must keep alive �?pointers reference doc memory */
     }
 
     yyjson_doc_free(et_doc); /* no explicit types found, free */
@@ -2302,7 +2303,7 @@ static char *handle_trace_call_path(cbm_mcp_server_t *srv, const char *args) {
     yyjson_doc *et_doc_keep = resolve_trace_edge_types(args, mode, edge_types, &edge_type_count);
 
     /* Run BFS for each requested direction.
-     * IMPORTANT: yyjson_mut_obj_add_str borrows pointers — we must keep
+     * IMPORTANT: yyjson_mut_obj_add_str borrows pointers �?we must keep
      * traversal results alive until after yy_doc_to_str serialization. */
     bool do_outbound = strcmp(direction, "outbound") == 0 || strcmp(direction, "both") == 0;
     bool do_inbound = strcmp(direction, "inbound") == 0 || strcmp(direction, "both") == 0;
@@ -2427,7 +2428,7 @@ static char *get_project_root(cbm_mcp_server_t *srv, const char *project) {
 
 /* ── index_repository ─────────────────────────────────────────── */
 
-/* Handle mode="cross-repo-intelligence" — extract to reduce complexity. */
+/* Handle mode="cross-repo-intelligence" �?extract to reduce complexity. */
 static char *handle_cross_repo_mode(const char *repo_path, const char *args) {
     char *project = heap_strdup(cbm_project_name_from_path(repo_path));
     if (!project) {
@@ -2498,7 +2499,7 @@ static void try_artifact_bootstrap(const char *project_name, const char *repo_pa
     }
 }
 
-/* Cap on excluded dir paths listed in the response — keep it compact on large
+/* Cap on excluded dir paths listed in the response �?keep it compact on large
  * repos (node_modules / vendor / etc. can produce many skip points). The full
  * count is still reported via "count" + "truncated". */
 enum { INDEX_EXCLUDED_DIR_CAP = 25 };
@@ -2540,19 +2541,6 @@ static void build_index_success_response(cbm_mcp_server_t *srv, yyjson_mut_doc *
     int edges = cbm_store_count_edges(store, project_name);
     yyjson_mut_obj_add_int(doc, root, "nodes", nodes);
     yyjson_mut_obj_add_int(doc, root, "edges", edges);
-
-    char adr_path[CBM_SZ_4K];
-    snprintf(adr_path, sizeof(adr_path), "%s/.codebase-memory/adr.md", repo_path);
-    struct stat adr_st;
-    bool adr_exists = (stat(adr_path, &adr_st) == 0);
-    yyjson_mut_obj_add_bool(doc, root, "adr_present", adr_exists);
-    if (!adr_exists) {
-        yyjson_mut_obj_add_str(
-            doc, root, "adr_hint",
-            "Project indexed. Consider creating an Architecture Decision Record: "
-            "explore the codebase with get_architecture(aspects=['all']), then use "
-            "manage_adr(mode='store') to persist architectural insights across sessions.");
-    }
 
     bool has_artifact = cbm_artifact_exists(repo_path);
     yyjson_mut_obj_add_bool(doc, root, "artifact_present", has_artifact);
@@ -2602,7 +2590,7 @@ static char *handle_index_repository(cbm_mcp_server_t *srv, const char *args) {
     /* Bootstrap from artifact if no local DB exists */
     try_artifact_bootstrap(project_name, repo_path);
 
-    /* Close cached store — pipeline will delete + recreate the .db file */
+    /* Close cached store �?pipeline will delete + recreate the .db file */
     if (srv->owns_store && srv->store) {
         cbm_store_close(srv->store);
         srv->store = NULL;
@@ -2620,7 +2608,7 @@ static char *handle_index_repository(cbm_mcp_server_t *srv, const char *args) {
     cbm_pipeline_unlock();
 
     /* Capture the excluded-subtree list (#411) while the pipeline (which owns
-     * the strings) is still alive — the response builder copies them into the
+     * the strings) is still alive �?the response builder copies them into the
      * JSON doc, so they need only outlive that call, not cbm_pipeline_free. */
     char **excluded_dirs = NULL;
     int excluded_count = 0;
@@ -2717,7 +2705,7 @@ static char *snippet_suggestions(const char *input, cbm_node_t *nodes, int count
 }
 
 /* Enrich a mutable JSON object with key-value pairs from a node's properties_json.
- * Returns the parsed yyjson_doc (caller frees AFTER serialization — zero-copy). */
+ * Returns the parsed yyjson_doc (caller frees AFTER serialization �?zero-copy). */
 static yyjson_doc *enrich_node_properties(yyjson_mut_doc *doc, yyjson_mut_val *obj,
                                           const char *properties_json) {
     if (!properties_json || properties_json[0] == '\0') {
@@ -2840,15 +2828,15 @@ static char *build_snippet_response(cbm_mcp_server_t *srv, cbm_node_t *node,
         yyjson_mut_obj_add_str(doc, root_obj, "source", "(source not available)");
     }
 
-    /* match_method — omitted for exact matches */
+    /* match_method �?omitted for exact matches */
     if (match_method) {
         yyjson_mut_obj_add_str(doc, root_obj, "match_method", match_method);
     }
 
-    /* Enrich with node properties (freed AFTER serialization — zero-copy). */
+    /* Enrich with node properties (freed AFTER serialization �?zero-copy). */
     yyjson_doc *props_doc = enrich_node_properties(doc, root_obj, node->properties_json);
 
-    /* Caller/callee counts — store already resolved by calling handler */
+    /* Caller/callee counts �?store already resolved by calling handler */
     cbm_store_t *store = srv->store;
     int in_deg = 0;
     int out_deg = 0;
@@ -2943,7 +2931,7 @@ static char *handle_get_code_snippet(cbm_mcp_server_t *srv, const char *args) {
         return result;
     }
 
-    /* Tier 2: Suffix match — handles partial QNs ("main.HandleRequest")
+    /* Tier 2: Suffix match �?handles partial QNs ("main.HandleRequest")
      * and short names ("ProcessOrder") via LIKE '%.X'. */
     cbm_node_t *suffix_nodes = NULL;
     int suffix_count = 0;
@@ -2971,7 +2959,7 @@ static char *handle_get_code_snippet(cbm_mcp_server_t *srv, const char *args) {
     free(qn);
     free(project);
 
-    /* Nothing found — guide the caller toward search_graph */
+    /* Nothing found �?guide the caller toward search_graph */
     return cbm_mcp_text_result(
         "symbol not found. Use search_graph(name_pattern=\"...\") first to discover "
         "the exact qualified_name, then pass it to get_code_snippet.",
@@ -3177,7 +3165,7 @@ static void attach_result_source(yyjson_mut_doc *doc, yyjson_mut_val *item, sear
     }
 }
 
-/* Build directory distribution object from search results (top-level dir → count). */
+/* Build directory distribution object from search results (top-level dir �?count). */
 static yyjson_mut_val *build_dir_distribution(yyjson_mut_doc *doc, search_result_t *sr,
                                               int sr_count) {
     yyjson_mut_val *dirs = yyjson_mut_obj(doc);
@@ -3543,7 +3531,7 @@ static int parse_search_mode(const char *mode_str) {
 /* Validate shell-safe arguments for search. */
 /* Search/grep paths and globs are ALWAYS single-quoted (POSIX sh) or
  * double-/single-quoted (Windows cmd/PowerShell) on the command line, which
- * neutralises '&' — a very common character in real paths (R&D, "Foo & Bar",
+ * neutralises '&' �?a very common character in real paths (R&D, "Foo & Bar",
  * OneDrive). Accept '&' here while still rejecting every metacharacter that
  * could break out of the quoting (#272). */
 static bool validate_search_path_arg(const char *s) {
@@ -3613,7 +3601,7 @@ static char *handle_search_code(cbm_mcp_server_t *srv, const char *args) {
     int context_lines = cbm_mcp_get_int_arg(args, "context", 0);
     bool use_regex = cbm_mcp_get_bool_arg(args, "regex");
     uint64_t search_t0 = cbm_now_ms();
-    /* In literal (non-regex) mode a '|' is matched as a byte, not alternation —
+    /* In literal (non-regex) mode a '|' is matched as a byte, not alternation �?
      * a common silent 0-match trap; flagged in the result warnings (#282). */
     bool pat_has_pipe = pattern && strchr(pattern, '|') != NULL;
 
@@ -3665,7 +3653,7 @@ static char *handle_search_code(cbm_mcp_server_t *srv, const char *args) {
 
     /* issue #283: when regex=true, a syntactically invalid pattern (e.g. an
      * unclosed group) makes the underlying grep fail, which the handler would
-     * otherwise report as an empty result set — indistinguishable from a
+     * otherwise report as an empty result set �?indistinguishable from a
      * legitimate no-match. Validate the user's regex up front and return an
      * explicit error so callers can tell "broken pattern" from "no matches". */
     if (use_regex) {
@@ -3684,13 +3672,13 @@ static char *handle_search_code(cbm_mcp_server_t *srv, const char *args) {
         cbm_regfree(&probe);
     }
 
-    /* ── Phase 0.5: Multi-word → regex conversion ───────────── */
+    /* ── Phase 0.5: Multi-word �?regex conversion ───────────── */
     /* If pattern contains whitespace and is not already a regex, convert to a
-     * regex that matches all words in order: "foo bar baz" → "foo.*bar.*baz".
+     * regex that matches all words in order: "foo bar baz" �?"foo.*bar.*baz".
      * This avoids requiring the exact phrase as a contiguous substring. */
     if (!use_regex && strchr(pattern, ' ')) {
         size_t plen = strlen(pattern);
-        /* Worst case: every char is a space → ".*" between each char */
+        /* Worst case: every char is a space �?".*" between each char */
         char *regex_pat = malloc(plen * 3 + 1);
         if (regex_pat) {
             char *dst = regex_pat;
@@ -3733,13 +3721,13 @@ static char *handle_search_code(cbm_mcp_server_t *srv, const char *args) {
         return cbm_mcp_text_result(errmsg, true);
     }
 
-    /* No grep-level match limit — let grep find all matches, then dedup and
+    /* No grep-level match limit �?let grep find all matches, then dedup and
      * cap in our code. The -m flag caused results from large vendored files
      * to exhaust the quota before reaching project source files. */
     enum { GREP_MAX_MATCHES = 500 };
     int grep_limit = GREP_MAX_MATCHES;
 
-    /* Scope grep to indexed files only — avoids scanning vendored/generated code.
+    /* Scope grep to indexed files only �?avoids scanning vendored/generated code.
      * Query the graph for distinct file paths, write them to a temp file,
      * then use xargs to pass them to grep. Falls back to recursive grep if
      * no indexed files found (project not fully indexed). */
@@ -3795,7 +3783,7 @@ static char *handle_search_code(cbm_mcp_server_t *srv, const char *args) {
     classify_all_grep_hits(gm, gm_count, store, project, &sr, &sr_count, &sr_cap, &raw, &raw_count,
                            &raw_cap);
 
-    /* Phase 3: batch degree query — ONE query for all results instead of 2×N */
+    /* Phase 3: batch degree query �?ONE query for all results instead of 2×N */
     if (store && sr_count > 0) {
         int64_t *ids = malloc(sr_count * sizeof(int64_t));
         int *in_degs = malloc(sr_count * sizeof(int));
@@ -3984,187 +3972,339 @@ static char *handle_detect_changes(cbm_mcp_server_t *srv, const char *args) {
     return result;
 }
 
-/* ── manage_adr ───────────────────────────────────────────────── */
-
-/* ADR "sections" mode: list markdown headers ('#'-prefixed lines) from the
- * ADR content string. */
-static void adr_list_sections_from_content(yyjson_mut_doc *doc, yyjson_mut_val *root_obj,
-                                           const char *content) {
-    yyjson_mut_val *sections = yyjson_mut_arr(doc);
-    const char *p = content;
-    while (p && *p) {
-        const char *eol = strchr(p, '\n');
-        size_t linelen = eol ? (size_t)(eol - p) : strlen(p);
-        while (linelen > 0 && p[linelen - SKIP_ONE] == '\r') {
-            linelen--;
-        }
-        if (linelen > 0 && p[0] == '#') {
-            char hdr[CBM_SZ_1K];
-            if (linelen >= sizeof(hdr)) {
-                linelen = sizeof(hdr) - SKIP_ONE;
-            }
-            memcpy(hdr, p, linelen);
-            hdr[linelen] = '\0';
-            yyjson_mut_arr_add_strcpy(doc, sections, hdr);
-        }
-        if (!eol) {
-            break;
-        }
-        p = eol + SKIP_ONE;
-    }
-    yyjson_mut_obj_add_val(doc, root_obj, "sections", sections);
+static yyjson_val *memory_arg(yyjson_doc *doc, const char *key) {
+    yyjson_val *root = doc ? yyjson_doc_get_root(doc) : NULL;
+    return root && yyjson_is_obj(root) ? yyjson_obj_get(root, key) : NULL;
 }
 
-/* Read the legacy file-based ADR (<root>/.codebase-memory/adr.md), used by
- * older versions. Returns a heap buffer (caller frees) or NULL if missing/
- * empty. Kept only to migrate old ADRs into the store (#256). */
-static char *adr_read_legacy_file(const char *root_path) {
-    if (!root_path) {
-        return NULL;
-    }
-    char adr_path[CBM_SZ_4K];
-    snprintf(adr_path, sizeof(adr_path), "%s/.codebase-memory/adr.md", root_path);
-    FILE *fp = fopen(adr_path, "r");
-    if (!fp) {
-        return NULL;
-    }
-    (void)fseek(fp, 0, SEEK_END);
-    long sz = ftell(fp);
-    if (sz <= 0) {
-        (void)fclose(fp);
-        return NULL;
-    }
-    (void)fseek(fp, 0, SEEK_SET);
-    char *buf = malloc((size_t)sz + SKIP_ONE);
-    if (!buf) {
-        (void)fclose(fp);
-        return NULL;
-    }
-    size_t n = fread(buf, SKIP_ONE, (size_t)sz, fp);
-    buf[n] = '\0';
-    (void)fclose(fp);
-    if (buf[0] == '\0') {
-        free(buf);
-        return NULL;
-    }
-    return buf;
+static char *memory_arg_string_dup(yyjson_doc *doc, const char *key) {
+    yyjson_val *v = memory_arg(doc, key);
+    return (v && yyjson_is_str(v)) ? heap_strdup(yyjson_get_str(v)) : NULL;
 }
 
-#define ADR_EMPTY_HINT                                                             \
-    "No ADR yet. Create one with manage_adr(mode='update', "                       \
-    "content='## PURPOSE\\n...\\n\\n## STACK\\n...\\n\\n## ARCHITECTURE\\n..."     \
-    "\\n\\n## PATTERNS\\n...\\n\\n## TRADEOFFS\\n...\\n\\n## PHILOSOPHY\\n...'). " \
-    "For guided creation: explore the codebase with get_architecture, "            \
-    "then draft and store. Sections: PURPOSE, STACK, ARCHITECTURE, "               \
-    "PATTERNS, TRADEOFFS, PHILOSOPHY."
+static double memory_arg_double(yyjson_doc *doc, const char *key, double def) {
+    yyjson_val *v = memory_arg(doc, key);
+    return (v && yyjson_is_num(v)) ? yyjson_get_real(v) : def;
+}
 
-static char *handle_manage_adr(cbm_mcp_server_t *srv, const char *args) {
-    char *project = cbm_mcp_get_string_arg(args, "project");
-    char *mode_str = cbm_mcp_get_string_arg(args, "mode");
-    char *content = cbm_mcp_get_string_arg(args, "content");
+static char *memory_arg_raw_dup(yyjson_doc *doc, const char *key) {
+    yyjson_val *v = memory_arg(doc, key);
+    if (!v) return NULL;
+    if (yyjson_is_str(v)) return heap_strdup(yyjson_get_str(v));
+    return yyjson_val_write(v, YYJSON_WRITE_ALLOW_INVALID_UNICODE, NULL);
+}
 
-    if (!mode_str) {
-        mode_str = heap_strdup("get");
-    }
-
-    /* ADRs are stored in the SQLite store (project_summaries), the SAME
-     * backend the UI /api/adr endpoints use — so writes via the MCP tool and
-     * the UI are visible to each other (#256). */
+static cbm_store_t *resolve_memory_store(cbm_mcp_server_t *srv, const char *project) {
     cbm_store_t *store = resolve_store(srv, project);
-    if (!store) {
-        free(project);
-        free(mode_str);
-        free(content);
-        return cbm_mcp_text_result("project not found", true);
+    if (!store && srv && srv->store && (!srv->current_project || !project || strcmp(srv->current_project, project) == 0)) {
+        store = srv->store;
     }
-
-    /* One-time migration: older versions wrote ADRs to a file at
-     * <root>/.codebase-memory/adr.md. If the store has no ADR yet but that
-     * legacy file exists, import it so nothing is lost on upgrade. */
-    cbm_adr_t adr;
-    memset(&adr, 0, sizeof(adr));
-    bool have_adr = (cbm_store_adr_get(store, project, &adr) == CBM_STORE_OK);
-    if (!have_adr) {
-        char *root_path = get_project_root(srv, project);
-        char *legacy = adr_read_legacy_file(root_path);
-        free(root_path);
-        if (legacy) {
-            if (cbm_store_adr_store(store, project, legacy) == CBM_STORE_OK) {
-                have_adr = (cbm_store_adr_get(store, project, &adr) == CBM_STORE_OK);
-            }
-            free(legacy);
-        }
-    }
-
-    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
-    yyjson_mut_val *root_obj = yyjson_mut_obj(doc);
-    yyjson_mut_doc_set_root(doc, root_obj);
-
-    bool is_error = false;
-    if ((strcmp(mode_str, "update") == 0 || strcmp(mode_str, "store") == 0) && content) {
-        if (cbm_store_adr_store(store, project, content) == CBM_STORE_OK) {
-            yyjson_mut_obj_add_str(doc, root_obj, "status", "updated");
-        } else {
-            yyjson_mut_obj_add_str(doc, root_obj, "status", "write_error");
-            is_error = true;
-        }
-    } else if (strcmp(mode_str, "sections") == 0) {
-        adr_list_sections_from_content(doc, root_obj, have_adr ? adr.content : NULL);
-    } else { /* get */
-        if (have_adr && adr.content) {
-            yyjson_mut_obj_add_strcpy(doc, root_obj, "content", adr.content);
-        } else {
-            yyjson_mut_obj_add_str(doc, root_obj, "content", "");
-            yyjson_mut_obj_add_str(doc, root_obj, "status", "no_adr");
-            yyjson_mut_obj_add_str(doc, root_obj, "adr_hint", ADR_EMPTY_HINT);
-        }
-    }
-
-    char *json = yy_doc_to_str(doc);
-    yyjson_mut_doc_free(doc);
-    if (have_adr) {
-        cbm_store_adr_free(&adr);
-    }
-    free(project);
-    free(mode_str);
-    free(content);
-
-    char *result = cbm_mcp_text_result(json, is_error);
-    free(json);
-    return result;
+    return store;
 }
 
-/* ── ingest_traces ────────────────────────────────────────────── */
+static const char *memory_item_str(const char *s) { return s ? s : ""; }
 
-static char *handle_ingest_traces(cbm_mcp_server_t *srv, const char *args) {
-    (void)srv;
-    /* Parse traces array from JSON args */
-    yyjson_doc *adoc = yyjson_read(args, strlen(args), 0);
-    int trace_count = 0;
+static yyjson_mut_val *memory_item_to_json(yyjson_mut_doc *doc, const cbm_memory_item_t *it) {
+    yyjson_mut_val *obj = yyjson_mut_obj(doc);
+    yyjson_mut_obj_add_str(doc, obj, "id", memory_item_str(it->id));
+    yyjson_mut_obj_add_str(doc, obj, "kind", memory_item_str(it->kind));
+    yyjson_mut_obj_add_str(doc, obj, "layer", memory_item_str(it->layer));
+    yyjson_mut_obj_add_str(doc, obj, "title", memory_item_str(it->title));
+    yyjson_mut_obj_add_str(doc, obj, "summary", memory_item_str(it->summary));
+    yyjson_mut_obj_add_str(doc, obj, "content", memory_item_str(it->content));
+    yyjson_mut_obj_add_str(doc, obj, "scope_user", memory_item_str(it->scope_user));
+    yyjson_mut_obj_add_str(doc, obj, "scope_project", memory_item_str(it->scope_project));
+    yyjson_mut_obj_add_str(doc, obj, "scope_task", memory_item_str(it->scope_task));
+    yyjson_mut_obj_add_str(doc, obj, "entity_key", memory_item_str(it->entity_key));
+    yyjson_mut_obj_add_str(doc, obj, "predicate", memory_item_str(it->predicate));
+    yyjson_mut_obj_add_real(doc, obj, "importance", it->importance);
+    yyjson_mut_obj_add_real(doc, obj, "confidence", it->confidence);
+    yyjson_mut_obj_add_real(doc, obj, "reusability", it->reusability);
+    yyjson_mut_obj_add_real(doc, obj, "specificity", it->specificity);
+    yyjson_mut_obj_add_int(doc, obj, "hit_count", it->hit_count);
+    yyjson_mut_obj_add_int(doc, obj, "last_hit_at", it->last_hit_at);
+    yyjson_mut_obj_add_real(doc, obj, "decay", it->decay);
+    yyjson_mut_obj_add_str(doc, obj, "status", memory_item_str(it->status));
+    yyjson_mut_obj_add_int(doc, obj, "version", it->version);
+    yyjson_mut_obj_add_str(doc, obj, "supersedes", memory_item_str(it->supersedes));
+    yyjson_mut_obj_add_int(doc, obj, "created_at", it->created_at);
+    yyjson_mut_obj_add_int(doc, obj, "updated_at", it->updated_at);
+    yyjson_mut_obj_add_str(doc, obj, "source_event_ids", memory_item_str(it->source_event_ids));
+    yyjson_mut_obj_add_int(doc, obj, "conflict_count", it->conflict_count);
+    yyjson_mut_obj_add_str(doc, obj, "conflict_ids", memory_item_str(it->conflict_ids));
+    yyjson_mut_obj_add_str(doc, obj, "evidence_json", memory_item_str(it->evidence_json));
+    yyjson_mut_obj_add_str(doc, obj, "retrieval_source", memory_item_str(it->retrieval_source));
+    yyjson_mut_obj_add_real(doc, obj, "retrieval_score", it->retrieval_score);
+    return obj;
+}
 
-    if (adoc) {
-        yyjson_val *aroot = yyjson_doc_get_root(adoc);
-        yyjson_val *traces = yyjson_obj_get(aroot, "traces");
-        if (traces && yyjson_is_arr(traces)) {
-            trace_count = (int)yyjson_arr_size(traces);
-        }
-        yyjson_doc_free(adoc);
+static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
+    yyjson_doc *adoc = yyjson_read(args ? args : "{}", args ? strlen(args) : 2, 0);
+    if (!adoc) return cbm_mcp_text_result("invalid JSON arguments", true);
+    char *project = memory_arg_string_dup(adoc, "project");
+    char *type = memory_arg_string_dup(adoc, "type");
+    char *source = memory_arg_string_dup(adoc, "source");
+    char *user = memory_arg_string_dup(adoc, "user");
+    char *task = memory_arg_string_dup(adoc, "task");
+    char *payload = memory_arg_raw_dup(adoc, "payload");
+    char *content = memory_arg_string_dup(adoc, "content");
+    double confidence = memory_arg_double(adoc, "confidence", 0.5);
+    yyjson_doc_free(adoc);
+    if (!project || !payload) {
+        free(project); free(type); free(source); free(user); free(task); free(payload); free(content);
+        return cbm_mcp_text_result("project and payload are required", true);
     }
+    cbm_store_t *store = resolve_memory_store(srv, project);
+    if (!store) {
+        char *_err = build_project_list_error("project not found or not indexed");
+        char *_res = cbm_mcp_text_result(_err, true);
+        free(_err); free(project); free(type); free(source); free(user); free(task); free(payload); free(content);
+        return _res;
+    }
+    cbm_memory_event_t event = {0};
+    event.type = type ? type : "memory.event";
+    event.source = source ? source : "mcp.events";
+    event.project = project;
+    event.user = user;
+    event.payload = payload;
+    event.confidence = confidence;
+    event.context_json = "{}";
+    char *event_id = NULL;
+    if (cbm_store_memory_append_event(store, &event, &event_id) != CBM_STORE_OK) {
+        free(project); free(type); free(source); free(user); free(task); free(payload); free(content);
+        return cbm_mcp_text_result("failed to append memory event", true);
+    }
+    char source_ids[CBM_SZ_256];
+    snprintf(source_ids, sizeof(source_ids), "[\"%s\"]", event_id ? event_id : "");
+    cbm_memory_item_t item = {0};
+    item.kind = "event";
+    item.layer = "episodic";
+    item.title = type ? type : "memory.event";
+    item.summary = content ? content : payload;
+    item.content = content ? content : payload;
+    item.scope_user = user;
+    item.scope_project = project;
+    item.scope_task = task;
+    item.importance = 0.5;
+    item.confidence = confidence;
+    item.reusability = 0.5;
+    item.specificity = 0.5;
+    item.status = "candidate";
+    item.version = 1;
+    item.source_event_ids = source_ids;
+    char *item_id = NULL;
+    int item_rc = cbm_store_memory_append_candidate(store, &item, &item_id);
 
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
-
-    yyjson_mut_obj_add_str(doc, root, "status", "accepted");
-    yyjson_mut_obj_add_int(doc, root, "traces_received", trace_count);
-    yyjson_mut_obj_add_str(doc, root, "note",
-                           "Runtime edge creation from traces not yet implemented");
-
+    yyjson_mut_obj_add_str(doc, root, "status", item_rc == CBM_STORE_OK ? "accepted" : "event_only");
+    yyjson_mut_obj_add_str(doc, root, "event_id", event_id ? event_id : "");
+    yyjson_mut_obj_add_str(doc, root, "item_id", item_id ? item_id : "");
+    yyjson_mut_obj_add_str(doc, root, "item_status", item_rc == CBM_STORE_OK ? "candidate" : "write_error");
+    yyjson_mut_obj_add_str(doc, root, "hot_path", "event+candidate only; no llm, embedding, dedup, or edge extraction");
     char *json = yy_doc_to_str(doc);
     yyjson_mut_doc_free(doc);
+    char *result = cbm_mcp_text_result(json, item_rc != CBM_STORE_OK);
+    free(json); free(event_id); free(item_id);
+    free(project); free(type); free(source); free(user); free(task); free(payload); free(content);
+    return result;
+}
 
+static char *handle_memories_retrieve(cbm_mcp_server_t *srv, const char *args) {
+    char *project = cbm_mcp_get_string_arg(args, "project");
+    if (!project) return cbm_mcp_text_result("project is required", true);
+    cbm_store_t *store = resolve_memory_store(srv, project);
+    if (!store) {
+        char *_err = build_project_list_error("project not found or not indexed");
+        char *_res = cbm_mcp_text_result(_err, true);
+        free(_err); free(project);
+        return _res;
+    }
+    cbm_memory_query_t query = {0};
+    query.project = project;
+    query.user = cbm_mcp_get_string_arg(args, "user");
+    query.task = cbm_mcp_get_string_arg(args, "task");
+    query.entity_key = cbm_mcp_get_string_arg(args, "entity_key");
+    query.kind = cbm_mcp_get_string_arg(args, "kind");
+    query.query = cbm_mcp_get_string_arg(args, "query");
+    query.include_inactive = cbm_mcp_get_bool_arg(args, "include_inactive");
+    query.limit = cbm_mcp_get_int_arg(args, "limit", MCP_DEFAULT_LIMIT);
+    cbm_memory_result_t out = {0};
+    int rc = cbm_store_memory_retrieve(store, &query, &out);
+    if (rc == CBM_STORE_OK && out.count > 0) {
+        const char **ids = calloc((size_t)out.count, sizeof(char *));
+        if (ids) {
+            for (int i = 0; i < out.count; i++) ids[i] = out.items[i].id;
+            (void)cbm_store_memory_mark_hits(store, ids, out.count, 0);
+            free(ids);
+        }
+    }
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_str(doc, root, "project", project);
+    yyjson_mut_obj_add_int(doc, root, "total", out.total);
+    yyjson_mut_obj_add_int(doc, root, "count", out.count);
+    yyjson_mut_val *arr = yyjson_mut_arr(doc);
+    for (int i = 0; i < out.count; i++) yyjson_mut_arr_add_val(arr, memory_item_to_json(doc, &out.items[i]));
+    yyjson_mut_obj_add_val(doc, root, "memories", arr);
+    char *json = yy_doc_to_str(doc);
+    yyjson_mut_doc_free(doc);
+    char *result = cbm_mcp_text_result(json, rc != CBM_STORE_OK);
+    free(json); cbm_store_memory_result_free(&out);
+    free(project); free((char *)query.user); free((char *)query.task); free((char *)query.entity_key); free((char *)query.kind); free((char *)query.query);
+    return result;
+}
+
+static char *handle_memories_inspect(cbm_mcp_server_t *srv, const char *args) {
+    char *project = cbm_mcp_get_string_arg(args, "project");
+    if (!project) return cbm_mcp_text_result("project is required", true);
+    cbm_store_t *store = resolve_memory_store(srv, project);
+    if (!store) {
+        char *_err = build_project_list_error("project not found or not indexed");
+        char *_res = cbm_mcp_text_result(_err, true);
+        free(_err); free(project);
+        return _res;
+    }
+    char *status = cbm_mcp_get_string_arg(args, "status");
+    int limit = cbm_mcp_get_int_arg(args, "limit", 50);
+
+    const char *cols = "m.id,m.entity_key,m.predicate,m.status,m.kind,m.layer,"
+                       "m.title,m.hit_count,m.last_hit_at,m.confidence,m.version,m.updated_at";
+    char sql[CBM_SZ_2K];
+    snprintf(sql, sizeof(sql),
+             "SELECT %s FROM memory_item m WHERE m.scope_project=?1 "
+             "AND (?2 IS NULL OR m.status=?2) "
+             "ORDER BY m.updated_at DESC LIMIT ?3;", cols);
+    sqlite3 *db = cbm_store_get_db(store);
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
+        free(project); free(status);
+        return cbm_mcp_text_result("inspect query failed", true);
+    }
+    sqlite3_bind_text(stmt, 1, project, -1, SQLITE_TRANSIENT);
+    if (status && status[0]) {
+        sqlite3_bind_text(stmt, 2, status, -1, SQLITE_TRANSIENT);
+    } else {
+        sqlite3_bind_null(stmt, 2);
+    }
+    sqlite3_bind_int(stmt, 3, limit > 0 ? limit : 50);
+
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_str(doc, root, "project", project);
+    yyjson_mut_val *arr = yyjson_mut_arr(doc);
+    int n = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW && n < limit) {
+        yyjson_mut_val *obj = yyjson_mut_obj(doc);
+        yyjson_mut_obj_add_strcpy(doc, obj, "id", (const char *)sqlite3_column_text(stmt, 0));
+        yyjson_mut_obj_add_strcpy(doc, obj, "entity_key", (const char *)sqlite3_column_text(stmt, 1));
+        yyjson_mut_obj_add_strcpy(doc, obj, "predicate", (const char *)sqlite3_column_text(stmt, 2));
+        yyjson_mut_obj_add_strcpy(doc, obj, "status", (const char *)sqlite3_column_text(stmt, 3));
+        yyjson_mut_obj_add_strcpy(doc, obj, "kind", (const char *)sqlite3_column_text(stmt, 4));
+        yyjson_mut_obj_add_strcpy(doc, obj, "layer", (const char *)sqlite3_column_text(stmt, 5));
+        yyjson_mut_obj_add_strcpy(doc, obj, "title", (const char *)sqlite3_column_text(stmt, 6));
+        yyjson_mut_obj_add_int(doc, obj, "hit_count", sqlite3_column_int(stmt, 7));
+        yyjson_mut_obj_add_int(doc, obj, "last_hit_at", (int)sqlite3_column_int64(stmt, 8));
+        yyjson_mut_obj_add_real(doc, obj, "confidence", sqlite3_column_double(stmt, 9));
+        yyjson_mut_obj_add_int(doc, obj, "version", sqlite3_column_int(stmt, 10));
+        yyjson_mut_obj_add_int(doc, obj, "updated_at", (int)sqlite3_column_int64(stmt, 11));
+        yyjson_mut_arr_add_val(arr, obj);
+        n++;
+    }
+    yyjson_mut_obj_add_val(doc, root, "items", arr);
+    yyjson_mut_obj_add_int(doc, root, "count", n);
+    sqlite3_finalize(stmt);
+    char *json = yy_doc_to_str(doc);
+    yyjson_mut_doc_free(doc);
     char *result = cbm_mcp_text_result(json, false);
-    free(json);
+    free(json); free(project); free(status);
+    return result;
+}
+
+static char *handle_admin_consolidate(cbm_mcp_server_t *srv, const char *args) {
+    char *project = cbm_mcp_get_string_arg(args, "project");
+    if (!project) return cbm_mcp_text_result("project is required", true);
+    cbm_store_t *store = resolve_memory_store(srv, project);
+    if (!store) {
+        char *_err = build_project_list_error("project not found or not indexed");
+        char *_res = cbm_mcp_text_result(_err, true);
+        free(_err); free(project);
+        return _res;
+    }
+    int processed = 0;
+    int rc = cbm_store_memory_consolidate(store, project, cbm_mcp_get_int_arg(args, "limit", 100), &processed);
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_str(doc, root, "project", project);
+    yyjson_mut_obj_add_int(doc, root, "processed", processed);
+    yyjson_mut_obj_add_str(doc, root, "mode", "deterministic_mvp_pass");
+    char *json = yy_doc_to_str(doc);
+    yyjson_mut_doc_free(doc);
+    char *result = cbm_mcp_text_result(json, rc != CBM_STORE_OK);
+    free(json); free(project);
+    return result;
+}
+
+static char *handle_admin_decay(cbm_mcp_server_t *srv, const char *args) {
+    char *project = cbm_mcp_get_string_arg(args, "project");
+    if (!project) return cbm_mcp_text_result("project is required", true);
+    cbm_store_t *store = resolve_memory_store(srv, project);
+    if (!store) {
+        char *_err = build_project_list_error("project not found or not indexed");
+        char *_res = cbm_mcp_text_result(_err, true);
+        free(_err); free(project);
+        return _res;
+    }
+    int processed = 0;
+    int rc = cbm_store_memory_decay(store, project, cbm_mcp_get_int_arg(args, "limit", 100), &processed);
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_str(doc, root, "project", project);
+    yyjson_mut_obj_add_int(doc, root, "processed", processed);
+    yyjson_mut_obj_add_str(doc, root, "formula", "age_days/30 * (1-confidence) * (1-reusability)");
+    char *json = yy_doc_to_str(doc);
+    yyjson_mut_doc_free(doc);
+    char *result = cbm_mcp_text_result(json, rc != CBM_STORE_OK);
+    free(json); free(project);
+    return result;
+}
+static char *handle_memory_health(cbm_mcp_server_t *srv, const char *args) {
+    char *project = cbm_mcp_get_string_arg(args, "project");
+    if (!project) return cbm_mcp_text_result("project is required", true);
+    cbm_store_t *store = resolve_memory_store(srv, project);
+    if (!store) {
+        char *_err = build_project_list_error("project not found or not indexed");
+        char *_res = cbm_mcp_text_result(_err, true);
+        free(_err); free(project);
+        return _res;
+    }
+    cbm_memory_health_t h = {0};
+    int rc = cbm_store_memory_health(store, project, &h);
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_str(doc, root, "project", project);
+    yyjson_mut_obj_add_int(doc, root, "events", h.event_count);
+    yyjson_mut_obj_add_int(doc, root, "items", h.item_count);
+    yyjson_mut_obj_add_int(doc, root, "edges", h.edge_count);
+    yyjson_mut_obj_add_int(doc, root, "candidates", h.candidate_count);
+    yyjson_mut_obj_add_int(doc, root, "active", h.active_count);
+    yyjson_mut_obj_add_int(doc, root, "deprecated", h.deprecated_count);
+    yyjson_mut_obj_add_int(doc, root, "archived", h.archived_count);
+    yyjson_mut_obj_add_int(doc, root, "retracted", h.retracted_count);
+    yyjson_mut_obj_add_int(doc, root, "total_hits", h.total_hits);
+    yyjson_mut_obj_add_int(doc, root, "conflicts", h.conflict_count);
+    yyjson_mut_obj_add_int(doc, root, "scopes", h.scope_count);
+    yyjson_mut_obj_add_real(doc, root, "hit_rate", h.hit_rate);
+    char *json = yy_doc_to_str(doc);
+    yyjson_mut_doc_free(doc);
+    char *result = cbm_mcp_text_result(json, rc != CBM_STORE_OK);
+    free(json); free(project);
     return result;
 }
 
@@ -4213,11 +4353,23 @@ char *cbm_mcp_handle_tool(cbm_mcp_server_t *srv, const char *tool_name, const ch
     if (strcmp(tool_name, "detect_changes") == 0) {
         return handle_detect_changes(srv, args_json);
     }
-    if (strcmp(tool_name, "manage_adr") == 0) {
-        return handle_manage_adr(srv, args_json);
+    if (strcmp(tool_name, "events") == 0) {
+        return handle_events(srv, args_json);
     }
-    if (strcmp(tool_name, "ingest_traces") == 0) {
-        return handle_ingest_traces(srv, args_json);
+    if (strcmp(tool_name, "memories_retrieve") == 0) {
+        return handle_memories_retrieve(srv, args_json);
+    }
+    if (strcmp(tool_name, "memories_inspect") == 0) {
+        return handle_memories_inspect(srv, args_json);
+    }
+    if (strcmp(tool_name, "admin_consolidate") == 0 || strcmp(tool_name, "memory_consolidate") == 0) {
+        return handle_admin_consolidate(srv, args_json);
+    }
+    if (strcmp(tool_name, "admin_decay") == 0 || strcmp(tool_name, "memory_decay") == 0) {
+        return handle_admin_decay(srv, args_json);
+    }
+    if (strcmp(tool_name, "memory_health") == 0) {
+        return handle_memory_health(srv, args_json);
     }
     char msg[CBM_SZ_256];
     snprintf(msg, sizeof(msg), "unknown tool: %s", tool_name);
@@ -4244,7 +4396,7 @@ static void detect_session(cbm_mcp_server_t *srv) {
         }
     }
 
-    /* Derive project name from path — must match cbm_project_name_from_path
+    /* Derive project name from path �?must match cbm_project_name_from_path
      * used by the pipeline, otherwise session queries look for a .db file
      * that doesn't match the indexed project name. */
     if (srv->session_root[0]) {
@@ -4302,7 +4454,7 @@ static void maybe_auto_index(cbm_mcp_server_t *srv) {
                  srv->session_project);
         struct stat st;
         if (stat(db_check, &st) == 0) {
-            /* Already indexed → register watcher for change detection */
+            /* Already indexed �?register watcher for change detection */
             cbm_log_info("autoindex.skip", "reason", "already_indexed", "project",
                          srv->session_project);
             if (srv->watcher) {
@@ -4461,7 +4613,7 @@ static char *inject_update_notice(cbm_mcp_server_t *srv, char *result_json) {
 
     if (new_json) {
         free(result_json);
-        srv->update_notice[0] = '\0'; /* clear — one-shot */
+        srv->update_notice[0] = '\0'; /* clear �?one-shot */
         return new_json;
     }
     return result_json;
@@ -4475,7 +4627,7 @@ char *cbm_mcp_server_handle(cbm_mcp_server_t *srv, const char *line) {
         return cbm_jsonrpc_format_error(0, JSONRPC_PARSE_ERROR, "Parse error");
     }
 
-    /* Notifications (no id) → handle cancellation, then no response */
+    /* Notifications (no id) �?handle cancellation, then no response */
     if (!req.has_id) {
         if (req.method && strcmp(req.method, "notifications/cancelled") == 0) {
             /* MCP cancellation: cancel the active pipeline if request ID matches */
@@ -4594,7 +4746,7 @@ static int poll_for_input_unix(cbm_mcp_server_t *srv, int fd, FILE *in) {
     /* Phase 2: peek FILE* buffer */
     int saved_flags = fcntl(fd, F_GETFL);
     if (saved_flags < 0) {
-        /* fcntl failed — fall through to blocking poll */
+        /* fcntl failed �?fall through to blocking poll */
         pr = poll(&pfd, SKIP_ONE, STORE_IDLE_TIMEOUT_S * MCP_TIMEOUT_MS);
         if (pr < 0) {
             return CBM_NOT_FOUND;
@@ -4649,12 +4801,12 @@ int cbm_mcp_server_run(cbm_mcp_server_t *srv, FILE *in, FILE *out) {
          * empty kernel fd and block for STORE_IDLE_TIMEOUT_S seconds even
          * though the next messages are already in the FILE* buffer.
          *
-         * Fix (Unix): use a three-phase approach —
+         * Fix (Unix): use a three-phase approach �?
          *   Phase 1: non-blocking poll (timeout=0) to check the kernel fd.
          *   Phase 2: if Phase 1 returns 0, peek the FILE* buffer via fgetc/
          *            ungetc to detect data buffered by a prior getline() call.
          *            The fd is temporarily set O_NONBLOCK so fgetc() returns
-         *            immediately (EAGAIN → EOF + ferror) instead of blocking
+         *            immediately (EAGAIN �?EOF + ferror) instead of blocking
          *            when the FILE* buffer is empty, which would otherwise
          *            bypass the Phase 3 idle eviction timeout.
          *   Phase 3: only if both phases confirm no data, do blocking poll. */
@@ -4675,7 +4827,7 @@ int cbm_mcp_server_run(cbm_mcp_server_t *srv, FILE *in, FILE *out) {
             break;
         }
         if (pr == 0) {
-            continue; /* timeout — idle stores evicted */
+            continue; /* timeout �?idle stores evicted */
         }
 #endif
 
@@ -4731,7 +4883,7 @@ bool cbm_parse_file_uri(const char *uri, char *out_path, int out_size) {
 
     const char *path = uri + MCP_URI_PREFIX;
 
-    /* On Windows, file:///C:/path → /C:/path. Strip leading / before drive letter. */
+    /* On Windows, file:///C:/path �?/C:/path. Strip leading / before drive letter. */
     if (path[0] == '/' && path[SKIP_ONE] &&
         ((path[SKIP_ONE] >= 'A' && path[SKIP_ONE] <= 'Z') ||
          (path[SKIP_ONE] >= 'a' && path[SKIP_ONE] <= 'z')) &&

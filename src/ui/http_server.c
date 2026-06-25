@@ -867,6 +867,42 @@ static void handle_delete_project(cbm_http_conn_t *c, const cbm_http_req_t *req)
     cbm_http_replyf(c, 200, g_cors_json, "{\"deleted\":true}");
 }
 
+static void handle_memory_health(cbm_http_conn_t *c, const cbm_http_req_t *req) {
+    char name[256] = {0};
+    if (!cbm_http_query_param(req->query, "project", name, (int)sizeof(name)) || name[0] == '\0') {
+        cbm_http_query_param(req->query, "name", name, (int)sizeof(name));
+    }
+    if (name[0] == '\0') {
+        cbm_http_replyf(c, 400, g_cors_json, "{\"error\":\"missing project\"}");
+        return;
+    }
+    char db_path[1024];
+    db_path_for_project(name, db_path, sizeof(db_path));
+    if (db_path[0] == '\0') {
+        cbm_http_replyf(c, 400, g_cors_json, "{\"error\":\"invalid project\"}");
+        return;
+    }
+    cbm_store_t *store = cbm_store_open_path(db_path);
+    if (!store) {
+        cbm_http_replyf(c, 404, g_cors_json, "{\"error\":\"project not found\"}");
+        return;
+    }
+    cbm_memory_health_t h = {0};
+    int rc = cbm_store_memory_health(store, name, &h);
+    cbm_store_close(store);
+    if (rc != CBM_STORE_OK) {
+        cbm_http_replyf(c, 500, g_cors_json, "{\"error\":\"memory health failed\"}");
+        return;
+    }
+    cbm_http_replyf(c, 200, g_cors_json,
+                    "{\"project\":\"%s\",\"events\":%d,\"items\":%d,\"edges\":%d,"
+                    "\"candidates\":%d,\"active\":%d,\"deprecated\":%d,\"archived\":%d,"
+                    "\"retracted\":%d,\"total_hits\":%lld,\"conflicts\":%d,\"scopes\":%d,\"hit_rate\":%.3f}",
+                    name, h.event_count, h.item_count, h.edge_count, h.candidate_count,
+                    h.active_count, h.deprecated_count, h.archived_count, h.retracted_count,
+                    (long long)h.total_hits, h.conflict_count, h.scope_count, h.hit_rate);
+}
+
 /* GET /api/project-health?name=X — checks db integrity */
 static void handle_project_health(cbm_http_conn_t *c, const cbm_http_req_t *req) {
     char name[256] = {0};
@@ -1264,15 +1300,9 @@ static void dispatch_request(cbm_http_server_t *srv, cbm_http_conn_t *c,
         return;
     }
 
-    /* GET /api/adr → get ADR for project */
-    if (is_get && cbm_http_path_match(req->path, "/api/adr*")) {
-        handle_adr_get(c, req);
-        return;
-    }
-
-    /* POST /api/adr → save ADR for project */
-    if (is_post && cbm_http_path_match(req->path, "/api/adr")) {
-        handle_adr_save(c, req);
+    /* GET /memory/health → long-term memory MVP health */
+    if (is_get && cbm_http_path_match(req->path, "/memory/health*")) {
+        handle_memory_health(c, req);
         return;
     }
 

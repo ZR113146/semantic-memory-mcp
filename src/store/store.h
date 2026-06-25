@@ -61,6 +61,83 @@ typedef struct {
     int64_t size;
 } cbm_file_hash_t;
 
+typedef struct {
+    const char *id;
+    const char *type;
+    const char *source;
+    int64_t timestamp_ms;
+    const char *project;
+    const char *user;
+    const char *payload;
+    double confidence;
+    const char *context_json;
+} cbm_memory_event_t;
+
+typedef struct {
+    const char *id;
+    const char *kind;
+    const char *layer;
+    const char *title;
+    const char *summary;
+    const char *content;
+    const char *scope_user;
+    const char *scope_project;
+    const char *scope_task;
+    const char *entity_key;
+    const char *predicate;
+    double importance;
+    double confidence;
+    double reusability;
+    double specificity;
+    int hit_count;
+    int64_t last_hit_at;
+    double decay;
+    const char *status;
+    int version;
+    const char *supersedes;
+    int64_t created_at;
+    int64_t updated_at;
+    const char *source_event_ids;
+    int conflict_count;
+    const char *conflict_ids;
+    const char *evidence_json;
+    const char *retrieval_source;
+    double retrieval_score;
+} cbm_memory_item_t;
+
+typedef struct {
+    const char *project;
+    const char *user;
+    const char *task;
+    const char *entity_key;
+    const char *kind;
+    const char *query;
+    bool include_inactive;
+    int limit;
+} cbm_memory_query_t;
+
+typedef struct {
+    cbm_memory_item_t *items;
+    int count;
+    int total;
+} cbm_memory_result_t;
+
+typedef struct {
+    int event_count;
+    int item_count;
+    int edge_count;
+    int candidate_count;
+    int active_count;
+    int deprecated_count;
+    int archived_count;
+    int retracted_count;
+    int conflict_count;
+    int scope_count;
+    double hit_rate;
+    int64_t total_hits;
+} cbm_memory_health_t;
+
+
 /* Find nodes overlapping a line range in a file (excludes Module/Package). */
 int cbm_store_find_nodes_by_file_overlap(cbm_store_t *s, const char *project, const char *file_path,
                                          int start_line, int end_line, cbm_node_t **out,
@@ -372,6 +449,23 @@ int cbm_store_get_file_hashes(cbm_store_t *s, const char *project, cbm_file_hash
 int cbm_store_delete_file_hash(cbm_store_t *s, const char *project, const char *rel_path);
 
 int cbm_store_delete_file_hashes(cbm_store_t *s, const char *project);
+
+/* -- Long-term memory MVP --------------------------------------- */
+
+int cbm_store_memory_append_event(cbm_store_t *s, const cbm_memory_event_t *event,
+                                  char **out_event_id);
+int cbm_store_memory_append_candidate(cbm_store_t *s, const cbm_memory_item_t *item,
+                                      char **out_item_id);
+int cbm_store_memory_get_item(cbm_store_t *s, const char *id, cbm_memory_item_t *out);
+int cbm_store_memory_retrieve(cbm_store_t *s, const cbm_memory_query_t *query,
+                              cbm_memory_result_t *out);
+int cbm_store_memory_mark_hits(cbm_store_t *s, const char **ids, int count, int64_t now_ms);
+int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit, int *processed);
+int cbm_store_memory_decay(cbm_store_t *s, const char *project, int limit, int *processed);
+int cbm_store_memory_health(cbm_store_t *s, const char *project, cbm_memory_health_t *out);
+void cbm_store_memory_item_free(cbm_memory_item_t *item);
+void cbm_store_memory_result_free(cbm_memory_result_t *out);
+
 
 /* ── Search ─────────────────────────────────────────────────────── */
 
