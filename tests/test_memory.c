@@ -474,6 +474,51 @@ TEST(memory_mark_hits) {
     return 0;
 }
 
+TEST(memory_update_status_retracts_from_default_retrieval) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_memory_item_t item = {0};
+    item.kind = "fact";
+    item.content = "Retracted memory should be hidden";
+    item.scope_project = "test-proj";
+    item.status = "active";
+    char *id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+    ASSERT(cbm_store_memory_update_status(s, id, "test-proj", "retracted") == CBM_STORE_OK);
+
+    cbm_memory_query_t q = {0};
+    q.project = "test-proj";
+    q.limit = 5;
+    cbm_memory_result_t res = {0};
+    ASSERT(cbm_store_memory_retrieve(s, &q, &res) == CBM_STORE_OK);
+    ASSERT(res.count == 0);
+    cbm_store_memory_result_free(&res);
+
+    q.include_inactive = true;
+    ASSERT(cbm_store_memory_retrieve(s, &q, &res) == CBM_STORE_OK);
+    ASSERT(res.count == 1);
+    ASSERT(strcmp(res.items[0].status, "retracted") == 0);
+    cbm_store_memory_result_free(&res);
+
+    free(id);
+    cbm_store_close(s);
+    return 0;
+}
+
+TEST(memory_update_status_rejects_invalid_status) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_memory_item_t item = {0};
+    item.content = "Invalid status test";
+    item.scope_project = "test-proj";
+    char *id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+    ASSERT(cbm_store_memory_update_status(s, id, "test-proj", "deleted") == CBM_STORE_ERR);
+    free(id);
+    cbm_store_close(s);
+    return 0;
+}
+
 TEST(memory_decay_archives_stale) {
     cbm_store_t *s = cbm_store_open_memory();
     ASSERT(s != NULL);
@@ -516,6 +561,8 @@ int main(void) {
     RUN(memory_consolidate_merge_keeps_new_event_evidence);
     RUN(memory_health);
     RUN(memory_mark_hits);
+    RUN(memory_update_status_retracts_from_default_retrieval);
+    RUN(memory_update_status_rejects_invalid_status);
     RUN(memory_decay_archives_stale);
     fprintf(stderr, "\n%d/%d passed\n", pass, total);
     return fail ? 1 : 0;

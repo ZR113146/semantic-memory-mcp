@@ -2529,6 +2529,35 @@ int cbm_store_memory_mark_hits(cbm_store_t *s, const char **ids, int count, int6
     return CBM_STORE_OK;
 }
 
+static bool memory_status_allowed(const char *status) {
+    return status && (strcmp(status, "candidate") == 0 || strcmp(status, "active") == 0 ||
+                      strcmp(status, "deprecated") == 0 || strcmp(status, "archived") == 0 ||
+                      strcmp(status, "retracted") == 0);
+}
+
+int cbm_store_memory_update_status(cbm_store_t *s, const char *id, const char *project, const char *status) {
+    if (!s || !s->db || !id || !id[0] || !memory_status_allowed(status)) {
+        return CBM_STORE_ERR;
+    }
+    const char *sql = "UPDATE memory_item SET status=?1,updated_at=?2 WHERE id=?3 AND (?4 IS NULL OR scope_project=?4);";
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
+        store_set_error_sqlite(s, "memory_update_status_prepare");
+        return CBM_STORE_ERR;
+    }
+    bind_text(stmt, 1, status);
+    sqlite3_bind_int64(stmt, 2, memory_now_ms());
+    bind_text(stmt, 3, id);
+    memory_bind_nullable(stmt, 4, project);
+    int rc = sqlite3_step(stmt);
+    int changed = sqlite3_changes(s->db);
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        store_set_error_sqlite(s, "memory_update_status");
+        return CBM_STORE_ERR;
+    }
+    return changed > 0 ? CBM_STORE_OK : CBM_STORE_NOT_FOUND;
+}
 static char *memory_summary_from_content(const char *content) {
     if (!content) {
         return heap_strdup("");
