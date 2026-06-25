@@ -1306,6 +1306,18 @@ static void dispatch_request(cbm_http_server_t *srv, cbm_http_conn_t *c,
         return;
     }
 
+    /* GET /api/adr → fetch a project's ADR content */
+    if (is_get && cbm_http_path_match(req->path, "/api/adr*")) {
+        handle_adr_get(c, req);
+        return;
+    }
+
+    /* POST /api/adr → save a project's ADR content */
+    if (is_post && cbm_http_path_match(req->path, "/api/adr")) {
+        handle_adr_save(c, req);
+        return;
+    }
+
     /* GET /api/project-health → check db integrity */
     if (is_get && cbm_http_path_match(req->path, "/api/project-health*")) {
         handle_project_health(c, req);
