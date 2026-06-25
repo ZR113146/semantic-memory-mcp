@@ -287,7 +287,7 @@ static const tool_def_t TOOLS[] = {
      "\"description\":\"Projects to search for cross-repo links (cross-repo-intelligence mode). "
      "Use [\\\"*\\\"] for all indexed projects. Run list_projects to see available projects.\"},"
      "\"persistence\":{\"type\":\"boolean\",\"default\":false,\"description\":"
-     "\"Write compressed artifact to .codebase-memory/graph.db.zst for team sharing. "
+     "\"Write compressed artifact to .semantic-memory/graph.db.zst for team sharing. "
      "Teammates can bootstrap from the artifact instead of full re-indexing.\"}"
      "},\"required\":[\"repo_path\"]}"},
 
@@ -551,7 +551,7 @@ char *cbm_mcp_initialize_response(const char *params_json) {
     yyjson_mut_obj_add_str(doc, root, "protocolVersion", version);
 
     yyjson_mut_val *impl = yyjson_mut_obj(doc);
-    yyjson_mut_obj_add_str(doc, impl, "name", "codebase-memory-mcp");
+    yyjson_mut_obj_add_str(doc, impl, "name", "semantic-memory-mcp");
     yyjson_mut_obj_add_str(doc, impl, "version", "0.10.0");
     yyjson_mut_obj_add_val(doc, root, "serverInfo", impl);
 
@@ -2562,7 +2562,7 @@ static void build_index_success_response(cbm_mcp_server_t *srv, yyjson_mut_doc *
     yyjson_mut_obj_add_bool(doc, root, "artifact_present", has_artifact);
     if (persistence && has_artifact) {
         yyjson_mut_obj_add_str(doc, root, "artifact_hint",
-                               "Persistent artifact written to .codebase-memory/graph.db.zst. "
+                               "Persistent artifact written to .semantic-memory/graph.db.zst. "
                                "Commit this file to share the index with teammates.");
     }
 }
@@ -4098,14 +4098,22 @@ static const char *memory_write_policy_decide(const char *text, const char *kind
     if ((kind && (strcmp(kind, "debug") == 0 || strcmp(kind, "scratch") == 0)) ||
         (type && (strcmp(type, "debug") == 0 || strcmp(type, "scratch") == 0)) ||
         memory_policy_contains_i(text, "temporary note") ||
-        memory_policy_contains_i(text, "scratch note")) {
+        memory_policy_contains_i(text, "scratch note") ||
+        memory_policy_contains_i(text, "临时记录") ||
+        memory_policy_contains_i(text, "临时笔记") ||
+        memory_policy_contains_i(text, "草稿")) {
         if (reason) *reason = "low_value_transient";
         return "rejected";
     }
     if ((kind && (strcmp(kind, "preference") == 0 || strcmp(kind, "decision") == 0 ||
                   strcmp(kind, "constraint") == 0 || strcmp(kind, "lesson") == 0)) ||
         memory_policy_contains_i(text, "remember") ||
-        memory_policy_contains_i(text, "do not forget")) {
+        memory_policy_contains_i(text, "do not forget") ||
+        memory_policy_contains_i(text, "记住") ||
+        memory_policy_contains_i(text, "牢记") ||
+        memory_policy_contains_i(text, "别忘") ||
+        memory_policy_contains_i(text, "不要忘") ||
+        memory_policy_contains_i(text, "务必")) {
         if (reason) *reason = "explicit_or_high_value";
         return "must_write";
     }
@@ -4344,10 +4352,10 @@ static char *handle_memories_inspect(cbm_mcp_server_t *srv, const char *args) {
         yyjson_mut_obj_add_strcpy(doc, obj, "layer", (const char *)sqlite3_column_text(stmt, 5));
         yyjson_mut_obj_add_strcpy(doc, obj, "title", (const char *)sqlite3_column_text(stmt, 6));
         yyjson_mut_obj_add_int(doc, obj, "hit_count", sqlite3_column_int(stmt, 7));
-        yyjson_mut_obj_add_int(doc, obj, "last_hit_at", (int)sqlite3_column_int64(stmt, 8));
+        yyjson_mut_obj_add_int(doc, obj, "last_hit_at", sqlite3_column_int64(stmt, 8));
         yyjson_mut_obj_add_real(doc, obj, "confidence", sqlite3_column_double(stmt, 9));
         yyjson_mut_obj_add_int(doc, obj, "version", sqlite3_column_int(stmt, 10));
-        yyjson_mut_obj_add_int(doc, obj, "updated_at", (int)sqlite3_column_int64(stmt, 11));
+        yyjson_mut_obj_add_int(doc, obj, "updated_at", sqlite3_column_int64(stmt, 11));
         yyjson_mut_arr_add_val(arr, obj);
         n++;
     }
@@ -4437,11 +4445,19 @@ static char *handle_admin_consolidate(cbm_mcp_server_t *srv, const char *args) {
     }
     int processed = 0;
     int rc = cbm_store_memory_consolidate(store, project, cbm_mcp_get_int_arg(args, "limit", 100), &processed);
+    /* Rebuild the FTS index with current CJK segmentation so memories indexed
+     * before bigram segmentation existed become searchable in Chinese. Pass
+     * skip_reindex_fts=true to skip on large stores where the rebuild is costly. */
+    int reindexed = 0;
+    if (!cbm_mcp_get_bool_arg(args, "skip_reindex_fts")) {
+        (void)cbm_store_memory_reindex_fts(store, project, &reindexed);
+    }
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
     yyjson_mut_obj_add_str(doc, root, "project", project);
     yyjson_mut_obj_add_int(doc, root, "processed", processed);
+    yyjson_mut_obj_add_int(doc, root, "fts_reindexed", reindexed);
     yyjson_mut_obj_add_str(doc, root, "mode", "deterministic_mvp_pass");
     char *json = yy_doc_to_str(doc);
     yyjson_mut_doc_free(doc);
@@ -4685,7 +4701,7 @@ static void maybe_auto_index(cbm_mcp_server_t *srv) {
 
     if (!auto_index) {
         cbm_log_info("autoindex.skip", "reason", "disabled", "hint",
-                     "run: codebase-memory-mcp config set auto_index true");
+                     "run: semantic-memory-mcp config set auto_index true");
         return;
     }
 
@@ -4719,7 +4735,7 @@ static void maybe_auto_index(cbm_mcp_server_t *srv) {
 
 /* ── Background update check ──────────────────────────────────── */
 
-#define UPDATE_CHECK_URL "https://api.github.com/repos/DeusData/codebase-memory-mcp/releases/latest"
+#define UPDATE_CHECK_URL "https://api.github.com/repos/ZR113146/semantic-memory-mcp/releases/latest"
 
 static void *update_check_thread(void *arg) {
     cbm_mcp_server_t *srv = (cbm_mcp_server_t *)arg;
@@ -4760,9 +4776,9 @@ static void *update_check_thread(void *arg) {
         const char *current = cbm_cli_get_version();
         if (cbm_compare_versions(tag_str, current) > 0) {
             snprintf(srv->update_notice, sizeof(srv->update_notice),
-                     "Update available: %s -> %s -- run: codebase-memory-mcp update  |  "
-                     "Enjoying codebase-memory-mcp? Please leave a star: "
-                     "https://github.com/DeusData/codebase-memory-mcp",
+                     "Update available: %s -> %s -- run: semantic-memory-mcp update  |  "
+                     "Enjoying semantic-memory-mcp? Please leave a star: "
+                     "https://github.com/ZR113146/semantic-memory-mcp",
                      current, tag_str);
             cbm_log_info("update.available", "current", current, "latest", tag_str);
         }

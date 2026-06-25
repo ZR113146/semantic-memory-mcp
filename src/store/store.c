@@ -182,6 +182,124 @@ static char *heap_strdup(const char *s) {
     return d;
 }
 
+/* Decode one UTF-8 codepoint at p; advance *adv by byte length (1..4).
+ * Returns the codepoint, or the raw byte on malformed input (adv=1). */
+static uint32_t mem_utf8_decode(const unsigned char *p, int *adv) {
+    unsigned char c = p[0];
+    if (c < 0x80) { *adv = 1; return c; }
+    if ((c & 0xE0) == 0xC0 && (p[1] & 0xC0) == 0x80) {
+        *adv = 2; return ((uint32_t)(c & 0x1F) << 6) | (p[1] & 0x3F);
+    }
+    if ((c & 0xF0) == 0xE0 && (p[1] & 0xC0) == 0x80 && (p[2] & 0xC0) == 0x80) {
+        *adv = 3; return ((uint32_t)(c & 0x0F) << 12) | ((uint32_t)(p[1] & 0x3F) << 6) | (p[2] & 0x3F);
+    }
+    if ((c & 0xF8) == 0xF0 && (p[1] & 0xC0) == 0x80 && (p[2] & 0xC0) == 0x80 && (p[3] & 0xC0) == 0x80) {
+        *adv = 4; return ((uint32_t)(c & 0x07) << 18) | ((uint32_t)(p[1] & 0x3F) << 12) |
+                          ((uint32_t)(p[2] & 0x3F) << 6) | (p[3] & 0x3F);
+    }
+    *adv = 1; return c;
+}
+
+/* True for CJK codepoints we want to segment into character bigrams:
+ * CJK Unified (incl. Ext-A), compatibility ideographs, and Hiragana/Katakana.
+ * These scripts have no word spaces, so unicode61 indexes a whole run as one
+ * token and substring MATCH fails — bigram splitting restores recall. */
+static int mem_is_cjk(uint32_t cp) {
+    return (cp >= 0x3400 && cp <= 0x9FFF)   /* CJK Unified + Ext-A */
+        || (cp >= 0xF900 && cp <= 0xFAFF)   /* CJK compatibility ideographs */
+        || (cp >= 0x3040 && cp <= 0x30FF);  /* Hiragana + Katakana */
+}
+
+/* Segment UTF-8 text for FTS indexing/query (zhiwei-kb lattice approach, lite):
+ *   - ASCII alphanumeric runs are kept whole and lowercased (one token).
+ *   - CJK runs are split into overlapping character bigrams; a lone CJK char
+ *     becomes a unigram. Tokens are space-joined.
+ * Returns a heap string the caller must free, or NULL on OOM/empty.
+ * Worst case each 3-byte CJK char yields a ~7-byte "xy " bigram token, so a
+ * 4x size bound is safe. */
+static char *memory_segment_cjk(const char *text) {
+    if (!text || !text[0]) {
+        return NULL;
+    }
+    size_t in_len = strlen(text);
+    /* Generous bound: bigrams duplicate each CJK char (max 4 bytes) plus a space. */
+    size_t cap = in_len * 4 + 16;
+    char *out = malloc(cap);
+    if (!out) {
+        return NULL;
+    }
+    size_t w = 0;
+    int need_space = 0; /* a separator is needed before the next token */
+
+#define MEM_SEG_PUT(src, n) do {                          \
+        if (need_space && w < cap) out[w++] = ' ';        \
+        for (int _i = 0; _i < (n) && w < cap; _i++)       \
+            out[w++] = (src)[_i];                         \
+        need_space = 1;                                   \
+    } while (0)
+
+    const unsigned char *p = (const unsigned char *)text;
+    const unsigned char *end = p + in_len;
+    while (p < end) {
+        int adv = 1;
+        uint32_t cp = mem_utf8_decode(p, &adv);
+
+        if (mem_is_cjk(cp)) {
+            /* Consume the whole CJK run, recording byte offsets of each char. */
+            const unsigned char *run_start = p;
+            const unsigned char *q = p;
+            size_t offs[256];
+            int nchar = 0;
+            while (q < end && nchar < (int)(sizeof(offs) / sizeof(offs[0]))) {
+                int a = 1;
+                uint32_t c = mem_utf8_decode(q, &a);
+                if (!mem_is_cjk(c)) break;
+                offs[nchar++] = (size_t)(q - run_start);
+                q += a;
+            }
+            size_t run_bytes = (size_t)(q - run_start);
+            if (nchar == 1) {
+                MEM_SEG_PUT((const char *)run_start, (int)run_bytes);
+            } else {
+                for (int i = 0; i + 1 < nchar; i++) {
+                    size_t bstart = offs[i];
+                    size_t bend = (i + 2 < nchar) ? offs[i + 2] : run_bytes;
+                    MEM_SEG_PUT((const char *)(run_start + bstart), (int)(bend - bstart));
+                }
+            }
+            p = q;
+            continue;
+        }
+
+        int is_ascii_word = (cp < 0x80) &&
+            ((cp >= 'a' && cp <= 'z') || (cp >= 'A' && cp <= 'Z') || (cp >= '0' && cp <= '9') || cp == '_');
+        if (is_ascii_word) {
+            /* Consume the whole ASCII word run, lowercasing. */
+            char word[256];
+            int wn = 0;
+            const unsigned char *q = p;
+            while (q < end && wn < (int)sizeof(word)) {
+                unsigned char c = *q;
+                int aw = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+                if (!aw) break;
+                word[wn++] = (char)((c >= 'A' && c <= 'Z') ? c + 32 : c);
+                q++;
+            }
+            MEM_SEG_PUT(word, wn);
+            p = q;
+            continue;
+        }
+
+        /* Whitespace / punctuation / other: token separator. */
+        if (w > 0) need_space = 1;
+        p += adv;
+    }
+    if (w >= cap) w = cap - 1;
+    out[w] = '\0';
+#undef MEM_SEG_PUT
+    return out;
+}
+
 /* Prepare a statement (cached). If already prepared, reset+clear. */
 static sqlite3_stmt *prepare_cached(cbm_store_t *s, sqlite3_stmt **slot, const char *sql) {
     if (!s || !s->db) {
@@ -1898,12 +2016,21 @@ static int memory_fts_upsert(cbm_store_t *s, const cbm_memory_item_t *item, cons
     if (sqlite3_prepare_v2(s->db, ins_sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
         return CBM_STORE_OK;
     }
+    /* Index CJK-segmented text so unicode61 sees space-separated bigram tokens
+     * (Chinese has no word spaces; without this a whole run is one token and
+     * substring MATCH never hits). Display still uses the original content. */
+    char *seg_title = memory_segment_cjk(item->title);
+    char *seg_summary = memory_segment_cjk(item->summary);
+    char *seg_content = memory_segment_cjk(memory_nonempty(item->content, ""));
     bind_text(stmt, 1, id);
-    memory_bind_nullable(stmt, 2, item->title);
-    memory_bind_nullable(stmt, 3, item->summary);
-    bind_text(stmt, 4, memory_nonempty(item->content, ""));
+    memory_bind_nullable(stmt, 2, seg_title);
+    memory_bind_nullable(stmt, 3, seg_summary);
+    bind_text(stmt, 4, seg_content ? seg_content : "");
     (void)sqlite3_step(stmt);
     sqlite3_finalize(stmt);
+    free(seg_title);
+    free(seg_summary);
+    free(seg_content);
     return CBM_STORE_OK;
 }
 
@@ -2029,6 +2156,14 @@ static int memory_scope_score(const cbm_memory_item_t *item, const cbm_memory_qu
 
 static int memory_compare_for_conflict(const cbm_memory_item_t *a, const cbm_memory_item_t *b,
                                        const cbm_memory_query_t *query) {
+    /* This runs over query results, so the item that actually matched the query
+     * should represent its conflict cluster — otherwise a low-relevance vector
+     * candidate can hide the FTS hit the user was searching for. Retrieval score
+     * (fts=1.0, vector=cosine) is therefore the primary key; storage-quality
+     * signals (scope/confidence/recency) only break ties at equal relevance. */
+    if (a->retrieval_score != b->retrieval_score) {
+        return a->retrieval_score > b->retrieval_score ? 1 : -1;
+    }
     int as = memory_scope_score(a, query);
     int bs = memory_scope_score(b, query);
     if (as != bs) {
@@ -2505,6 +2640,52 @@ static int memory_retrieve_vector_only(cbm_store_t *s, const cbm_memory_query_t 
     return CBM_STORE_OK;
 }
 
+/* Minimum fraction of query tokens that must appear in a document for an
+ * OR-joined FTS hit to count, for multi-token queries. Below this it's
+ * incidental single-bigram overlap (noise), not a real match. */
+#define MEMORY_FTS_MIN_OVERLAP 0.30
+
+/* Count how many space-separated tokens of seg_query also appear (as whole
+ * space-delimited tokens) in the segmented form of content. Used to gate
+ * OR-joined FTS hits: a query that shares only one common bigram (e.g. "用户")
+ * with a document is noise, not a match. Returns matched/total in *ratio. */
+static int memory_token_overlap(const char *seg_query, const char *content, double *ratio) {
+    if (ratio) *ratio = 0.0;
+    if (!seg_query || !seg_query[0] || !content) return 0;
+    char *seg_c = memory_segment_cjk(content);
+    if (!seg_c) return 0;
+    /* Wrap content tokens in spaces so " tok " substring search is boundary-safe. */
+    size_t cl = strlen(seg_c);
+    char *padded = malloc(cl + 3);
+    if (!padded) { free(seg_c); return 0; }
+    padded[0] = ' ';
+    memcpy(padded + 1, seg_c, cl);
+    padded[cl + 1] = ' ';
+    padded[cl + 2] = '\0';
+    int total = 0, matched = 0;
+    const char *p = seg_query;
+    char tok[64];
+    while (*p) {
+        while (*p == ' ') p++;
+        if (!*p) break;
+        int tl = 0;
+        while (*p && *p != ' ' && tl < (int)sizeof(tok) - 3) tok[tl++] = *p++;
+        while (*p && *p != ' ') p++; /* skip overflow tail */
+        if (tl == 0) continue;
+        char needle[68];
+        needle[0] = ' ';
+        memcpy(needle + 1, tok, (size_t)tl);
+        needle[tl + 1] = ' ';
+        needle[tl + 2] = '\0';
+        total++;
+        if (strstr(padded, needle)) matched++;
+    }
+    free(seg_c);
+    free(padded);
+    if (ratio && total > 0) *ratio = (double)matched / (double)total;
+    return matched;
+}
+
 int cbm_store_memory_retrieve(cbm_store_t *s, const cbm_memory_query_t *query,
                               cbm_memory_result_t *out) {
     memset(out, 0, sizeof(*out));
@@ -2519,7 +2700,7 @@ int cbm_store_memory_retrieve(cbm_store_t *s, const cbm_memory_query_t *query,
     if (has_text) {
         const char *fts_sql =
             "SELECT " MEMORY_SELECT_RAW " FROM ("
-            "  SELECT fts.item_id, bm25(memory_fts) AS rank "
+            "  SELECT item_id, bm25(memory_fts) AS rank "
             "  FROM memory_fts WHERE memory_fts MATCH ?1 "
             "  ORDER BY rank LIMIT ?8"
             ") fts "
@@ -2532,32 +2713,37 @@ int cbm_store_memory_retrieve(cbm_store_t *s, const cbm_memory_query_t *query,
         if (sqlite3_prepare_v2(s->db, fts_sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
             return memory_retrieve_vector_only(s, query, out, limit);
         }
-        /* Sanitize query for FTS5: strip operators, join tokens with OR */
+        /* Segment the query the same way the index was built: ASCII words kept
+         * whole, CJK split into character bigrams. This aligns query tokens with
+         * the bigram-indexed FTS content so Chinese MATCH works. The segmenter
+         * emits only alnum/CJK tokens separated by spaces — no FTS5 operators.
+         * We OR-join the tokens: a space (implicit AND) requires every bigram to
+         * be present, which is too strict for multi-word queries (e.g. "包管理项目"
+         * shares no single doc holding all bigrams). OR maximizes recall and bm25
+         * ranking floats the best overlap to the top. */
         char fts_buf[CBM_SZ_1K];
-        int ntok = 0;
-        const char *qp = query->query;
-        size_t pos = 0;
-        while (*qp && pos < sizeof(fts_buf) - 2) {
-            while (*qp && !((*qp >= 'a' && *qp <= 'z') || (*qp >= 'A' && *qp <= 'Z') ||
-                           (*qp >= '0' && *qp <= '9') || *qp == '_' ||
-                           (unsigned char)*qp >= 0x80)) { qp++; }
-            if (!*qp) break;
-            const char *ts = qp;
-            while (*qp && (((*qp >= 'a' && *qp <= 'z') || (*qp >= 'A' && *qp <= 'Z') ||
-                           (*qp >= '0' && *qp <= '9') || *qp == '_' ||
-                           (unsigned char)*qp >= 0x80))) { qp++; }
-            if (qp == ts) continue;
-            if (ntok > 0 && pos < sizeof(fts_buf) - 2) fts_buf[pos++] = ' ';
-            size_t tok_len = (size_t)(qp - ts);
-            if (pos + tok_len >= sizeof(fts_buf) - 1) break;
-            memcpy(fts_buf + pos, ts, tok_len);
-            pos += tok_len;
-            ntok++;
-        }
-        fts_buf[pos] = '\0';
-        if (ntok == 0) {
+        char *seg_q = memory_segment_cjk(query->query);
+        if (seg_q && seg_q[0]) {
+            size_t pos = 0;
+            for (const char *sp = seg_q; *sp && pos < sizeof(fts_buf) - 5; ) {
+                if (*sp == ' ') {
+                    /* token separator -> " OR " */
+                    if (pos > 0 && pos < sizeof(fts_buf) - 5) {
+                        memcpy(fts_buf + pos, " OR ", 4);
+                        pos += 4;
+                    }
+                    while (*sp == ' ') sp++;
+                } else {
+                    fts_buf[pos++] = *sp++;
+                }
+            }
+            fts_buf[pos] = '\0';
+            if (pos == 0) snprintf(fts_buf, sizeof(fts_buf), "%s", query->query);
+        } else {
             snprintf(fts_buf, sizeof(fts_buf), "%s", query->query);
         }
+        /* seg_q is kept alive past the MATCH binding: the fetch loop uses it to
+         * gate each hit by token overlap (drops single-shared-bigram noise). */
         bind_text(stmt, 1, fts_buf);
         memory_bind_nullable(stmt, 2, project);
         memory_bind_nullable(stmt, 3, query->user);
@@ -2573,12 +2759,34 @@ int cbm_store_memory_retrieve(cbm_store_t *s, const cbm_memory_query_t *query,
         cbm_memory_item_t *items = calloc((size_t)cap, sizeof(cbm_memory_item_t));
         int n = 0;
         int step_rc = SQLITE_ROW;
+        /* Count query tokens: single-token queries (e.g. "pnpm") must always pass
+         * the overlap gate, since one token at 100% overlap is a legitimate match. */
+        int qtok = 0;
+        for (const char *sp = seg_q ? seg_q : ""; *sp; ) {
+            while (*sp == ' ') sp++;
+            if (!*sp) break;
+            qtok++;
+            while (*sp && *sp != ' ') sp++;
+        }
         while ((step_rc = sqlite3_step(stmt)) == SQLITE_ROW && n < cap) {
             memory_scan_item(stmt, &items[n]);
+            /* Overlap gate: with OR-join a doc sharing just one common bigram
+             * (e.g. "用户") matches but is noise. Require >=30% of query tokens
+             * present for multi-token queries; single-token queries always pass. */
+            double overlap = 1.0;
+            if (qtok > 1 && seg_q) {
+                (void)memory_token_overlap(seg_q, items[n].content, &overlap);
+            }
+            if (qtok > 1 && overlap < MEMORY_FTS_MIN_OVERLAP) {
+                cbm_store_memory_item_free(&items[n]);
+                memset(&items[n], 0, sizeof(items[n]));
+                continue;
+            }
             items[n].retrieval_source = heap_strdup("fts");
             items[n].retrieval_score = 1.0;
             n++;
         }
+        free(seg_q);
         if (step_rc != SQLITE_DONE && step_rc != SQLITE_ROW) {
             sqlite3_finalize(stmt);
             free(items);
@@ -3021,6 +3229,43 @@ int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit,
         n++;
     }
     sqlite3_finalize(stmt);
+    if (processed) *processed = n;
+    return CBM_STORE_OK;
+}
+
+int cbm_store_memory_reindex_fts(cbm_store_t *s, const char *project, int *processed) {
+    if (processed) *processed = 0;
+    if (!s || !s->db) return CBM_STORE_ERR;
+    /* Drop existing FTS rows for the project's items, then re-insert with current
+     * segmentation. Scoped by project so reindex of one project leaves others alone. */
+    const char *del_sql =
+        "DELETE FROM memory_fts WHERE item_id IN "
+        "(SELECT id FROM memory_item WHERE ?1 IS NULL OR scope_project=?1);";
+    sqlite3_stmt *del = NULL;
+    if (sqlite3_prepare_v2(s->db, del_sql, CBM_NOT_FOUND, &del, NULL) == SQLITE_OK) {
+        memory_bind_nullable(del, 1, project);
+        (void)sqlite3_step(del);
+        sqlite3_finalize(del);
+    }
+    const char *sel_sql =
+        "SELECT id,title,summary,content FROM memory_item "
+        "WHERE (?1 IS NULL OR scope_project=?1) AND status IN ('active','candidate','deprecated');";
+    sqlite3_stmt *sel = NULL;
+    if (sqlite3_prepare_v2(s->db, sel_sql, CBM_NOT_FOUND, &sel, NULL) != SQLITE_OK) {
+        store_set_error_sqlite(s, "memory_reindex_select");
+        return CBM_STORE_ERR;
+    }
+    memory_bind_nullable(sel, 1, project);
+    int n = 0;
+    while (sqlite3_step(sel) == SQLITE_ROW) {
+        cbm_memory_item_t item = {0};
+        item.title = (const char *)sqlite3_column_text(sel, 1);
+        item.summary = (const char *)sqlite3_column_text(sel, 2);
+        item.content = (const char *)sqlite3_column_text(sel, 3);
+        const char *id = (const char *)sqlite3_column_text(sel, 0);
+        if (id && memory_fts_upsert(s, &item, id) == CBM_STORE_OK) n++;
+    }
+    sqlite3_finalize(sel);
     if (processed) *processed = n;
     return CBM_STORE_OK;
 }

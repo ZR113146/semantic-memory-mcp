@@ -466,6 +466,10 @@ int cbm_store_memory_feedback(cbm_store_t *s, const char *id, const char *projec
                               const char *note, const char *user, char **out_event_id);
 int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit, int *processed);
 int cbm_store_memory_decay(cbm_store_t *s, const char *project, int limit, int *processed);
+/* Rebuild the FTS index for a project from memory_item using the current
+ * segmentation (heals rows indexed before CJK bigram segmentation existed).
+ * Returns number of items reindexed in *processed. */
+int cbm_store_memory_reindex_fts(cbm_store_t *s, const char *project, int *processed);
 int cbm_store_memory_health(cbm_store_t *s, const char *project, cbm_memory_health_t *out);
 void cbm_store_memory_item_free(cbm_memory_item_t *item);
 void cbm_store_memory_result_free(cbm_memory_result_t *out);
