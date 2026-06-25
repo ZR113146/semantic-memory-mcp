@@ -34,6 +34,6 @@ Treat this as an explicit delivery decision unless sqlite-vec becomes a hard acc
 
 ## Remaining Release Checks
 
-- Confirm whether the deleted `scripts/setup.sh` in the working tree is intentional before release.
+- Confirm local antivirus tooling has not quarantined `scripts/setup.sh` again before release.
 - Run the focused Windows memory validation from a clean shell using `scripts\test-memory-windows.cmd`.
 - Run broader project tests/builds as time allows after the MVP memory path is green.
