@@ -2,7 +2,7 @@
  * traces.h — OTLP trace processing helpers.
  *
  * Pure helper functions for extracting data from OpenTelemetry spans.
- * Used by the MCP ingest_traces handler.
+ * Previously used by the MCP ingest_traces handler (now legacy inert).
  */
 #ifndef CBM_TRACES_H
 #define CBM_TRACES_H

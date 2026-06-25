@@ -68,7 +68,7 @@ codebase-memory-mcp cli get_architecture '{}'
 | **Indexing** | `index_repository`, `list_projects`, `delete_project`, `index_status` |
 | **Querying** | `search_graph`, `trace_call_path`, `detect_changes`, `query_graph` |
 | **Analysis** | `get_architecture`, `get_graph_schema`, `get_code_snippet`, `search_code` |
-| **Advanced** | `manage_adr`, `ingest_traces` |
+| **Memory MVP** | `events`, `memories_retrieve`, `admin_consolidate`, `memory_health` |
 
 ## Performance
 
