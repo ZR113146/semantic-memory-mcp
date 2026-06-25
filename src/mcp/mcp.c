@@ -436,8 +436,13 @@ static const tool_def_t TOOLS[] = {
     {"events", "Write a raw long-term memory event through the synchronous hot path",
      "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
      "\"type\":{\"type\":\"string\"},\"source\":{\"type\":\"string\"},\"user\":{\"type\":\"string\"},"
-     "\"payload\":{},\"content\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"},"
-     "\"confidence\":{\"type\":\"number\"}},\"required\":[\"project\",\"payload\"]}"},
+     "\"task\":{\"type\":\"string\"},\"payload\":{},\"content\":{\"type\":\"string\"},"
+     "\"context\":{},\"kind\":{\"type\":\"string\"},\"layer\":{\"type\":\"string\"},"
+     "\"title\":{\"type\":\"string\"},\"summary\":{\"type\":\"string\"},"
+     "\"entity_key\":{\"type\":\"string\"},\"predicate\":{\"type\":\"string\"},"
+     "\"importance\":{\"type\":\"number\"},\"confidence\":{\"type\":\"number\"},"
+     "\"reusability\":{\"type\":\"number\"},\"specificity\":{\"type\":\"number\"}},"
+     "\"required\":[\"project\",\"payload\"]}"},
 
     {"memories_retrieve", "Retrieve task-relevant long-term memories with structured filters",
      "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},\"user\":{\"type\":\"string\"},"
@@ -3987,6 +3992,15 @@ static double memory_arg_double(yyjson_doc *doc, const char *key, double def) {
     return (v && yyjson_is_num(v)) ? yyjson_get_real(v) : def;
 }
 
+static double memory_arg_positive_double(yyjson_doc *doc, const char *key, double def) {
+    yyjson_val *v = memory_arg(doc, key);
+    if (!v || !yyjson_is_num(v)) {
+        return def;
+    }
+    double value = yyjson_get_real(v);
+    return value > 0.0 ? value : def;
+}
+
 static char *memory_arg_raw_dup(yyjson_doc *doc, const char *key) {
     yyjson_val *v = memory_arg(doc, key);
     if (!v) return NULL;
@@ -4046,19 +4060,33 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     char *source = memory_arg_string_dup(adoc, "source");
     char *user = memory_arg_string_dup(adoc, "user");
     char *task = memory_arg_string_dup(adoc, "task");
+    char *kind = memory_arg_string_dup(adoc, "kind");
+    char *layer = memory_arg_string_dup(adoc, "layer");
+    char *title = memory_arg_string_dup(adoc, "title");
+    char *summary = memory_arg_string_dup(adoc, "summary");
+    char *entity_key = memory_arg_string_dup(adoc, "entity_key");
+    char *predicate = memory_arg_string_dup(adoc, "predicate");
     char *payload = memory_arg_raw_dup(adoc, "payload");
     char *content = memory_arg_string_dup(adoc, "content");
+    char *context_json = memory_arg_raw_dup(adoc, "context");
     double confidence = memory_arg_double(adoc, "confidence", 0.5);
+    double importance = memory_arg_positive_double(adoc, "importance", 0.5);
+    double reusability = memory_arg_positive_double(adoc, "reusability", 0.5);
+    double specificity = memory_arg_positive_double(adoc, "specificity", 0.5);
     yyjson_doc_free(adoc);
     if (!project || !payload) {
-        free(project); free(type); free(source); free(user); free(task); free(payload); free(content);
+        free(project); free(type); free(source); free(user); free(task); free(kind); free(layer);
+        free(title); free(summary); free(entity_key); free(predicate); free(payload); free(content);
+        free(context_json);
         return cbm_mcp_text_result("project and payload are required", true);
     }
     cbm_store_t *store = resolve_memory_store(srv, project);
     if (!store) {
         char *_err = build_project_list_error("project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
-        free(_err); free(project); free(type); free(source); free(user); free(task); free(payload); free(content);
+        free(_err); free(project); free(type); free(source); free(user); free(task); free(kind); free(layer);
+        free(title); free(summary); free(entity_key); free(predicate); free(payload); free(content);
+        free(context_json);
         return _res;
     }
     cbm_memory_event_t event = {0};
@@ -4068,27 +4096,31 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     event.user = user;
     event.payload = payload;
     event.confidence = confidence;
-    event.context_json = "{}";
+    event.context_json = context_json ? context_json : "{}";
     char *event_id = NULL;
     if (cbm_store_memory_append_event(store, &event, &event_id) != CBM_STORE_OK) {
-        free(project); free(type); free(source); free(user); free(task); free(payload); free(content);
+        free(project); free(type); free(source); free(user); free(task); free(kind); free(layer);
+        free(title); free(summary); free(entity_key); free(predicate); free(payload); free(content);
+        free(context_json);
         return cbm_mcp_text_result("failed to append memory event", true);
     }
     char source_ids[CBM_SZ_256];
     snprintf(source_ids, sizeof(source_ids), "[\"%s\"]", event_id ? event_id : "");
     cbm_memory_item_t item = {0};
-    item.kind = "event";
-    item.layer = "episodic";
-    item.title = type ? type : "memory.event";
-    item.summary = content ? content : payload;
+    item.kind = kind ? kind : "event";
+    item.layer = layer ? layer : "episodic";
+    item.title = title ? title : (type ? type : "memory.event");
+    item.summary = summary ? summary : (content ? content : payload);
     item.content = content ? content : payload;
     item.scope_user = user;
     item.scope_project = project;
     item.scope_task = task;
-    item.importance = 0.5;
+    item.entity_key = entity_key;
+    item.predicate = predicate;
+    item.importance = importance;
     item.confidence = confidence;
-    item.reusability = 0.5;
-    item.specificity = 0.5;
+    item.reusability = reusability;
+    item.specificity = specificity;
     item.status = "candidate";
     item.version = 1;
     item.source_event_ids = source_ids;
@@ -4102,15 +4134,16 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     yyjson_mut_obj_add_str(doc, root, "event_id", event_id ? event_id : "");
     yyjson_mut_obj_add_str(doc, root, "item_id", item_id ? item_id : "");
     yyjson_mut_obj_add_str(doc, root, "item_status", item_rc == CBM_STORE_OK ? "candidate" : "write_error");
-    yyjson_mut_obj_add_str(doc, root, "hot_path", "event+candidate only; no llm, embedding, dedup, or edge extraction");
+    yyjson_mut_obj_add_str(doc, root, "hot_path", "event+structured candidate only; consolidation builds dedup, vectors, and evidence edges");
     char *json = yy_doc_to_str(doc);
     yyjson_mut_doc_free(doc);
     char *result = cbm_mcp_text_result(json, item_rc != CBM_STORE_OK);
     free(json); free(event_id); free(item_id);
-    free(project); free(type); free(source); free(user); free(task); free(payload); free(content);
+    free(project); free(type); free(source); free(user); free(task); free(kind); free(layer);
+    free(title); free(summary); free(entity_key); free(predicate); free(payload); free(content);
+    free(context_json);
     return result;
 }
-
 static char *handle_memories_retrieve(cbm_mcp_server_t *srv, const char *args) {
     char *project = cbm_mcp_get_string_arg(args, "project");
     if (!project) return cbm_mcp_text_result("project is required", true);

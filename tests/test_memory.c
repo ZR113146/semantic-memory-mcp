@@ -63,6 +63,45 @@ TEST(memory_append_candidate) {
     return 0;
 }
 
+TEST(memory_append_structured_candidate) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_memory_item_t item = {0};
+    item.kind = "decision";
+    item.layer = "semantic";
+    item.title = "Use structured memory events";
+    item.summary = "Structured fields should survive the hot path.";
+    item.content = "Store user decisions with explicit entity and predicate.";
+    item.scope_user = "alice";
+    item.scope_project = "test-proj";
+    item.scope_task = "memory-mvp";
+    item.entity_key = "memory.events";
+    item.predicate = "decides";
+    item.importance = 0.8;
+    item.confidence = 0.9;
+    item.reusability = 0.7;
+    item.specificity = 0.6;
+    item.status = "candidate";
+    item.source_event_ids = "[\"evt-structured\"]";
+    char *id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+    cbm_memory_item_t out = {0};
+    ASSERT(cbm_store_memory_get_item(s, id, &out) == CBM_STORE_OK);
+    ASSERT(strcmp(out.kind, "decision") == 0);
+    ASSERT(strcmp(out.layer, "semantic") == 0);
+    ASSERT(strcmp(out.scope_user, "alice") == 0);
+    ASSERT(strcmp(out.scope_task, "memory-mvp") == 0);
+    ASSERT(strcmp(out.entity_key, "memory.events") == 0);
+    ASSERT(strcmp(out.predicate, "decides") == 0);
+    ASSERT(out.importance > 0.79 && out.reusability > 0.69 && out.specificity > 0.59);
+    ASSERT(strstr(out.source_event_ids, "evt-structured") != NULL);
+    cbm_store_memory_item_free(&out);
+    free(id);
+    cbm_store_close(s);
+    return 0;
+}
+
+
 TEST(memory_get_item) {
     cbm_store_t *s = cbm_store_open_memory();
     ASSERT(s != NULL);
@@ -410,6 +449,7 @@ int main(void) {
     RUN(memory_schema_init);
     RUN(memory_append_event);
     RUN(memory_append_candidate);
+    RUN(memory_append_structured_candidate);
     RUN(memory_get_item);
     RUN(memory_retrieve_structured);
     RUN(memory_retrieve_fts);
