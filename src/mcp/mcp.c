@@ -4064,6 +4064,54 @@ static yyjson_mut_val *memory_item_to_json(yyjson_mut_doc *doc, const cbm_memory
     return obj;
 }
 
+static bool memory_policy_has_signal(const char *s) {
+    if (!s) return false;
+    for (const unsigned char *p = (const unsigned char *)s; *p; p++) {
+        if (*p > ' ') return true;
+    }
+    return false;
+}
+
+static bool memory_policy_contains_i(const char *hay, const char *needle) {
+    if (!hay || !needle || !needle[0]) return false;
+    size_t nlen = strlen(needle);
+    for (const char *p = hay; *p; p++) {
+        size_t i = 0;
+        while (i < nlen && p[i]) {
+            unsigned char a = (unsigned char)p[i], b = (unsigned char)needle[i];
+            if (a >= 'A' && a <= 'Z') a = (unsigned char)(a - 'A' + 'a');
+            if (b >= 'A' && b <= 'Z') b = (unsigned char)(b - 'A' + 'a');
+            if (a != b) break;
+            i++;
+        }
+        if (i == nlen) return true;
+    }
+    return false;
+}
+
+static const char *memory_write_policy_decide(const char *text, const char *kind,
+                                              const char *type, const char **reason) {
+    if (!memory_policy_has_signal(text)) {
+        if (reason) *reason = "empty_payload";
+        return "rejected";
+    }
+    if ((kind && (strcmp(kind, "debug") == 0 || strcmp(kind, "scratch") == 0)) ||
+        (type && (strcmp(type, "debug") == 0 || strcmp(type, "scratch") == 0)) ||
+        memory_policy_contains_i(text, "temporary note") ||
+        memory_policy_contains_i(text, "scratch note")) {
+        if (reason) *reason = "low_value_transient";
+        return "rejected";
+    }
+    if ((kind && (strcmp(kind, "preference") == 0 || strcmp(kind, "decision") == 0 ||
+                  strcmp(kind, "constraint") == 0 || strcmp(kind, "lesson") == 0)) ||
+        memory_policy_contains_i(text, "remember") ||
+        memory_policy_contains_i(text, "do not forget")) {
+        if (reason) *reason = "explicit_or_high_value";
+        return "must_write";
+    }
+    if (reason) *reason = "default_candidate";
+    return "candidate";
+}
 static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     yyjson_doc *adoc = yyjson_read(args ? args : "{}", args ? strlen(args) : 2, 0);
     if (!adoc) return cbm_mcp_text_result("invalid JSON arguments", true);
@@ -4091,6 +4139,25 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         free(title); free(summary); free(entity_key); free(predicate); free(payload); free(content);
         free(context_json);
         return cbm_mcp_text_result("project and payload are required", true);
+    }
+    const char *policy_reason = NULL;
+    const char *policy_decision = memory_write_policy_decide(content ? content : payload, kind, type, &policy_reason);
+    if (strcmp(policy_decision, "rejected") == 0) {
+        yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+        yyjson_mut_val *root = yyjson_mut_obj(doc);
+        yyjson_mut_doc_set_root(doc, root);
+        yyjson_mut_obj_add_str(doc, root, "status", "rejected");
+        yyjson_mut_obj_add_str(doc, root, "policy_decision", policy_decision);
+        yyjson_mut_obj_add_str(doc, root, "policy_reason", policy_reason ? policy_reason : "");
+        yyjson_mut_obj_add_str(doc, root, "hot_path", "write policy rejected before event/item persistence");
+        char *json = yy_doc_to_str(doc);
+        yyjson_mut_doc_free(doc);
+        char *result = cbm_mcp_text_result(json, false);
+        free(json);
+        free(project); free(type); free(source); free(user); free(task); free(kind); free(layer);
+        free(title); free(summary); free(entity_key); free(predicate); free(payload); free(content);
+        free(context_json);
+        return result;
     }
     cbm_store_t *store = resolve_memory_store(srv, project);
     if (!store) {
@@ -4143,6 +4210,8 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
     yyjson_mut_obj_add_str(doc, root, "status", item_rc == CBM_STORE_OK ? "accepted" : "event_only");
+    yyjson_mut_obj_add_str(doc, root, "policy_decision", policy_decision);
+    yyjson_mut_obj_add_str(doc, root, "policy_reason", policy_reason ? policy_reason : "");
     yyjson_mut_obj_add_str(doc, root, "event_id", event_id ? event_id : "");
     yyjson_mut_obj_add_str(doc, root, "item_id", item_id ? item_id : "");
     yyjson_mut_obj_add_str(doc, root, "item_status", item_rc == CBM_STORE_OK ? "candidate" : "write_error");
