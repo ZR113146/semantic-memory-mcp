@@ -387,6 +387,62 @@ TEST(memory_consolidate) {
     return 0;
 }
 
+TEST(memory_consolidate_merge_keeps_new_event_evidence) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_memory_item_t active = {0};
+    active.kind = "fact";
+    active.layer = "semantic";
+    active.content = "Use SQLite for memory storage";
+    active.scope_project = "test-proj";
+    active.entity_key = "memory.storage";
+    active.predicate = "decides";
+    active.status = "active";
+    char *active_id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &active, &active_id) == CBM_STORE_OK);
+
+    cbm_memory_item_t candidate = {0};
+    candidate.kind = "fact";
+    candidate.layer = "semantic";
+    candidate.content = "Use SQLite for memory storage";
+    candidate.scope_project = "test-proj";
+    candidate.entity_key = "memory.storage";
+    candidate.predicate = "decides";
+    candidate.status = "candidate";
+    candidate.source_event_ids = "[\"evt-merge-support\"]";
+    char *candidate_id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &candidate, &candidate_id) == CBM_STORE_OK);
+
+    int processed = -1;
+    ASSERT(cbm_store_memory_consolidate(s, "test-proj", 100, &processed) == CBM_STORE_OK);
+    ASSERT(processed == 1);
+
+    cbm_memory_item_t archived = {0};
+    ASSERT(cbm_store_memory_get_item(s, candidate_id, &archived) == CBM_STORE_OK);
+    ASSERT(strcmp(archived.status, "archived") == 0);
+    ASSERT(strcmp(archived.supersedes, active_id) == 0);
+    cbm_store_memory_item_free(&archived);
+
+    cbm_memory_query_t q = {0};
+    q.project = "test-proj";
+    q.entity_key = "memory.storage";
+    q.limit = 5;
+    cbm_memory_result_t res = {0};
+    ASSERT(cbm_store_memory_retrieve(s, &q, &res) == CBM_STORE_OK);
+    ASSERT(res.count == 1);
+    ASSERT(strcmp(res.items[0].id, active_id) == 0);
+    ASSERT(res.items[0].evidence_json != NULL);
+    ASSERT(strstr(res.items[0].evidence_json, "evt-merge-support") != NULL);
+    ASSERT(strstr(res.items[0].evidence_json, "\"origin\":\"merge\"") != NULL);
+    cbm_store_memory_result_free(&res);
+
+    free(active_id);
+    free(candidate_id);
+    cbm_store_close(s);
+    return 0;
+}
+
+
 TEST(memory_health) {
     cbm_store_t *s = cbm_store_open_memory();
     ASSERT(s != NULL);
@@ -457,6 +513,7 @@ int main(void) {
     RUN(memory_retrieve_conflict_resolution);
     RUN(memory_retrieve_evidence_graph);
     RUN(memory_consolidate);
+    RUN(memory_consolidate_merge_keeps_new_event_evidence);
     RUN(memory_health);
     RUN(memory_mark_hits);
     RUN(memory_decay_archives_stale);

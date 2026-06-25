@@ -2748,6 +2748,7 @@ int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit,
                 sqlite3_finalize(m2);
             }
             (void)memory_edge_insert(s, id, merge_id, "similar_to", "post", confidence);
+            if (source_event_id[0]) (void)memory_edge_insert(s, merge_id, source_event_id, "derived_from", "merge", 1.0);
         } else {
             sqlite3_stmt *up = NULL;
             const char *up_sql =
