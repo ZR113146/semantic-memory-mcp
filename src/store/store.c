@@ -1825,6 +1825,7 @@ void cbm_store_memory_item_free(cbm_memory_item_t *item) {
     safe_str_free(&item->supersedes);
     safe_str_free(&item->source_event_ids);
     safe_str_free(&item->conflict_ids);
+    safe_str_free(&item->conflict_resolution);
     safe_str_free(&item->evidence_json);
     safe_str_free(&item->retrieval_source);
     memset(item, 0, sizeof(*item));
@@ -2085,6 +2086,43 @@ static void memory_append_conflict_id(cbm_memory_item_t *winner, const char *id)
     winner->conflict_count++;
 }
 
+static const char *memory_conflict_resolution_reason(const cbm_memory_item_t *winner,
+                                                     const cbm_memory_item_t *loser,
+                                                     const cbm_memory_query_t *query) {
+    int ws = memory_scope_score(winner, query);
+    int ls = memory_scope_score(loser, query);
+    if (ws != ls) return "winner_by_scope";
+    if (winner && loser && winner->confidence != loser->confidence) return "winner_by_confidence";
+    if (winner && loser && winner->updated_at != loser->updated_at) return "winner_by_recency";
+    if (winner && loser && winner->hit_count != loser->hit_count) return "winner_by_hits";
+    return "winner_by_stable_id";
+}
+
+static void memory_append_conflict_resolution(cbm_memory_item_t *winner, const char *reason) {
+    if (!winner || !reason || !reason[0]) {
+        return;
+    }
+    if (winner->conflict_resolution && strstr(winner->conflict_resolution, reason)) {
+        return;
+    }
+    const char *old = winner->conflict_resolution;
+    size_t old_len = old ? strlen(old) : 0;
+    size_t add_len = strlen(reason);
+    size_t sep_len = old_len > 0 ? 1 : 0;
+    char *next = malloc(old_len + sep_len + add_len + 1);
+    if (!next) {
+        return;
+    }
+    if (old_len > 0) {
+        memcpy(next, old, old_len);
+        next[old_len] = ',';
+        memcpy(next + old_len + 1, reason, add_len + 1);
+    } else {
+        memcpy(next, reason, add_len + 1);
+    }
+    safe_str_free(&winner->conflict_resolution);
+    winner->conflict_resolution = next;
+}
 static bool memory_evidence_edge_type(const char *type) {
     return type && (strcmp(type, "supports") == 0 || strcmp(type, "derived_from") == 0 ||
                     strcmp(type, "used_in") == 0 || strcmp(type, "belongs_to") == 0 ||
@@ -2258,6 +2296,8 @@ static void memory_resolve_conflicts(cbm_store_t *s, const cbm_memory_query_t *q
             }
             hidden[i] = true;
             memory_append_conflict_id(&out->items[winner], out->items[i].id);
+            memory_append_conflict_resolution(&out->items[winner],
+                                              memory_conflict_resolution_reason(&out->items[winner], &out->items[i], query));
         }
     }
     int write = 0;

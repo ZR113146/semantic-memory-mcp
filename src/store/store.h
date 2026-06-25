@@ -100,6 +100,7 @@ typedef struct {
     const char *source_event_ids;
     int conflict_count;
     const char *conflict_ids;
+    const char *conflict_resolution;
     const char *evidence_json;
     const char *retrieval_source;
     double retrieval_score;

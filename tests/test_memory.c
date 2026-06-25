@@ -269,6 +269,8 @@ TEST(memory_retrieve_conflict_resolution) {
     ASSERT(strcmp(res.items[0].id, task_id) == 0);
     ASSERT(res.items[0].conflict_count == 1);
     ASSERT(strstr(res.items[0].conflict_ids, base_id) != NULL);
+    ASSERT(res.items[0].conflict_resolution != NULL);
+    ASSERT(strstr(res.items[0].conflict_resolution, "winner_by_scope") != NULL);
     cbm_store_memory_result_free(&res);
 
     memset(&q, 0, sizeof(q));
@@ -280,6 +282,8 @@ TEST(memory_retrieve_conflict_resolution) {
     ASSERT(strcmp(res.items[0].id, base_id) == 0);
     ASSERT(res.items[0].conflict_count == 1);
     ASSERT(strstr(res.items[0].conflict_ids, task_id) != NULL);
+    ASSERT(res.items[0].conflict_resolution != NULL);
+    ASSERT(strstr(res.items[0].conflict_resolution, "winner_by_confidence") != NULL);
     cbm_store_memory_result_free(&res);
 
     free(base_id);

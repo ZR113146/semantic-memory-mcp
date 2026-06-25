@@ -4057,6 +4057,7 @@ static yyjson_mut_val *memory_item_to_json(yyjson_mut_doc *doc, const cbm_memory
     yyjson_mut_obj_add_str(doc, obj, "source_event_ids", memory_item_str(it->source_event_ids));
     yyjson_mut_obj_add_int(doc, obj, "conflict_count", it->conflict_count);
     yyjson_mut_obj_add_str(doc, obj, "conflict_ids", memory_item_str(it->conflict_ids));
+    yyjson_mut_obj_add_str(doc, obj, "conflict_resolution", memory_item_str(it->conflict_resolution));
     yyjson_mut_obj_add_str(doc, obj, "evidence_json", memory_item_str(it->evidence_json));
     yyjson_mut_obj_add_str(doc, obj, "retrieval_source", memory_item_str(it->retrieval_source));
     yyjson_mut_obj_add_real(doc, obj, "retrieval_score", it->retrieval_score);
