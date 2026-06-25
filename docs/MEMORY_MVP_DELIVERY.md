@@ -15,7 +15,7 @@ The `.cmd` wrapper runs the PowerShell script with process-local `ExecutionPolic
 Latest local result:
 
 ```text
-19/19 passed
+22/22 passed
 ```
 
 ## Implemented MVP Surface
@@ -28,9 +28,25 @@ Latest local result:
 
 ## Intentional MVP Difference From The Target Framework
 
-The target framework mentions `sqlite-vec` / `vec0`. This codebase currently keeps the MVP zero-dependency by storing deterministic 768-dimensional vectors in a regular SQLite table (`memory_vec`) as a BLOB. Retrieval still has a vector path, but it is not backed by the sqlite-vec extension.
+The target framework mentions `sqlite-vec` / `vec0`. This codebase keeps the MVP
+zero-dependency by storing memory vectors in a regular SQLite table (`memory_vec`)
+as an int8 BLOB, with a custom `cbm_cosine_i8` SQL function for the vector path.
 
-Treat this as an explicit delivery decision unless sqlite-vec becomes a hard acceptance requirement. If sqlite-vec is required, add it as a separate dependency/packaging task instead of mixing it into the current stabilization pass.
+The vectors are **signed feature-hashing bag-of-features** embeddings
+(`memory_feature_vec`, 256 dims): ASCII text is lowercased and tokenized on word
+boundaries, and CJK / multibyte text contributes per-codepoint unigrams plus
+adjacent bigrams (Chinese has no word spaces). Shared words / n-grams hash into
+overlapping buckets, so cosine carries real lexical-semantic signal — distinct
+paraphrases stay close while divergent statements separate. This replaced an
+earlier whole-string hash where any two distinct strings were orthogonal noise
+(which left the dedup / contradiction detector effectively inert).
+
+This is deliberately lighter than a learned sentence embedding. The repo does
+ship a pretrained `nomic-embed-code` table, but it is distilled for *code*
+identifiers and pulls in the full semantic/worker-pool stack; wiring it into the
+memory path was rejected to keep the MVP store minimal (framework §0 principle 1).
+If learned natural-language embeddings become a hard requirement, add them as a
+separate task rather than mixing into this stabilization pass.
 
 ## Remaining Release Checks
 

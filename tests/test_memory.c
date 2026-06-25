@@ -611,6 +611,121 @@ TEST(memory_decay_archives_stale) {
     return 0;
 }
 
+/* The dedup vector must carry lexical-semantic signal: two near-identical
+ * statements in the same (entity, predicate, scope) bucket should MERGE via the
+ * cosine>=0.90 path during consolidation, not coexist. A whole-string hash
+ * would make these orthogonal and never merge. */
+TEST(memory_consolidate_merges_paraphrase) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_memory_item_t base = {0};
+    base.kind = "preference";
+    base.content = "user prefers dark mode for the editor theme";
+    base.scope_project = "test-proj";
+    base.entity_key = "user:theme";
+    base.predicate = "prefers";
+    base.status = "active";
+    char *base_id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &base, &base_id) == CBM_STORE_OK);
+
+    /* Same fact, one extra word: high lexical overlap → cosine should clear 0.90. */
+    cbm_memory_item_t dup = {0};
+    dup.kind = "preference";
+    dup.content = "user really prefers dark mode for the editor theme";
+    dup.scope_project = "test-proj";
+    dup.entity_key = "user:theme";
+    dup.predicate = "prefers";
+    dup.status = "candidate";
+    char *dup_id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &dup, &dup_id) == CBM_STORE_OK);
+
+    int processed = -1;
+    ASSERT(cbm_store_memory_consolidate(s, "test-proj", 100, &processed) == CBM_STORE_OK);
+
+    cbm_memory_item_t merged = {0};
+    ASSERT(cbm_store_memory_get_item(s, dup_id, &merged) == CBM_STORE_OK);
+    ASSERT(strcmp(merged.status, "archived") == 0); /* merged away, not coexisting */
+    cbm_store_memory_item_free(&merged);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_edge WHERE type='similar_to'") == 1);
+
+    free(base_id);
+    free(dup_id);
+    cbm_store_close(s);
+    return 0;
+}
+
+/* Divergent values under the SAME (entity, predicate, scope) bucket must be
+ * detected as a contradiction by consolidation itself (cosine<=0.30), producing
+ * a contradicts edge WITHOUT any hand-injected edge. This is the signal the
+ * read-time adjudicator depends on. */
+TEST(memory_consolidate_detects_contradiction) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_memory_item_t a = {0};
+    a.kind = "decision";
+    a.content = "always indent using tabs";
+    a.scope_project = "test-proj";
+    a.entity_key = "style:indentation";
+    a.predicate = "decides";
+    a.status = "active";
+    char *a_id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &a, &a_id) == CBM_STORE_OK);
+
+    cbm_memory_item_t b = {0};
+    b.kind = "decision";
+    b.content = "never use four whitespace characters";
+    b.scope_project = "test-proj";
+    b.entity_key = "style:indentation";
+    b.predicate = "decides";
+    b.status = "candidate";
+    char *b_id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &b, &b_id) == CBM_STORE_OK);
+
+    int processed = -1;
+    ASSERT(cbm_store_memory_consolidate(s, "test-proj", 100, &processed) == CBM_STORE_OK);
+
+    /* Not merged (low cosine) and a contradicts edge was raised by the rule path. */
+    cbm_memory_item_t bout = {0};
+    ASSERT(cbm_store_memory_get_item(s, b_id, &bout) == CBM_STORE_OK);
+    ASSERT(strcmp(bout.status, "active") == 0); /* coexists, not archived */
+    cbm_store_memory_item_free(&bout);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_edge WHERE type='contradicts' AND origin='rule'") >= 1);
+
+    free(a_id);
+    free(b_id);
+    cbm_store_close(s);
+    return 0;
+}
+
+/* A successful recall must let accumulated decay fall back (framework §11.2),
+ * not merely refresh recency. */
+TEST(memory_mark_hits_relaxes_decay) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_memory_item_t item = {0};
+    item.content = "decayed but still recalled";
+    item.scope_project = "test-proj";
+    item.status = "active";
+    item.decay = 0.5;
+    char *id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+
+    const char *ids[1] = { id };
+    ASSERT(cbm_store_memory_mark_hits(s, ids, 1, 0) == CBM_STORE_OK);
+
+    cbm_memory_item_t out = {0};
+    ASSERT(cbm_store_memory_get_item(s, id, &out) == CBM_STORE_OK);
+    ASSERT(out.hit_count == 1);
+    ASSERT(out.last_hit_at > 0);
+    ASSERT(out.decay < 0.5);          /* decay relaxed by the hit */
+    ASSERT(out.decay >= 0.0);
+    cbm_store_memory_item_free(&out);
+
+    free(id);
+    cbm_store_close(s);
+    return 0;
+}
+
 int main(void) {
     fprintf(stderr, "START\n");
     fflush(stderr);
@@ -627,6 +742,9 @@ int main(void) {
     RUN(memory_retrieve_evidence_graph);
     RUN(memory_consolidate);
     RUN(memory_consolidate_merge_keeps_new_event_evidence);
+    RUN(memory_consolidate_merges_paraphrase);
+    RUN(memory_consolidate_detects_contradiction);
+    RUN(memory_mark_hits_relaxes_decay);
     RUN(memory_health);
     RUN(memory_mark_hits);
     RUN(memory_update_status_retracts_from_default_retrieval);

@@ -305,7 +305,7 @@ static int init_schema(cbm_store_t *s) {
         ");"
         "CREATE TABLE IF NOT EXISTS memory_vec ("
         "  item_id TEXT PRIMARY KEY,"
-        "  dim INTEGER DEFAULT 768,"
+        "  dim INTEGER DEFAULT 256,"
         "  embedding BLOB,"
         "  embedding_json TEXT,"
         "  updated_at INTEGER"
@@ -2321,12 +2321,98 @@ static void memory_resolve_conflicts(cbm_store_t *s, const cbm_memory_query_t *q
     free(hidden);
 }
 
-static void memory_hash_vec64(const char *content, int8_t vec[64]) {
-    const char *safe = content ? content : "";
-    size_t len = strlen(safe);
-    for (int i = 0; i < 64; i++) {
-        uint64_t h = XXH3_64bits_withSeed(safe, len, (uint64_t)i * 1315423911ULL);
-        vec[i] = (int8_t)((int)(h & 0xff) - 128);
+/* Memory embedding dimension. Signed feature-hashing produces a sparse
+ * bag-of-features vector; 256 buckets keep collisions low for short memory
+ * texts while staying compact as an int8 BLOB. */
+enum { MEMORY_VEC_DIM = 256 };
+
+/* Add one feature (identified by its 64-bit hash) into the accumulator using
+ * the signed feature-hashing trick: the low bits pick the bucket, the high bit
+ * picks the sign. Repeated features accumulate, giving term-frequency weight. */
+static inline void memory_feat_add(int32_t *acc, uint64_t h) {
+    int bucket = (int)(h % (uint64_t)MEMORY_VEC_DIM);
+    acc[bucket] += (h & 0x8000000000000000ULL) ? 1 : -1;
+}
+
+/* Build a semantic-ish int8 vector from arbitrary natural-language content.
+ *
+ * Unlike a plain hash of the whole string (where any two distinct strings are
+ * orthogonal noise), this hashes shared features so that texts sharing words or
+ * CJK n-grams land in overlapping buckets:
+ *   - ASCII runs are lowercased and tokenized on non-alphanumeric boundaries.
+ *   - CJK / multibyte codepoints contribute a unigram plus a bigram with the
+ *     previous multibyte codepoint (Chinese has no spaces, so character
+ *     n-grams are the unit of overlap).
+ * The accumulator is L2-normalized into the int8 range; cosine similarity is
+ * scale-invariant, so the normalization only affects storage, not ranking. */
+static void memory_feature_vec(const char *content, int8_t vec[MEMORY_VEC_DIM]) {
+    int32_t acc[MEMORY_VEC_DIM];
+    memset(acc, 0, sizeof(acc));
+    const unsigned char *p = (const unsigned char *)(content ? content : "");
+    char tok[64];
+    int tlen = 0;
+    uint64_t prev_cp = 0;
+    bool have_prev = false;
+
+    while (*p) {
+        unsigned char c = *p;
+        if (c < 0x80) {
+            if (isalnum(c)) {
+                if (tlen < (int)sizeof(tok) - 1) {
+                    tok[tlen++] = (char)tolower(c);
+                }
+                p++;
+            } else {
+                if (tlen > 0) {
+                    memory_feat_add(acc, XXH3_64bits(tok, (size_t)tlen));
+                    tlen = 0;
+                }
+                p++;
+            }
+            have_prev = false;
+            continue;
+        }
+        /* Multibyte (CJK etc.): flush any pending ASCII token first. */
+        if (tlen > 0) {
+            memory_feat_add(acc, XXH3_64bits(tok, (size_t)tlen));
+            tlen = 0;
+        }
+        int n = 1;
+        if ((c & 0xE0) == 0xC0) n = 2;
+        else if ((c & 0xF0) == 0xE0) n = 3;
+        else if ((c & 0xF8) == 0xF0) n = 4;
+        for (int k = 1; k < n; k++) {
+            if (!p[k]) { n = k; break; }
+        }
+        if (n < 1) n = 1;
+        uint64_t cp = XXH3_64bits(p, (size_t)n);
+        memory_feat_add(acc, cp);
+        if (have_prev) {
+            memory_feat_add(acc, prev_cp * 1099511628211ULL ^ cp);
+        }
+        prev_cp = cp;
+        have_prev = true;
+        p += n;
+    }
+    if (tlen > 0) {
+        memory_feat_add(acc, XXH3_64bits(tok, (size_t)tlen));
+    }
+
+    double norm = 0.0;
+    for (int i = 0; i < MEMORY_VEC_DIM; i++) {
+        norm += (double)acc[i] * (double)acc[i];
+    }
+    norm = sqrt(norm);
+    if (norm < CBM_STORE_DENOM_EPS_D) {
+        memset(vec, 0, (size_t)MEMORY_VEC_DIM);
+        return;
+    }
+    double scale = 127.0 / norm;
+    for (int i = 0; i < MEMORY_VEC_DIM; i++) {
+        double v = (double)acc[i] * scale;
+        if (v > 127.0) v = 127.0;
+        if (v < -127.0) v = -127.0;
+        vec[i] = (int8_t)lround(v);
     }
 }
 
@@ -2370,8 +2456,8 @@ static int memory_append_vector_candidates(cbm_store_t *s, const cbm_memory_quer
     if (!s || !s->db || !query || !query->query || !query->query[0] || !out || !cap) {
         return CBM_STORE_OK;
     }
-    int8_t qvec[64];
-    memory_hash_vec64(query->query, qvec);
+    int8_t qvec[MEMORY_VEC_DIM];
+    memory_feature_vec(query->query, qvec);
     const char *sql =
         "SELECT " MEMORY_SELECT_RAW ", cbm_cosine_i8(v.embedding, ?1) AS vscore "
         "FROM memory_vec v JOIN memory_item m ON m.id = v.item_id "
@@ -2550,7 +2636,11 @@ int cbm_store_memory_mark_hits(cbm_store_t *s, const char **ids, int count, int6
     if (!s || !s->db || !ids || count <= 0) {
         return CBM_STORE_OK;
     }
-    const char *sql = "UPDATE memory_item SET hit_count=hit_count+1,last_hit_at=?1,updated_at=?1 WHERE id=?2;";
+    /* A successful recall is the strongest "still useful" signal (framework §6 principle 6,
+     * §11.2): bump the hit counter, refresh recency, and let accumulated decay fall back so a
+     * repeatedly-recalled item climbs back from the archival threshold. */
+    const char *sql = "UPDATE memory_item SET hit_count=hit_count+1,last_hit_at=?1,"
+                      "decay=MAX(0.0,decay-0.10),updated_at=?1 WHERE id=?2;";
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
         store_set_error_sqlite(s, "memory_hit_prepare");
@@ -2728,26 +2818,6 @@ static void memory_infer_entity(const char *scope_project, const char *scope_use
     else snprintf(out, out_sz, "%s:%s", prefix, token[0] ? token : "global");
 }
 
-static int memory_popcount8(unsigned char v) {
-    int n = 0;
-    while (v) { n += v & 1u; v >>= 1u; }
-    return n;
-}
-
-static double memory_content_similarity(const char *a, const char *b) {
-    if (!a || !b) return 0.0;
-    uint64_t ha = XXH3_64bits(a, strlen(a));
-    uint64_t hb = XXH3_64bits(b, strlen(b));
-    if (ha == hb) return 1.0;
-    int shared = 0;
-    for (int i = 0; i < 8; i++) {
-        unsigned char ca = (unsigned char)((ha >> (i * 8)) & 0xff);
-        unsigned char cb = (unsigned char)((hb >> (i * 8)) & 0xff);
-        shared += 8 - memory_popcount8((unsigned char)(ca ^ cb));
-    }
-    return (double)shared / 64.0;
-}
-
 static int memory_edge_insert(cbm_store_t *s, const char *src, const char *dst, const char *type, const char *origin, double confidence) {
     if (!s || !s->db || !src || !dst || !type || !origin) return CBM_STORE_OK;
     sqlite3_stmt *check = NULL;
@@ -2787,14 +2857,15 @@ static void memory_first_source_id(const char *source_ids, char *out, size_t out
 
 static int memory_vec_upsert(cbm_store_t *s, const char *item_id, const char *content) {
     if (!s || !s->db || !item_id) return CBM_STORE_OK;
-    int8_t vec[64];
-    memory_hash_vec64(content, vec);
-    const char *sql = "INSERT OR REPLACE INTO memory_vec (item_id,dim,embedding,embedding_json,updated_at) VALUES (?1,768,?2,NULL,?3);";
+    int8_t vec[MEMORY_VEC_DIM];
+    memory_feature_vec(content, vec);
+    const char *sql = "INSERT OR REPLACE INTO memory_vec (item_id,dim,embedding,embedding_json,updated_at) VALUES (?1,?2,?3,NULL,?4);";
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) return CBM_STORE_OK;
     bind_text(stmt, 1, item_id);
-    sqlite3_bind_blob(stmt, 2, vec, (int)sizeof(vec), SQLITE_TRANSIENT);
-    sqlite3_bind_int64(stmt, 3, memory_now_ms());
+    sqlite3_bind_int(stmt, 2, MEMORY_VEC_DIM);
+    sqlite3_bind_blob(stmt, 3, vec, (int)sizeof(vec), SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 4, memory_now_ms());
     (void)sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     return CBM_STORE_OK;
@@ -2841,15 +2912,17 @@ int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit,
         char merge_buf[CBM_SZ_128] = {0};
         const char *merge_id = NULL;
 
-        /* Build an int8 vector for the candidate content once, reuse for all comparisons.
-         * This replaces the XXH3 hamming-distance heuristic with the same cosine similarity
-         * used by the vector retrieval path, giving consistent semantic thresholds:
+        /* Build a feature-hashing vector for the candidate content once, reuse for all
+         * comparisons. Shared words / CJK n-grams produce overlapping buckets, so cosine
+         * carries real lexical-semantic signal (unlike a whole-string hash). The candidate
+         * is already SQL-filtered to the same (entity, predicate, scope) bucket, so within
+         * that bucket the thresholds mean:
          *   cosine >= 0.90  → merge   (same fact, same wording or near-identical paraphrase)
-         *   cosine <= 0.30  → contradicts edge  (true semantic opposition, not just different expression)
+         *   cosine <= 0.30  → contradicts edge  (same subject, divergent content)
          *   0.30 < cosine < 0.90 → coexist (let decay + read-time adjudication decide)
          */
-        int8_t cand_vec[64];
-        memory_hash_vec64(content, cand_vec);
+        int8_t cand_vec[MEMORY_VEC_DIM];
+        memory_feature_vec(content, cand_vec);
 
         if (sqlite3_prepare_v2(s->db, dup_sql, CBM_NOT_FOUND, &dup, NULL) == SQLITE_OK) {
             bind_text(dup, 1, entity);
@@ -2862,10 +2935,10 @@ int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit,
                 const char *other_content = (const char *)sqlite3_column_text(dup, 1);
                 if (!other_id) continue;
                 /* Compute cosine similarity via the same int8 hash vectors used at retrieve time. */
-                int8_t other_vec[64];
-                memory_hash_vec64(other_content, other_vec);
+                int8_t other_vec[MEMORY_VEC_DIM];
+                memory_feature_vec(other_content, other_vec);
                 int32_t dot = 0, mag_a = 0, mag_b = 0;
-                for (int vi = 0; vi < 64; vi++) {
+                for (int vi = 0; vi < MEMORY_VEC_DIM; vi++) {
                     dot  += (int32_t)cand_vec[vi] * (int32_t)other_vec[vi];
                     mag_a += (int32_t)cand_vec[vi] * (int32_t)cand_vec[vi];
                     mag_b += (int32_t)other_vec[vi] * (int32_t)other_vec[vi];
