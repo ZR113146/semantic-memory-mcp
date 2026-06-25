@@ -1,5 +1,5 @@
 /*
- * store.c �?SQLite graph store implementation.
+ * store.c �?SQLite graph store implementation.
  *
  * Implements the opaque cbm_store_t handle with prepared statement caching,
  * schema initialization, and all CRUD operations for nodes, edges, projects,
@@ -206,7 +206,7 @@ static void iso_now(char *buf, size_t sz) {
     struct tm tm;
     cbm_gmtime_r(&t, &tm);
     (void)strftime(buf, sz, "%Y-%m-%dT%H:%M:%SZ",
-                   &tm); // cert-err33-c: strftime only fails if buffer is too small �?21-byte ISO
+                   &tm); // cert-err33-c: strftime only fails if buffer is too small �?21-byte ISO
                          // timestamp always fits in caller-provided buffers
 }
 
@@ -318,7 +318,7 @@ static int init_schema(cbm_store_t *s) {
 
     /* FTS5 contentless virtual table for BM25 full-text search.
      * Contentless (content='') means FTS5 stores only the inverted index,
-     * not a copy of the source text �?required for camelCase tokenization
+     * not a copy of the source text �?required for camelCase tokenization
      * because we feed it `cbm_camel_split(name)` at insert time but want
      * queries to match against the split tokens, not the original.
      * Fails silently if FTS5 is not compiled in (SQLITE_ENABLE_FTS5). */
@@ -369,7 +369,7 @@ static int create_user_indexes(cbm_store_t *s) {
     /* NOTE: a partial expression index on json_extract(properties,'$.is_entry_point')
      * was tried for arch_entry_points and REVERTED: json_extract in an index WHERE
      * aborts CREATE INDEX (and thus store open) on any row whose properties JSON is
-     * malformed �?and pre-fix databases contain such rows (see
+     * malformed �?and pre-fix databases contain such rows (see
      * pipeline_def_props_valid_json_when_oversized). Revisit only with a
      * json_valid()-guarded expression once legacy DBs have aged out. */
     return exec_sql(s, sql);
@@ -384,7 +384,7 @@ int64_t cbm_store_resolve_mmap_size(void) {
     char *end = NULL;
     long long parsed = strtoll(buf, &end, BASE_10);
     if (end == buf || *end != '\0') {
-        /* Malformed �?fall back to default rather than fail the store open. */
+        /* Malformed �?fall back to default rather than fail the store open. */
         return (int64_t)MMAP_DEFAULT;
     }
     if (parsed < 0) {
@@ -437,9 +437,9 @@ static int configure_pragmas(cbm_store_t *s, bool in_memory) {
  * whitespace tokenizer produces both `updateCloudClient` (exact match) and the
  * word tokens `update`, `cloud`, `client`.  Rules:
  *   1. insert space before an uppercase letter preceded by a lowercase letter
- *      ("updateCloud" �?"update Cloud")
+ *      ("updateCloud" �?"update Cloud")
  *   2. insert space before an uppercase letter preceded by another uppercase
- *      but followed by a lowercase letter ("XMLParser" �?"XML Parser", not
+ *      but followed by a lowercase letter ("XMLParser" �?"XML Parser", not
  *      "X M L Parser")
  * snake_case is already split by FTS5's unicode61 tokenizer on `_`. */
 enum {
@@ -457,7 +457,7 @@ enum {
 
 /* Module-local copy of SQLite's SQLITE_TRANSIENT sentinel ((void*)-1).
  * We construct it via memcpy from a volatile intptr_t sentinel so the
- * resulting expression isn't syntactically a direct int-to-ptr cast �?
+ * resulting expression isn't syntactically a direct int-to-ptr cast �?
  * clang-tidy's performance-no-int-to-ptr sees the memcpy boundary and
  * doesn't flag it per-use-site. */
 static sqlite3_destructor_type cbm_sqlite_transient_destructor(void) {
@@ -496,7 +496,7 @@ static void sqlite_camel_split(sqlite3_context *ctx, int argc, sqlite3_value **a
     char buf[CAMEL_SPLIT_BUF];
     int len = snprintf(buf, sizeof(buf), "%s ", input);
     if (len < 0 || len >= (int)sizeof(buf)) {
-        /* Input too long �?fall back to the original string unmodified. */
+        /* Input too long �?fall back to the original string unmodified. */
         sqlite3_result_text(ctx, input, SQLITE_AUTO_LEN, CBM_SQLITE_TRANSIENT);
         return;
     }
@@ -512,7 +512,7 @@ static void sqlite_camel_split(sqlite3_context *ctx, int argc, sqlite3_value **a
 
 /* ── REGEXP function for SQLite ──────────────────────────────────── */
 
-/* Destructor passed to sqlite3_set_auxdata �?frees the cached compiled regex. */
+/* Destructor passed to sqlite3_set_auxdata �?frees the cached compiled regex. */
 static void regex_free_cb(void *p) {
     cbm_regex_t *re = (cbm_regex_t *)p;
     cbm_regfree(re);
@@ -549,7 +549,7 @@ static void sqlite_regexp(sqlite3_context *ctx, int argc, sqlite3_value **argv) 
     sqlite3_result_int(ctx, cbm_regexec(re, text, 0, NULL, 0) == 0 ? SKIP_ONE : 0);
 }
 
-/* Case-insensitive REGEXP variant �?same auxdata caching strategy. */
+/* Case-insensitive REGEXP variant �?same auxdata caching strategy. */
 static void sqlite_iregexp(sqlite3_context *ctx, int argc, sqlite3_value **argv) {
     (void)argc;
     const char *pattern = (const char *)sqlite3_value_text(argv[0]);
@@ -618,7 +618,7 @@ static int store_authorizer(void *user_data, int action, const char *p3, const c
     (void)p5;
     (void)p6;
     switch (action) {
-    case SQLITE_ATTACH: /* ATTACH DATABASE �?could create/read arbitrary files */
+    case SQLITE_ATTACH: /* ATTACH DATABASE �?could create/read arbitrary files */
     case SQLITE_DETACH: /* DETACH DATABASE */
         return SQLITE_DENY;
     default:
@@ -648,7 +648,7 @@ static cbm_store_t *store_open_internal(const char *path, bool in_memory) {
     }
 
     /* Security: block ATTACH/DETACH to prevent file creation via SQL injection.
-     * The authorizer runs inside SQLite's query planner �?no string-level bypass. */
+     * The authorizer runs inside SQLite's query planner �?no string-level bypass. */
     sqlite3_set_authorizer(s->db, store_authorizer, NULL);
 
     /* Register REGEXP function (SQLite doesn't have one built-in) */
@@ -696,10 +696,10 @@ cbm_store_t *cbm_store_open_path_query(const char *db_path) {
         return NULL;
     }
 
-    /* Open read-write but do NOT create �?returns SQLITE_CANTOPEN if absent. */
+    /* Open read-write but do NOT create �?returns SQLITE_CANTOPEN if absent. */
     int rc = sqlite3_open_v2(db_path, &s->db, SQLITE_OPEN_READWRITE, NULL);
     if (rc != SQLITE_OK) {
-        /* sqlite3_open_v2 allocates a handle even on failure �?must close it. */
+        /* sqlite3_open_v2 allocates a handle even on failure �?must close it. */
         sqlite3_close(s->db);
         free(s);
         return NULL;
@@ -762,7 +762,7 @@ bool cbm_store_check_integrity(cbm_store_t *s) {
         /* Check that root_path in projects table starts with '/' or a drive
          * letter. Corrupt DBs often have numeric strings like "826" in
          * root_path. Drive letters may be upper- OR lower-case on Windows
-         * (e.g. "c:/repo", "y:/share") �?rejecting lowercase here flagged
+         * (e.g. "c:/repo", "y:/share") �?rejecting lowercase here flagged
          * valid Windows paths as corrupt and deleted the DB (#227/#367). */
         rc = sqlite3_prepare_v2(s->db,
                                 "SELECT root_path FROM projects WHERE root_path != '' "
@@ -813,7 +813,7 @@ void cbm_store_close(cbm_store_t *s) {
     }
 
     /* Checkpoint WAL before close to prevent orphan WAL accumulation.
-     * Best-effort �?silently skips if concurrent reader holds a lock. */
+     * Best-effort �?silently skips if concurrent reader holds a lock. */
     if (s->db && s->db_path) {
         (void)sqlite3_wal_checkpoint_v2(s->db, NULL, SQLITE_CHECKPOINT_PASSIVE, NULL, NULL);
     }
@@ -853,7 +853,7 @@ void cbm_store_close(cbm_store_t *s) {
     finalize_stmt(&s->stmt_delete_file_hash);
     finalize_stmt(&s->stmt_delete_file_hashes);
 
-    /* Use sqlite3_close_v2 �?auto-deallocates when last statement finalizes.
+    /* Use sqlite3_close_v2 �?auto-deallocates when last statement finalizes.
      * Prevents ASan false-positive leaks from sqlite3 internal state. */
     sqlite3_close_v2(s->db);
     safe_str_free(&s->db_path);
@@ -932,7 +932,7 @@ int cbm_store_checkpoint(cbm_store_t *s) {
         return CBM_STORE_ERR;
     }
     /* PASSIVE never blocks readers and never ftruncate()s either file.
-     * SQLite recommends PASSIVE for shared databases �?TRUNCATE shrinks
+     * SQLite recommends PASSIVE for shared databases �?TRUNCATE shrinks
      * the WAL via ftruncate(fd, 0) on success, which on macOS can raise
      * SIGBUS in a sibling process that has the DB mmap'd through SQLite
      * when it next faults a page in the now-shorter region.
@@ -949,7 +949,7 @@ int cbm_store_checkpoint(cbm_store_t *s) {
 
 /* Dump entire in-memory database to a file via sqlite3_backup.
  * Writes to a temp file first, then atomically renames for crash safety.
- * sqlite3_backup_step(-1) copies ALL B-tree pages in one call �?
+ * sqlite3_backup_step(-1) copies ALL B-tree pages in one call �?
  * the file on disk is an exact replica of the in-memory page layout. */
 int cbm_store_dump_to_file(cbm_store_t *s, const char *dest_path) {
     if (!s || !dest_path) {
@@ -1127,7 +1127,7 @@ int64_t cbm_store_upsert_node(cbm_store_t *s, const cbm_node_t *n) {
     int rc = sqlite3_step(stmt);
     if (rc == SQLITE_ROW) {
         int64_t id = sqlite3_column_int64(stmt, 0);
-        sqlite3_reset(stmt); /* unblock COMMIT �?RETURNING leaves stmt active */
+        sqlite3_reset(stmt); /* unblock COMMIT �?RETURNING leaves stmt active */
         return id;
     }
     sqlite3_reset(stmt);
@@ -1445,7 +1445,7 @@ int64_t cbm_store_insert_edge(cbm_store_t *s, const cbm_edge_t *e) {
     int rc = sqlite3_step(stmt);
     if (rc == SQLITE_ROW) {
         int64_t id = sqlite3_column_int64(stmt, 0);
-        sqlite3_reset(stmt); /* unblock COMMIT �?RETURNING leaves stmt active */
+        sqlite3_reset(stmt); /* unblock COMMIT �?RETURNING leaves stmt active */
         return id;
     }
     sqlite3_reset(stmt);
@@ -1968,7 +1968,9 @@ int cbm_store_memory_append_candidate(cbm_store_t *s, const cbm_memory_item_t *i
         store_set_error_sqlite(s, "memory_item_insert");
         return CBM_STORE_ERR;
     }
-    (void)memory_fts_upsert(s, item, id);
+    /* FTS upsert is intentionally deferred to the consolidate pass (P1).
+     * The hot path only appends the raw event + candidate item; all indexing
+     * and enrichment runs asynchronously so writes stay cheap. */
     if (out_item_id) {
         *out_item_id = heap_strdup(id);
     }
@@ -2838,6 +2840,17 @@ int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit,
                               "AND ((?5 IS NULL AND scope_task IS NULL) OR scope_task=?5) LIMIT 20;";
         char merge_buf[CBM_SZ_128] = {0};
         const char *merge_id = NULL;
+
+        /* Build an int8 vector for the candidate content once, reuse for all comparisons.
+         * This replaces the XXH3 hamming-distance heuristic with the same cosine similarity
+         * used by the vector retrieval path, giving consistent semantic thresholds:
+         *   cosine >= 0.90  → merge   (same fact, same wording or near-identical paraphrase)
+         *   cosine <= 0.30  → contradicts edge  (true semantic opposition, not just different expression)
+         *   0.30 < cosine < 0.90 → coexist (let decay + read-time adjudication decide)
+         */
+        int8_t cand_vec[64];
+        memory_hash_vec64(content, cand_vec);
+
         if (sqlite3_prepare_v2(s->db, dup_sql, CBM_NOT_FOUND, &dup, NULL) == SQLITE_OK) {
             bind_text(dup, 1, entity);
             bind_text(dup, 2, predicate);
@@ -2847,33 +2860,57 @@ int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit,
             while (sqlite3_step(dup) == SQLITE_ROW) {
                 const char *other_id = (const char *)sqlite3_column_text(dup, 0);
                 const char *other_content = (const char *)sqlite3_column_text(dup, 1);
-                double sim = memory_content_similarity(content, other_content);
-                if (sim >= 0.98 && other_id) {
+                if (!other_id) continue;
+                /* Compute cosine similarity via the same int8 hash vectors used at retrieve time. */
+                int8_t other_vec[64];
+                memory_hash_vec64(other_content, other_vec);
+                int32_t dot = 0, mag_a = 0, mag_b = 0;
+                for (int vi = 0; vi < 64; vi++) {
+                    dot  += (int32_t)cand_vec[vi] * (int32_t)other_vec[vi];
+                    mag_a += (int32_t)cand_vec[vi] * (int32_t)cand_vec[vi];
+                    mag_b += (int32_t)other_vec[vi] * (int32_t)other_vec[vi];
+                }
+                double denom = sqrt((double)mag_a) * sqrt((double)mag_b);
+                double cosine = denom > CBM_STORE_DENOM_EPS_D ? (double)dot / denom : 0.0;
+                if (cosine >= 0.90) {
+                    /* High similarity: same fact expressed equivalently → merge. */
                     snprintf(merge_buf, sizeof(merge_buf), "%s", other_id);
                     merge_id = merge_buf;
                     break;
                 }
-                if (sim < 0.55 && other_id) {
+                if (cosine <= 0.30) {
+                    /* Very low similarity within same (entity, predicate, scope): likely a true
+                     * contradiction. Mark both directions; read-time adjudication picks the winner. */
                     (void)memory_edge_insert(s, id, other_id, "contradicts", "rule", confidence);
                     (void)memory_edge_insert(s, other_id, id, "contradicts", "rule", confidence);
                 }
+                /* 0.30 < cosine < 0.90: coexist — different but related expressions of the same
+                 * predicate. Leave both active; decay will prune the less-used one over time. */
             }
             sqlite3_finalize(dup);
         }
 
         if (merge_id) {
             sqlite3_stmt *m1 = NULL;
-            if (sqlite3_prepare_v2(s->db, "UPDATE memory_item SET confidence=MIN(1.0, confidence + 0.05), updated_at=?1 WHERE id=?2;", CBM_NOT_FOUND, &m1, NULL) == SQLITE_OK) {
-                sqlite3_bind_int64(m1, 1, memory_now_ms());
-                bind_text(m1, 2, merge_id);
+            /* Boost confidence of the surviving active item and record that it now supersedes
+             * the incoming candidate (supersedes points TO the item being retired, not the survivor). */
+            if (sqlite3_prepare_v2(s->db,
+                    "UPDATE memory_item SET confidence=MIN(1.0, confidence + 0.05), supersedes=?1, updated_at=?2 WHERE id=?3;",
+                    CBM_NOT_FOUND, &m1, NULL) == SQLITE_OK) {
+                bind_text(m1, 1, id);               /* survivor.supersedes = candidate being archived */
+                sqlite3_bind_int64(m1, 2, memory_now_ms());
+                bind_text(m1, 3, merge_id);
                 (void)sqlite3_step(m1);
                 sqlite3_finalize(m1);
             }
             sqlite3_stmt *m2 = NULL;
-            if (sqlite3_prepare_v2(s->db, "UPDATE memory_item SET status='archived', supersedes=?1, updated_at=?2 WHERE id=?3;", CBM_NOT_FOUND, &m2, NULL) == SQLITE_OK) {
-                bind_text(m2, 1, merge_id);
-                sqlite3_bind_int64(m2, 2, memory_now_ms());
-                bind_text(m2, 3, id);
+            /* Archive the duplicate candidate. supersedes is left NULL: it is the retired item,
+             * not the one doing the superseding. */
+            if (sqlite3_prepare_v2(s->db,
+                    "UPDATE memory_item SET status='archived', updated_at=?1 WHERE id=?2;",
+                    CBM_NOT_FOUND, &m2, NULL) == SQLITE_OK) {
+                sqlite3_bind_int64(m2, 1, memory_now_ms());
+                bind_text(m2, 2, id);
                 (void)sqlite3_step(m2);
                 sqlite3_finalize(m2);
             }
@@ -2898,6 +2935,14 @@ int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit,
             if (source_event_id[0]) (void)memory_edge_insert(s, id, source_event_id, "derived_from", "rule", 1.0);
             if (scope_project && scope_project[0]) (void)memory_edge_insert(s, id, scope_project, "belongs_to", "rule", 1.0);
             (void)memory_vec_upsert(s, id, content);
+            /* P1: build FTS index now that the item is active (deferred from hot path). */
+            {
+                cbm_memory_item_t fts_item = {0};
+                fts_item.title = id; /* use id as title placeholder if title not in consolidate select */
+                fts_item.summary = summary;
+                fts_item.content = content;
+                (void)memory_fts_upsert(s, &fts_item, id);
+            }
         }
         free(summary);
         n++;
@@ -3420,7 +3465,7 @@ int cbm_extract_like_hints(const char *pattern, char **out, int max_out) {
         return 0;
     }
 
-    /* Bail on alternation �?can't convert OR regex to AND LIKE */
+    /* Bail on alternation �?can't convert OR regex to AND LIKE */
     for (const char *p = pattern; *p; p++) {
         if (*p == '|') {
             return 0;
@@ -3436,7 +3481,7 @@ int cbm_extract_like_hints(const char *pattern, char **out, int max_out) {
         char ch = pattern[i];
         switch (ch) {
         case '\\':
-            /* Escaped char �?the next char is literal */
+            /* Escaped char �?the next char is literal */
             if (pattern[i + SKIP_ONE]) {
                 if (blen < (int)sizeof(buf) - SKIP_ONE) {
                     buf[blen++] = pattern[i + SKIP_ONE];
@@ -3458,7 +3503,7 @@ int cbm_extract_like_hints(const char *pattern, char **out, int max_out) {
         case ']':
         case '{':
         case '}':
-            /* Meta character �?flush current literal segment */
+            /* Meta character �?flush current literal segment */
             if (blen >= ST_GLOB_MIN_LEN && count < max_out) {
                 buf[blen] = '\0';
                 out[count++] = strdup(buf);
@@ -3529,7 +3574,7 @@ static void like_pool_add(search_like_pool_t *pool, char *ptr) {
     if (ptr && pool->count < ST_LIKE_POOL_MAX) {
         pool->ptrs[pool->count++] = ptr;
     } else {
-        free(ptr); /* pool full �?don't leak */
+        free(ptr); /* pool full �?don't leak */
     }
 }
 
@@ -3641,7 +3686,7 @@ static void where_add_like_hints(const char *column, const char *pattern, char *
         int pool_was_full = (pool->count >= ST_LIKE_POOL_MAX);
         like_pool_add(pool, lp);
         if (pool_was_full)
-            continue; /* lp was freed �?skip bind */
+            continue; /* lp was freed �?skip bind */
         snprintf(bind_buf, sizeof(bind_buf), "%s LIKE ?%d", column, *bind_idx + SKIP_ONE);
         *wlen = where_append(where, where_sz, *wlen, nparams, bind_buf);
         where_bind_text(binds, bind_idx, lp);
@@ -3719,7 +3764,7 @@ static void search_where_advanced(const cbm_search_params_t *params, char *where
     }
     if (params->exclude_entry_points) {
         /* Exclude nodes with no inbound CALLS but at least one outbound CALLS.
-         * Dead code (degree=0) is NOT excluded �?only true entry points. */
+         * Dead code (degree=0) is NOT excluded �?only true entry points. */
         *wlen = where_append(where, where_sz, *wlen, nparams,
                              "NOT (NOT EXISTS(SELECT 1 FROM edges e WHERE e.target_id = n.id "
                              "AND e.type = 'CALLS') "
@@ -3780,7 +3825,7 @@ int cbm_store_search(cbm_store_t *s, const cbm_search_params_t *params, cbm_sear
     bool has_degree_filter = (params->min_degree >= 0 || params->max_degree >= 0);
     search_apply_degree_filter(sql, sizeof(sql), params);
 
-    /* Count query �?stripped of per-row edge subqueries for the common (no-degree-filter)
+    /* Count query �?stripped of per-row edge subqueries for the common (no-degree-filter)
      * case, since we only need the row count, not in_deg/out_deg.  The degree-filter
      * case must wrap the full query because the filter references those columns. */
     if (has_degree_filter) {
@@ -4155,7 +4200,7 @@ int cbm_deduplicate_hops(const cbm_node_hop_t *hops, int hop_count, cbm_node_hop
         return CBM_STORE_OK;
     }
 
-    /* Simple O(n²) dedup �?keep minimum hop per node ID */
+    /* Simple O(n²) dedup �?keep minimum hop per node ID */
     cbm_node_hop_t *result = malloc(hop_count * sizeof(cbm_node_hop_t));
     int n = 0;
 
@@ -4414,7 +4459,7 @@ void cbm_store_schema_free(cbm_schema_info_t *out) {
 
 /* ── Architecture helpers ───────────────────────────────────────── */
 
-/* Extract sub-package from QN: project.dir1.dir2.sym �?dir1 (4+ parts �?[2], else [1]) */
+/* Extract sub-package from QN: project.dir1.dir2.sym �?dir1 (4+ parts �?[2], else [1]) */
 const char *cbm_qn_to_package(const char *qn) {
     if (!qn || !qn[0]) {
         return "";
@@ -4452,7 +4497,7 @@ const char *cbm_qn_to_package(const char *qn) {
     return "";
 }
 
-/* Extract top-level package from QN: project.dir1.rest �?dir1 (segment[1]) */
+/* Extract top-level package from QN: project.dir1.rest �?dir1 (segment[1]) */
 const char *cbm_qn_to_top_package(const char *qn) {
     if (!qn || !qn[0]) {
         return "";
@@ -4481,7 +4526,7 @@ bool cbm_is_test_file_path(const char *fp) {
     return strstr(fp, "test") != NULL;
 }
 
-/* File extension �?language name mapping (table-driven) */
+/* File extension �?language name mapping (table-driven) */
 typedef struct {
     const char *ext;
     const char *lang;
@@ -4748,7 +4793,7 @@ static int arch_hotspots(cbm_store_t *s, const char *project, cbm_architecture_i
 }
 
 /* Look up package name for a node ID in the parallel arrays. nids must be
- * sorted ascending (the node query orders by id) �?a linear scan here is
+ * sorted ascending (the node query orders by id) �?a linear scan here is
  * O(E×N) across the edge loop and spun for >10 minutes on Linux-kernel-sized
  * graphs (~1.4M defs × ~1.4M CALLS edges). */
 static const char *lookup_pkg(const int64_t *nids, char **npkgs, int nn, int64_t id) {
@@ -4790,7 +4835,7 @@ static void accum_boundary(const char *src_pkg, const char *tgt_pkg, char **bfro
 
 static int arch_boundaries(cbm_store_t *s, const char *project, cbm_cross_pkg_boundary_t **out_arr,
                            int *out_count) {
-    /* Build nodeID �?package map. ORDER BY id so lookup_pkg can binary-search. */
+    /* Build nodeID �?package map. ORDER BY id so lookup_pkg can binary-search. */
     const char *nsql = "SELECT id, qualified_name FROM nodes WHERE project=?1 AND label IN "
                        "('Function','Method','Class') ORDER BY id";
     sqlite3_stmt *nstmt = NULL;
@@ -5479,7 +5524,7 @@ enum { LEIDEN_MAX_LEVELS = 64, LEIDEN_MOVE_PASS_CAP = 100 };
 
 /* Weighted undirected graph in CSR form. Each undirected edge is stored as
  * two directed entries; k[i] is the weighted degree of node i. Self-loops are
- * never materialised �?an aggregate node's intra-community weight is folded
+ * never materialised �?an aggregate node's intra-community weight is folded
  * into k[i] (which is preserved across levels), while nbr/w hold only
  * inter-community edges. The modularity gain therefore uses k[] for the
  * null-model term and nbr/w for connectivity, so intra weight affects the
@@ -5660,7 +5705,7 @@ static int leiden_relabel(int *comm, int n) {
 /* Refinement phase: within each move-phase community, merge singleton nodes
  * into the best connected sub-community (positive modularity gain, edge must
  * exist). This re-derives communities bottom-up so each one is guaranteed
- * internally connected �?the defect single-level Louvain suffers from, which
+ * internally connected �?the defect single-level Louvain suffers from, which
  * fragments the graph into hundreds of tiny noisy clusters. Writes
  * sub-community labels into refined[] and returns their count. */
 static int leiden_refine(const cbm_lg_t *g, const int *comm, double gamma, double twom,
@@ -5916,7 +5961,7 @@ int cbm_leiden(const int64_t *nodes, int node_count, const cbm_louvain_edge_t *e
         leiden_move(&g, comm, gamma, twom);
         int c_count = leiden_relabel(comm, g.n);
         if (c_count >= g.n) {
-            break; /* every node already isolated �?nothing to coarsen */
+            break; /* every node already isolated �?nothing to coarsen */
         }
         int *refined = malloc((size_t)g.n * sizeof(int));
         if (!refined) {
@@ -6209,7 +6254,7 @@ static int arch_clusters(cbm_store_t *s, const char *project, cbm_architecture_i
         for (int r = 0; r < C && cc < CBM_CLUSTER_TOP_N; r++) {
             int c = rank[r].comm;
             if (members[c] < CBM_CLUSTER_MIN_MEMBERS) {
-                break; /* sorted desc �?the rest are singletons too */
+                break; /* sorted desc �?the rest are singletons too */
             }
             double denom = internal[c] + boundary[c];
             double cohesion = denom > 0 ? (double)internal[c] / denom : 0.0;

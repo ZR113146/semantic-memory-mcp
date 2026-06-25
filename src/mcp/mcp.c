@@ -1,8 +1,8 @@
 /*
- * mcp.c â€?MCP server: JSON-RPC 2.0 over stdio with graph and memory tools.
+ * mcp.c ï¿½?MCP server: JSON-RPC 2.0 over stdio with graph and memory tools.
  *
  * Uses yyjson for fast JSON parsing/building.
- * Single-threaded event loop: read line â†?parse â†?dispatch â†?respond.
+ * Single-threaded event loop: read line ï¿½?parse ï¿½?dispatch ï¿½?respond.
  */
 
 // operations
@@ -106,7 +106,7 @@ static char *heap_strdup(const char *s) {
 
 /* Write yyjson_mut_doc to heap-allocated JSON string.
  * ALLOW_INVALID_UNICODE: some database strings may contain non-UTF-8 bytes
- * from older indexing runs â€?don't fail serialization over it. */
+ * from older indexing runs ï¿½?don't fail serialization over it. */
 static char *yy_doc_to_str(yyjson_mut_doc *doc) {
     size_t len = 0;
     char *s = yyjson_mut_write(doc, YYJSON_WRITE_ALLOW_INVALID_UNICODE, &len);
@@ -295,11 +295,11 @@ static const tool_def_t TOOLS[] = {
      "Search the code knowledge graph for functions, classes, routes, and variables. Use INSTEAD "
      "OF grep/glob when finding code definitions, implementations, or relationships. Three search "
      "modes: (1) query='update settings' for BM25 ranked full-text search with camelCase "
-     "splitting and structural label boosting â€?recommended for natural-language discovery; "
+     "splitting and structural label boosting ï¿½?recommended for natural-language discovery; "
      "(2) name_pattern='.*regex.*' for exact pattern matching; (3) semantic_query=[...] for "
      "vector cosine search that bridges vocabulary (finds 'publish' when you search 'send'). "
      "The three modes are independent and can be combined in a single call. "
-     "PAGINATION: results are capped at limit (default 200) â€?broader queries are silently "
+     "PAGINATION: results are capped at limit (default 200) ï¿½?broader queries are silently "
      "truncated. The response always includes 'total' (full match count before limit) and "
      "'has_more' (true when total > offset+returned). Detect truncation with has_more, then "
      "page by re-calling with offset=offset+limit until has_more is false. Narrow first via "
@@ -307,7 +307,7 @@ static const tool_def_t TOOLS[] = {
      "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
      "\"query\":{\"type\":\"string\",\"description\":\"Natural-language or keyword full-text "
      "search using BM25 ranking. Tokens are split on whitespace; camelCase identifiers are "
-     "indexed as individual words (updateCloudClient â†?update, cloud, client). Results are "
+     "indexed as individual words (updateCloudClient ï¿½?update, cloud, client). Results are "
      "ranked with structural boosting: Functions/Methods +10, Routes +8, Classes/Interfaces +5. "
      "Noise labels (File/Folder/Module/Variable) are filtered out. When provided, name_pattern "
      "is ignored.\"},"
@@ -317,7 +317,7 @@ static const tool_def_t TOOLS[] = {
      "\"max_degree\":{\"type\":\"integer\"},\"exclude_entry_points\":{\"type\":\"boolean\"},"
      "\"include_connected\":{\"type\":\"boolean\"},\"semantic_query\":{"
      "\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"MUST be an ARRAY of "
-     "keyword strings (e.g. [\\\"send\\\",\\\"pubsub\\\",\\\"publish\\\"]) â€?NOT a single string. "
+     "keyword strings (e.g. [\\\"send\\\",\\\"pubsub\\\",\\\"publish\\\"]) ï¿½?NOT a single string. "
      "Each keyword is scored independently via per-keyword min-cosine; results reflect functions "
      "that score well on ALL keywords. Requires moderate/full index mode. Results appear in the "
      "'semantic_results' field (separate from 'results').\"},\"limit\":{\"type\":"
@@ -331,14 +331,14 @@ static const tool_def_t TOOLS[] = {
     {"query_graph",
      "Execute a Cypher query against the knowledge graph for complex multi-hop patterns, "
      "aggregations, and cross-service analysis. The response includes 'total' (returned "
-     "row count). There is a hard 100k row ceiling â€?for broad queries add LIMIT in the "
+     "row count). There is a hard 100k row ceiling ï¿½?for broad queries add LIMIT in the "
      "Cypher itself or use search_graph + offset/limit pagination instead. "
      "COMPLEXITY / BOTTLENECKS: every Function and Method node carries queryable complexity "
-     "properties â€?cyclomatic (complexity), cognitive, loop_count, loop_depth (max nested-loop "
+     "properties ï¿½?cyclomatic (complexity), cognitive, loop_count, loop_depth (max nested-loop "
      "depth, a polynomial-degree proxy), plus interprocedural transitive_loop_depth (worst-case "
      "nested-loop degree propagated along CALLS edges) and a recursive flag. Additional "
      "hot-path signals: linear_scan_in_loop (count of find/contains/indexOf-style scans inside a "
-     "loop â€?the hidden O(n^2) that loop_depth misses), alloc_in_loop (allocations/appends inside "
+     "loop ï¿½?the hidden O(n^2) that loop_depth misses), alloc_in_loop (allocations/appends inside "
      "a loop), recursion_in_loop (a self-call inside a loop), unguarded_recursion (recursion with "
      "no conditionally-guarded base case), param_count and max_access_depth (structure smells). "
      "Find all hot-path candidates in one query, e.g. MATCH (f:Function) WHERE "
@@ -348,7 +348,7 @@ static const tool_def_t TOOLS[] = {
      "query\"},\"project\":{\"type\":\"string\"},\"max_rows\":{\"type\":\"integer\","
      "\"description\":"
      "\"Optional row limit. Default: unlimited up to a 100k row "
-     "ceiling. No offset support â€?use search_graph for paginated browsing.\"}},"
+     "ceiling. No offset support ï¿½?use search_graph for paginated browsing.\"}},"
      "\"required\":[\"query\",\"project\"]}"},
 
     {"trace_path",
@@ -384,10 +384,10 @@ static const tool_def_t TOOLS[] = {
      "\"project\"]}"},
 
     {"get_architecture",
-     "Get high-level architecture overview â€?packages, services, dependencies, and project "
+     "Get high-level architecture overview ï¿½?packages, services, dependencies, and project "
      "structure at a glance. Includes 'clusters': Leiden community detection over the call/import "
      "graph, surfacing the de-facto modules (each with a label, member count, cohesion score, "
-     "representative top_nodes, and the packages/edge_types that bind it) â€?use these to grasp "
+     "representative top_nodes, and the packages/edge_types that bind it) ï¿½?use these to grasp "
      "the real architectural seams, which often cut across the folder layout.",
      "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},\"aspects\":{\"type\":"
      "\"array\",\"items\":{\"type\":\"string\"}}},\"required\":[\"project\"]}"},
@@ -396,11 +396,11 @@ static const tool_def_t TOOLS[] = {
      "Graph-augmented code search. Finds text patterns via grep, then enriches results with "
      "the knowledge graph: deduplicates matches into containing functions, ranks by structural "
      "importance (definitions first, popular functions next, tests last). "
-     "Modes: compact (default, signatures only â€?token efficient), full (with source), "
+     "Modes: compact (default, signatures only ï¿½?token efficient), full (with source), "
      "files (just file paths). Use path_filter regex to scope results. "
      "TRUNCATION: enriched results are capped at limit (default 10). Response carries "
      "'total_grep_matches' (raw grep hit count) and 'total_results' (deduplicated function "
-     "count) â€?compare to limit to detect truncation. There is no offset parameter; to see "
+     "count) ï¿½?compare to limit to detect truncation. There is no offset parameter; to see "
      "more, raise limit or narrow the query with file_pattern / path_filter.",
      "{\"type\":\"object\",\"properties\":{\"pattern\":{\"type\":\"string\"},\"project\":{\"type\":"
      "\"string\"},\"file_pattern\":{\"type\":\"string\",\"description\":\"Glob for grep "
@@ -413,7 +413,7 @@ static const tool_def_t TOOLS[] = {
      "\"regex\":{\"type\":\"boolean\",\"default\":false},\"limit\":{\"type\":\"integer\","
      "\"description\":\"Max enriched results per call. Default 10. Response includes "
      "'total_grep_matches' and 'total_results' so callers can detect truncation. No "
-     "offset parameter â€?raise limit or narrow with file_pattern / path_filter to see more."
+     "offset parameter ï¿½?raise limit or narrow with file_pattern / path_filter to see more."
      "\",\"default\":10}},\"required\":[\"pattern\",\"project\"]}"},
 
     {"list_projects", "List all indexed projects", "{\"type\":\"object\",\"properties\":{}}"},
@@ -793,11 +793,11 @@ static const char *project_db_path(const char *project, char *buf, size_t bufsz)
 /* â”€â”€ Store resolution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 /* Open the right project's .db file for query tools.
- * Caches the connection â€?reopens only when project changes.
+ * Caches the connection ï¿½?reopens only when project changes.
  * Tracks last-access time so the event loop can evict idle stores. */
 static cbm_store_t *resolve_store(cbm_mcp_server_t *srv, const char *project) {
     if (!project) {
-        return NULL; /* project is required â€?no implicit fallback */
+        return NULL; /* project is required ï¿½?no implicit fallback */
     }
 
     srv->store_last_used = time(NULL);
@@ -813,16 +813,16 @@ static cbm_store_t *resolve_store(cbm_mcp_server_t *srv, const char *project) {
         srv->store = NULL;
     }
 
-    /* Open project's .db file â€?query-only open (no SQLITE_OPEN_CREATE) to
+    /* Open project's .db file ï¿½?query-only open (no SQLITE_OPEN_CREATE) to
      * prevent ghost .db file creation for unknown/unindexed projects. */
     char path[CBM_SZ_1K];
     project_db_path(project, path, sizeof(path));
     srv->store = cbm_store_open_path_query(path);
     if (srv->store) {
-        /* Check DB integrity â€?auto-clean corrupt databases */
+        /* Check DB integrity ï¿½?auto-clean corrupt databases */
         if (!cbm_store_check_integrity(srv->store)) {
             cbm_log_error("store.auto_clean", "project", project, "path", path, "action",
-                          "deleting corrupt db â€?re-index required");
+                          "deleting corrupt db ï¿½?re-index required");
             cbm_store_close(srv->store);
             srv->store = NULL;
             /* Delete the corrupt DB + WAL/SHM files */
@@ -855,10 +855,10 @@ static cbm_store_t *resolve_store(cbm_mcp_server_t *srv, const char *project) {
     return srv->store;
 }
 
-/* Forward decl â€?definition lives below alongside list_projects. */
+/* Forward decl ï¿½?definition lives below alongside list_projects. */
 static bool is_project_db_file(const char *name, size_t len);
 
-/* Forward decl â€?definition lives below in handle_trace_call_path's helpers. */
+/* Forward decl ï¿½?definition lives below in handle_trace_call_path's helpers. */
 static void free_node_contents(cbm_node_t *n);
 
 /* Scan cache dir for .db files, writing comma-separated quoted names into out.
@@ -936,10 +936,10 @@ static char *build_project_list_error(const char *reason) {
 /* Return true if filename is a valid project .db file (not temp/internal).
  *
  * Project names derived from /tmp/... source roots legitimately begin with
- * "tmp-" (cbm_project_name_from_path: "/tmp/bench/..." â†?"tmp-bench-...";
+ * "tmp-" (cbm_project_name_from_path: "/tmp/bench/..." ï¿½?"tmp-bench-...";
  * see tests/test_pipeline.c fixtures), so the prefix must NOT be excluded.
  * The "_" prefix is reserved for internal/hidden DBs, and ":memory:" is the
- * SQLite in-memory marker (defensive â€?never appears as a real file). */
+ * SQLite in-memory marker (defensive ï¿½?never appears as a real file). */
 static bool is_project_db_file(const char *name, size_t len) {
     if (len < MCP_MIN_DB_NAME || strcmp(name + len - MCP_DB_EXT, ".db") != 0) {
         return false;
@@ -989,7 +989,7 @@ static void build_project_json_entry(yyjson_mut_doc *doc, yyjson_mut_val *arr, c
 }
 
 /* list_projects: scan cache directory for .db files.
- * Each project is a single .db file â€?no central registry needed. */
+ * Each project is a single .db file ï¿½?no central registry needed. */
 static char *handle_list_projects(cbm_mcp_server_t *srv, const char *args) {
     (void)srv;
     (void)args;
@@ -1047,7 +1047,7 @@ static char *handle_list_projects(cbm_mcp_server_t *srv, const char *args) {
     return result;
 }
 
-/* verify_project_indexed â€?returns a heap-allocated error JSON string when the
+/* verify_project_indexed ï¿½?returns a heap-allocated error JSON string when the
  * named project has not been indexed yet, or NULL when the project exists.
  * resolve_store uses cbm_store_open_path_query (no SQLITE_OPEN_CREATE), so
  * store is NULL for missing .db files (REQUIRE_STORE fires first). This
@@ -1058,7 +1058,7 @@ static char *handle_list_projects(cbm_mcp_server_t *srv, const char *args) {
 static char *verify_project_indexed(cbm_store_t *store, const char *project) {
     cbm_project_t proj_check = {0};
     if (cbm_store_get_project(store, project, &proj_check) != CBM_STORE_OK) {
-        char *err = build_project_list_error("project not indexed â€?run index_repository first");
+        char *err = build_project_list_error("project not indexed ï¿½?run index_repository first");
         char *res = cbm_mcp_text_result(err, true);
         free(err);
         return res;
@@ -1152,7 +1152,7 @@ static void enrich_connected(yyjson_mut_doc *doc, yyjson_mut_val *item, cbm_stor
     const char *et[] = {relationship ? relationship : "CALLS"};
     yyjson_mut_val *conn = yyjson_mut_arr(doc);
 
-    /* BFS doesn't support "both" â€?run inbound + outbound separately. */
+    /* BFS doesn't support "both" ï¿½?run inbound + outbound separately. */
     cbm_traverse_result_t tr_in = {0};
     cbm_store_bfs(store, node_id, "inbound", et, SKIP_ONE, SKIP_ONE, MCP_DEFAULT_LIMIT, &tr_in);
     enrich_add_bfs(doc, conn, &tr_in);
@@ -1238,7 +1238,7 @@ static int bm25_build_match(const char *query, char *out, size_t out_size) {
         const char *sep = (tokens > 0) ? " OR " : "";
         size_t sep_len = strlen(sep);
         if (pos + sep_len + tok_len + BM25_SEP_RESERVE >= out_size) {
-            break; /* out of room â€?stop cleanly, keep what we have */
+            break; /* out of room ï¿½?stop cleanly, keep what we have */
         }
         memcpy(out + pos, sep, sep_len);
         pos += sep_len;
@@ -1270,7 +1270,7 @@ static char *bm25_search(cbm_store_t *store, const char *project, const char *qu
      * Flat queries of the form:
      *   SELECT ... FROM nodes_fts JOIN nodes WHERE MATCH ? AND n.project=? ORDER BY rank LIMIT N
      * block FTS5's WAND/MaxScore early-exit because the outer JOIN+WHERE conditions
-     * are invisible to the FTS5 planner â€?it must score every matching document before
+     * are invisible to the FTS5 planner ï¿½?it must score every matching document before
      * the project/label filter can discard any of them.  On a large codebase with 100K+
      * matches, this causes multi-minute queries.
      *
@@ -1307,7 +1307,7 @@ static char *bm25_search(cbm_store_t *store, const char *project, const char *qu
     sqlite3_bind_int(stmt, BM25_BIND_OFFSET, offset > 0 ? offset : 0);
     sqlite3_bind_int(stmt, BM25_BIND_INNER, BM25_INNER_LIMIT);
 
-    /* Count hits within the same inner-limit window â€?capped at BM25_INNER_LIMIT.
+    /* Count hits within the same inner-limit window ï¿½?capped at BM25_INNER_LIMIT.
      * Uses the identical subquery structure so the FTS5 early-exit applies here too. */
     int total = 0;
     {
@@ -1369,7 +1369,7 @@ static char *bm25_search(cbm_store_t *store, const char *project, const char *qu
     return json;
 }
 
-/* Forward declaration â€?defined later. enrich_node_properties parses the
+/* Forward declaration ï¿½?defined later. enrich_node_properties parses the
  * node's properties_json and grafts the parsed values onto the result item.
  * It returns the parsed yyjson_doc which must outlive the serialization
  * because yyjson_mut_obj_add_val uses zero-copy strings into that doc. */
@@ -1451,7 +1451,7 @@ static void emit_semantic_results(yyjson_mut_doc *doc, yyjson_mut_val *root,
 }
 
 /* Append the semantic_query vector-search results onto the doc.  Returns
- * true if semantic_query was provided as a non-array (type error â€?caller
+ * true if semantic_query was provided as a non-array (type error ï¿½?caller
  * should surface to the user). */
 static bool run_semantic_query(yyjson_mut_doc *doc, yyjson_mut_val *root, const char *args,
                                cbm_store_t *store, const char *project, int limit) {
@@ -1595,14 +1595,14 @@ static char *handle_search_graph(cbm_mcp_server_t *srv, const char *args) {
         free(relationship);
         return cbm_mcp_text_result(
             "semantic_query must be an array of keyword strings, e.g. "
-            "[\"send\",\"pubsub\",\"publish\"] â€?not a single string. Split your query "
+            "[\"send\",\"pubsub\",\"publish\"] ï¿½?not a single string. Split your query "
             "into individual keywords; each is scored independently via per-keyword "
             "min-cosine.",
             true);
     }
 
     char *json = yy_doc_to_str(doc);
-    /* Property docs are zero-copy referenced by the mut doc â€?they must
+    /* Property docs are zero-copy referenced by the mut doc ï¿½?they must
      * outlive yy_doc_to_str. Free them once serialization is complete. */
     for (int pi = 0; pi < props_doc_count; pi++) {
         yyjson_doc_free(props_docs[pi]);
@@ -2159,7 +2159,7 @@ static yyjson_doc *resolve_trace_edge_types(const char *args, const char *mode,
     }
 
     if (*out_count > 0) {
-        return et_doc; /* caller must keep alive â€?pointers reference doc memory */
+        return et_doc; /* caller must keep alive ï¿½?pointers reference doc memory */
     }
 
     yyjson_doc_free(et_doc); /* no explicit types found, free */
@@ -2319,7 +2319,7 @@ static char *handle_trace_call_path(cbm_mcp_server_t *srv, const char *args) {
     yyjson_doc *et_doc_keep = resolve_trace_edge_types(args, mode, edge_types, &edge_type_count);
 
     /* Run BFS for each requested direction.
-     * IMPORTANT: yyjson_mut_obj_add_str borrows pointers â€?we must keep
+     * IMPORTANT: yyjson_mut_obj_add_str borrows pointers ï¿½?we must keep
      * traversal results alive until after yy_doc_to_str serialization. */
     bool do_outbound = strcmp(direction, "outbound") == 0 || strcmp(direction, "both") == 0;
     bool do_inbound = strcmp(direction, "inbound") == 0 || strcmp(direction, "both") == 0;
@@ -2444,7 +2444,7 @@ static char *get_project_root(cbm_mcp_server_t *srv, const char *project) {
 
 /* â”€â”€ index_repository â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
-/* Handle mode="cross-repo-intelligence" â€?extract to reduce complexity. */
+/* Handle mode="cross-repo-intelligence" ï¿½?extract to reduce complexity. */
 static char *handle_cross_repo_mode(const char *repo_path, const char *args) {
     char *project = heap_strdup(cbm_project_name_from_path(repo_path));
     if (!project) {
@@ -2515,7 +2515,7 @@ static void try_artifact_bootstrap(const char *project_name, const char *repo_pa
     }
 }
 
-/* Cap on excluded dir paths listed in the response â€?keep it compact on large
+/* Cap on excluded dir paths listed in the response ï¿½?keep it compact on large
  * repos (node_modules / vendor / etc. can produce many skip points). The full
  * count is still reported via "count" + "truncated". */
 enum { INDEX_EXCLUDED_DIR_CAP = 25 };
@@ -2606,7 +2606,7 @@ static char *handle_index_repository(cbm_mcp_server_t *srv, const char *args) {
     /* Bootstrap from artifact if no local DB exists */
     try_artifact_bootstrap(project_name, repo_path);
 
-    /* Close cached store â€?pipeline will delete + recreate the .db file */
+    /* Close cached store ï¿½?pipeline will delete + recreate the .db file */
     if (srv->owns_store && srv->store) {
         cbm_store_close(srv->store);
         srv->store = NULL;
@@ -2624,7 +2624,7 @@ static char *handle_index_repository(cbm_mcp_server_t *srv, const char *args) {
     cbm_pipeline_unlock();
 
     /* Capture the excluded-subtree list (#411) while the pipeline (which owns
-     * the strings) is still alive â€?the response builder copies them into the
+     * the strings) is still alive ï¿½?the response builder copies them into the
      * JSON doc, so they need only outlive that call, not cbm_pipeline_free. */
     char **excluded_dirs = NULL;
     int excluded_count = 0;
@@ -2721,7 +2721,7 @@ static char *snippet_suggestions(const char *input, cbm_node_t *nodes, int count
 }
 
 /* Enrich a mutable JSON object with key-value pairs from a node's properties_json.
- * Returns the parsed yyjson_doc (caller frees AFTER serialization â€?zero-copy). */
+ * Returns the parsed yyjson_doc (caller frees AFTER serialization ï¿½?zero-copy). */
 static yyjson_doc *enrich_node_properties(yyjson_mut_doc *doc, yyjson_mut_val *obj,
                                           const char *properties_json) {
     if (!properties_json || properties_json[0] == '\0') {
@@ -2844,15 +2844,15 @@ static char *build_snippet_response(cbm_mcp_server_t *srv, cbm_node_t *node,
         yyjson_mut_obj_add_str(doc, root_obj, "source", "(source not available)");
     }
 
-    /* match_method â€?omitted for exact matches */
+    /* match_method ï¿½?omitted for exact matches */
     if (match_method) {
         yyjson_mut_obj_add_str(doc, root_obj, "match_method", match_method);
     }
 
-    /* Enrich with node properties (freed AFTER serialization â€?zero-copy). */
+    /* Enrich with node properties (freed AFTER serialization ï¿½?zero-copy). */
     yyjson_doc *props_doc = enrich_node_properties(doc, root_obj, node->properties_json);
 
-    /* Caller/callee counts â€?store already resolved by calling handler */
+    /* Caller/callee counts ï¿½?store already resolved by calling handler */
     cbm_store_t *store = srv->store;
     int in_deg = 0;
     int out_deg = 0;
@@ -2947,7 +2947,7 @@ static char *handle_get_code_snippet(cbm_mcp_server_t *srv, const char *args) {
         return result;
     }
 
-    /* Tier 2: Suffix match â€?handles partial QNs ("main.HandleRequest")
+    /* Tier 2: Suffix match ï¿½?handles partial QNs ("main.HandleRequest")
      * and short names ("ProcessOrder") via LIKE '%.X'. */
     cbm_node_t *suffix_nodes = NULL;
     int suffix_count = 0;
@@ -2975,7 +2975,7 @@ static char *handle_get_code_snippet(cbm_mcp_server_t *srv, const char *args) {
     free(qn);
     free(project);
 
-    /* Nothing found â€?guide the caller toward search_graph */
+    /* Nothing found ï¿½?guide the caller toward search_graph */
     return cbm_mcp_text_result(
         "symbol not found. Use search_graph(name_pattern=\"...\") first to discover "
         "the exact qualified_name, then pass it to get_code_snippet.",
@@ -3181,7 +3181,7 @@ static void attach_result_source(yyjson_mut_doc *doc, yyjson_mut_val *item, sear
     }
 }
 
-/* Build directory distribution object from search results (top-level dir â†?count). */
+/* Build directory distribution object from search results (top-level dir ï¿½?count). */
 static yyjson_mut_val *build_dir_distribution(yyjson_mut_doc *doc, search_result_t *sr,
                                               int sr_count) {
     yyjson_mut_val *dirs = yyjson_mut_obj(doc);
@@ -3547,7 +3547,7 @@ static int parse_search_mode(const char *mode_str) {
 /* Validate shell-safe arguments for search. */
 /* Search/grep paths and globs are ALWAYS single-quoted (POSIX sh) or
  * double-/single-quoted (Windows cmd/PowerShell) on the command line, which
- * neutralises '&' â€?a very common character in real paths (R&D, "Foo & Bar",
+ * neutralises '&' ï¿½?a very common character in real paths (R&D, "Foo & Bar",
  * OneDrive). Accept '&' here while still rejecting every metacharacter that
  * could break out of the quoting (#272). */
 static bool validate_search_path_arg(const char *s) {
@@ -3617,7 +3617,7 @@ static char *handle_search_code(cbm_mcp_server_t *srv, const char *args) {
     int context_lines = cbm_mcp_get_int_arg(args, "context", 0);
     bool use_regex = cbm_mcp_get_bool_arg(args, "regex");
     uint64_t search_t0 = cbm_now_ms();
-    /* In literal (non-regex) mode a '|' is matched as a byte, not alternation â€?
+    /* In literal (non-regex) mode a '|' is matched as a byte, not alternation ï¿½?
      * a common silent 0-match trap; flagged in the result warnings (#282). */
     bool pat_has_pipe = pattern && strchr(pattern, '|') != NULL;
 
@@ -3669,7 +3669,7 @@ static char *handle_search_code(cbm_mcp_server_t *srv, const char *args) {
 
     /* issue #283: when regex=true, a syntactically invalid pattern (e.g. an
      * unclosed group) makes the underlying grep fail, which the handler would
-     * otherwise report as an empty result set â€?indistinguishable from a
+     * otherwise report as an empty result set ï¿½?indistinguishable from a
      * legitimate no-match. Validate the user's regex up front and return an
      * explicit error so callers can tell "broken pattern" from "no matches". */
     if (use_regex) {
@@ -3688,13 +3688,13 @@ static char *handle_search_code(cbm_mcp_server_t *srv, const char *args) {
         cbm_regfree(&probe);
     }
 
-    /* â”€â”€ Phase 0.5: Multi-word â†?regex conversion â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+    /* â”€â”€ Phase 0.5: Multi-word ï¿½?regex conversion â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
     /* If pattern contains whitespace and is not already a regex, convert to a
-     * regex that matches all words in order: "foo bar baz" â†?"foo.*bar.*baz".
+     * regex that matches all words in order: "foo bar baz" ï¿½?"foo.*bar.*baz".
      * This avoids requiring the exact phrase as a contiguous substring. */
     if (!use_regex && strchr(pattern, ' ')) {
         size_t plen = strlen(pattern);
-        /* Worst case: every char is a space â†?".*" between each char */
+        /* Worst case: every char is a space ï¿½?".*" between each char */
         char *regex_pat = malloc(plen * 3 + 1);
         if (regex_pat) {
             char *dst = regex_pat;
@@ -3737,13 +3737,13 @@ static char *handle_search_code(cbm_mcp_server_t *srv, const char *args) {
         return cbm_mcp_text_result(errmsg, true);
     }
 
-    /* No grep-level match limit â€?let grep find all matches, then dedup and
+    /* No grep-level match limit ï¿½?let grep find all matches, then dedup and
      * cap in our code. The -m flag caused results from large vendored files
      * to exhaust the quota before reaching project source files. */
     enum { GREP_MAX_MATCHES = 500 };
     int grep_limit = GREP_MAX_MATCHES;
 
-    /* Scope grep to indexed files only â€?avoids scanning vendored/generated code.
+    /* Scope grep to indexed files only ï¿½?avoids scanning vendored/generated code.
      * Query the graph for distinct file paths, write them to a temp file,
      * then use xargs to pass them to grep. Falls back to recursive grep if
      * no indexed files found (project not fully indexed). */
@@ -3799,7 +3799,7 @@ static char *handle_search_code(cbm_mcp_server_t *srv, const char *args) {
     classify_all_grep_hits(gm, gm_count, store, project, &sr, &sr_count, &sr_cap, &raw, &raw_count,
                            &raw_cap);
 
-    /* Phase 3: batch degree query â€?ONE query for all results instead of 2Ã—N */
+    /* Phase 3: batch degree query ï¿½?ONE query for all results instead of 2Ã—N */
     if (store && sr_count > 0) {
         int64_t *ids = malloc(sr_count * sizeof(int64_t));
         int *in_degs = malloc(sr_count * sizeof(int));
@@ -4142,14 +4142,38 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     }
     const char *policy_reason = NULL;
     const char *policy_decision = memory_write_policy_decide(content ? content : payload, kind, type, &policy_reason);
+
+    /* Resolve the store early so we can write the audit event even for rejected writes. */
+    cbm_store_t *store = resolve_memory_store(srv, project);
+
     if (strcmp(policy_decision, "rejected") == 0) {
+        /* Write a lightweight audit.rejected event so policy decisions are traceable
+         * and can be used to tune write policy thresholds (framework Â§3, Â§0 principle 8). */
+        if (store) {
+            cbm_memory_event_t audit_ev = {0};
+            audit_ev.type = "audit.rejected";
+            audit_ev.source = source ? source : "mcp.events";
+            audit_ev.project = project;
+            audit_ev.user = user;
+            audit_ev.payload = payload;
+            audit_ev.confidence = 0.0;
+            /* Encode the rejection reason in context so it's queryable. */
+            char audit_ctx[256];
+            snprintf(audit_ctx, sizeof(audit_ctx),
+                     "{\"policy_reason\":\"%s\",\"kind\":\"%s\",\"type\":\"%s\"}",
+                     policy_reason ? policy_reason : "",
+                     kind ? kind : "",
+                     type ? type : "");
+            audit_ev.context_json = audit_ctx;
+            (void)cbm_store_memory_append_event(store, &audit_ev, NULL);
+        }
         yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
         yyjson_mut_val *root = yyjson_mut_obj(doc);
         yyjson_mut_doc_set_root(doc, root);
         yyjson_mut_obj_add_str(doc, root, "status", "rejected");
         yyjson_mut_obj_add_str(doc, root, "policy_decision", policy_decision);
         yyjson_mut_obj_add_str(doc, root, "policy_reason", policy_reason ? policy_reason : "");
-        yyjson_mut_obj_add_str(doc, root, "hot_path", "write policy rejected before event/item persistence");
+        yyjson_mut_obj_add_str(doc, root, "hot_path", "write policy rejected; audit event written to memory_event");
         char *json = yy_doc_to_str(doc);
         yyjson_mut_doc_free(doc);
         char *result = cbm_mcp_text_result(json, false);
@@ -4159,7 +4183,6 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         free(context_json);
         return result;
     }
-    cbm_store_t *store = resolve_memory_store(srv, project);
     if (!store) {
         char *_err = build_project_list_error("project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
@@ -4580,7 +4603,7 @@ static void detect_session(cbm_mcp_server_t *srv) {
         }
     }
 
-    /* Derive project name from path â€?must match cbm_project_name_from_path
+    /* Derive project name from path ï¿½?must match cbm_project_name_from_path
      * used by the pipeline, otherwise session queries look for a .db file
      * that doesn't match the indexed project name. */
     if (srv->session_root[0]) {
@@ -4638,7 +4661,7 @@ static void maybe_auto_index(cbm_mcp_server_t *srv) {
                  srv->session_project);
         struct stat st;
         if (stat(db_check, &st) == 0) {
-            /* Already indexed â†?register watcher for change detection */
+            /* Already indexed ï¿½?register watcher for change detection */
             cbm_log_info("autoindex.skip", "reason", "already_indexed", "project",
                          srv->session_project);
             if (srv->watcher) {
@@ -4797,7 +4820,7 @@ static char *inject_update_notice(cbm_mcp_server_t *srv, char *result_json) {
 
     if (new_json) {
         free(result_json);
-        srv->update_notice[0] = '\0'; /* clear â€?one-shot */
+        srv->update_notice[0] = '\0'; /* clear ï¿½?one-shot */
         return new_json;
     }
     return result_json;
@@ -4811,7 +4834,7 @@ char *cbm_mcp_server_handle(cbm_mcp_server_t *srv, const char *line) {
         return cbm_jsonrpc_format_error(0, JSONRPC_PARSE_ERROR, "Parse error");
     }
 
-    /* Notifications (no id) â†?handle cancellation, then no response */
+    /* Notifications (no id) ï¿½?handle cancellation, then no response */
     if (!req.has_id) {
         if (req.method && strcmp(req.method, "notifications/cancelled") == 0) {
             /* MCP cancellation: cancel the active pipeline if request ID matches */
@@ -4930,7 +4953,7 @@ static int poll_for_input_unix(cbm_mcp_server_t *srv, int fd, FILE *in) {
     /* Phase 2: peek FILE* buffer */
     int saved_flags = fcntl(fd, F_GETFL);
     if (saved_flags < 0) {
-        /* fcntl failed â€?fall through to blocking poll */
+        /* fcntl failed ï¿½?fall through to blocking poll */
         pr = poll(&pfd, SKIP_ONE, STORE_IDLE_TIMEOUT_S * MCP_TIMEOUT_MS);
         if (pr < 0) {
             return CBM_NOT_FOUND;
@@ -4985,12 +5008,12 @@ int cbm_mcp_server_run(cbm_mcp_server_t *srv, FILE *in, FILE *out) {
          * empty kernel fd and block for STORE_IDLE_TIMEOUT_S seconds even
          * though the next messages are already in the FILE* buffer.
          *
-         * Fix (Unix): use a three-phase approach â€?
+         * Fix (Unix): use a three-phase approach ï¿½?
          *   Phase 1: non-blocking poll (timeout=0) to check the kernel fd.
          *   Phase 2: if Phase 1 returns 0, peek the FILE* buffer via fgetc/
          *            ungetc to detect data buffered by a prior getline() call.
          *            The fd is temporarily set O_NONBLOCK so fgetc() returns
-         *            immediately (EAGAIN â†?EOF + ferror) instead of blocking
+         *            immediately (EAGAIN ï¿½?EOF + ferror) instead of blocking
          *            when the FILE* buffer is empty, which would otherwise
          *            bypass the Phase 3 idle eviction timeout.
          *   Phase 3: only if both phases confirm no data, do blocking poll. */
@@ -5011,7 +5034,7 @@ int cbm_mcp_server_run(cbm_mcp_server_t *srv, FILE *in, FILE *out) {
             break;
         }
         if (pr == 0) {
-            continue; /* timeout â€?idle stores evicted */
+            continue; /* timeout ï¿½?idle stores evicted */
         }
 #endif
 
@@ -5067,7 +5090,7 @@ bool cbm_parse_file_uri(const char *uri, char *out_path, int out_size) {
 
     const char *path = uri + MCP_URI_PREFIX;
 
-    /* On Windows, file:///C:/path â†?/C:/path. Strip leading / before drive letter. */
+    /* On Windows, file:///C:/path ï¿½?/C:/path. Strip leading / before drive letter. */
     if (path[0] == '/' && path[SKIP_ONE] &&
         ((path[SKIP_ONE] >= 'A' && path[SKIP_ONE] <= 'Z') ||
          (path[SKIP_ONE] >= 'a' && path[SKIP_ONE] <= 'z')) &&

@@ -421,11 +421,18 @@ TEST(memory_consolidate_merge_keeps_new_event_evidence) {
     ASSERT(cbm_store_memory_consolidate(s, "test-proj", 100, &processed) == CBM_STORE_OK);
     ASSERT(processed == 1);
 
+    /* Archived candidate: supersedes must be NULL (it is retired, not superseding). */
     cbm_memory_item_t archived = {0};
     ASSERT(cbm_store_memory_get_item(s, candidate_id, &archived) == CBM_STORE_OK);
     ASSERT(strcmp(archived.status, "archived") == 0);
-    ASSERT(strcmp(archived.supersedes, active_id) == 0);
+    ASSERT(archived.supersedes == NULL || archived.supersedes[0] == '\0');
     cbm_store_memory_item_free(&archived);
+
+    /* Surviving active item: supersedes must point to the retired candidate. */
+    cbm_memory_item_t survivor = {0};
+    ASSERT(cbm_store_memory_get_item(s, active_id, &survivor) == CBM_STORE_OK);
+    ASSERT(survivor.supersedes != NULL && strcmp(survivor.supersedes, candidate_id) == 0);
+    cbm_store_memory_item_free(&survivor);
 
     cbm_memory_query_t q = {0};
     q.project = "test-proj";
