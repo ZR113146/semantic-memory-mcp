@@ -4,7 +4,7 @@ This note captures the current delivery posture for the graph-style long-term me
 
 ## Windows Validation
 
-Run the focused memory framework validation on Windows with:
+Run the focused semantic memory validation on Windows with:
 
 ```cmd
 scripts\test-memory-windows.cmd

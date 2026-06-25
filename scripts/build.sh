@@ -96,4 +96,4 @@ else
         CFLAGS_EXTRA="$CFLAGS_EXTRA" "${EXTRA_MAKE_ARGS[@]+"${EXTRA_MAKE_ARGS[@]}"}"
 fi
 
-echo "=== Build complete: build/c/codebase-memory-mcp ==="
+echo "=== Build complete: build/c/semantic-memory-mcp ==="

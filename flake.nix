@@ -1,5 +1,5 @@
 {
-  description = "codebase-memory-mcp — C11 MCP server for codebase indexing";
+  description = "semantic-memory-mcp — C11 MCP server for codebase indexing";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
@@ -11,7 +11,7 @@
     {
       packages = forAllSystems (pkgs: {
         default = pkgs.stdenv.mkDerivation {
-          pname = "codebase-memory-mcp";
+          pname = "semantic-memory-mcp";
           version = "0.6.0";
 
           src = ./.;
@@ -28,14 +28,14 @@
           '';
 
           installPhase = ''
-            install -Dm755 build/c/codebase-memory-mcp $out/bin/codebase-memory-mcp
+            install -Dm755 build/c/semantic-memory-mcp $out/bin/semantic-memory-mcp
           '';
 
           meta = {
             description = "MCP server that builds and queries a semantic graph of your codebase";
-            homepage = "https://github.com/DeusData/codebase-memory-mcp";
+            homepage = "https://github.com/ZR113146/semantic-memory-mcp";
             license = nixpkgs.lib.licenses.mit;
-            mainProgram = "codebase-memory-mcp";
+            mainProgram = "semantic-memory-mcp";
             platforms = systems;
           };
         };

@@ -123,7 +123,7 @@ TEST(config_corrupt_file) {
 
     /* Ensure directory exists (portable — no system("mkdir -p")) */
     char dir[1024];
-    snprintf(dir, sizeof(dir), "%s/.cache/codebase-memory-mcp", td);
+    snprintf(dir, sizeof(dir), "%s/.cache/semantic-memory-mcp", td);
     cbm_mkdir_p(dir, 0755);
 
     FILE *f = fopen(path, "w");
@@ -159,7 +159,7 @@ TEST(config_missing_fields) {
     cbm_ui_config_path(path, (int)sizeof(path));
 
     char dir[1024];
-    snprintf(dir, sizeof(dir), "%s/.cache/codebase-memory-mcp", td);
+    snprintf(dir, sizeof(dir), "%s/.cache/semantic-memory-mcp", td);
     cbm_mkdir_p(dir, 0755);
 
     FILE *f = fopen(path, "w");

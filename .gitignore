@@ -1,6 +1,6 @@
 # Binaries
 code-graph-mcp
-/codebase-memory-mcp
+/semantic-memory-mcp
 bin/
 *.exe
 *.dll
@@ -11,6 +11,8 @@ bin/
 *.test
 *.out
 coverage.txt
+__pycache__/
+*.pyc
 
 # Test fixture temp dirs (created by C test suite in CWD instead of /tmp/)
 cbm_*/

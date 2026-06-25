@@ -8,19 +8,19 @@ const fs = require('fs');
 const { spawnSync } = require('child_process');
 
 const isWindows = process.platform === 'win32';
-const binName = isWindows ? 'codebase-memory-mcp.exe' : 'codebase-memory-mcp';
+const binName = isWindows ? 'semantic-memory-mcp.exe' : 'semantic-memory-mcp';
 const binPath = path.join(__dirname, 'bin', binName);
 
 if (!fs.existsSync(binPath)) {
   // Binary missing — try running the install script (handles --ignore-scripts case)
-  process.stderr.write('codebase-memory-mcp: binary not found, downloading...\n');
+  process.stderr.write('semantic-memory-mcp: binary not found, downloading...\n');
   const installResult = spawnSync(process.execPath, [path.join(__dirname, 'install.js')], {
     stdio: 'inherit',
   });
   if (installResult.status !== 0 || !fs.existsSync(binPath)) {
     process.stderr.write(
-      'codebase-memory-mcp: download failed.\n' +
-      'Try reinstalling: npm install -g codebase-memory-mcp\n'
+      'semantic-memory-mcp: download failed.\n' +
+      'Try reinstalling: npm install -g semantic-memory-mcp\n'
     );
     process.exit(1);
   }
@@ -32,7 +32,7 @@ const result = spawnSync(binPath, process.argv.slice(2), {
 });
 
 if (result.error) {
-  process.stderr.write(`codebase-memory-mcp: ${result.error.message}\n`);
+  process.stderr.write(`semantic-memory-mcp: ${result.error.message}\n`);
   process.exit(1);
 }
 

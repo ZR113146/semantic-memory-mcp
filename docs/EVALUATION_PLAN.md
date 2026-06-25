@@ -1,4 +1,4 @@
-# codebase-memory-mcp — Evaluation Plan (159 Languages)
+# semantic-memory-mcp — Evaluation Plan (159 Languages)
 
 > **Status:** Working plan document, **for peer review prior to execution**. This is a **plan, not a
 > result set** — it defines *how* the next evaluation is run and contains no scores. Execution happens
@@ -12,7 +12,7 @@
 
 ## 1. Purpose
 
-Measure how well `codebase-memory-mcp`'s structured knowledge-graph queries answer real developer
+Measure how well `semantic-memory-mcp`'s structured knowledge-graph queries answer real developer
 questions compared to plain text exploration (Grep / Glob / Read), across **all 159 supported
 languages**, and — for the 9 LSP-hybrid languages — how well the deeper capabilities
 (**cross-repo intelligence** and **semantic / similarity edges**) actually perform.
@@ -173,7 +173,7 @@ for each language L in order (skip if manifest says done):
        (this is the only subagent; it runs while/after step 4 — no indexing, no contention)
   6. WRITE L's per-language report incl. index time + full histogram (§10.4)
   7. JUDGE L (blind, §9) — see note below
-  8. DELETE L's index from ~/.cache/codebase-memory-mcp so the next language starts clean,
+  8. DELETE L's index from ~/.cache/semantic-memory-mcp so the next language starts clean,
        then mark L done in manifest.json and move to L+1
 ```
 
@@ -275,7 +275,7 @@ every index is genuinely cold. The skeleton:
 
 ```bash
 # Start clean: no leftover DBs, fresh results tree
-rm -f ~/.cache/codebase-memory-mcp/*.db
+rm -f ~/.cache/semantic-memory-mcp/*.db
 mkdir -p /tmp/eval-results
 
 for lang in $ALL_LANGS; do                      # ALL_LANGS = full 159-name list (§2 / §8)
@@ -283,7 +283,7 @@ for lang in $ALL_LANGS; do                      # ALL_LANGS = full 159-name list
 
   # --- step 2: cold index in the main channel, TIMED (key metric) ---
   t0=$(now_ms)
-  scripts/benchmark-index.sh ~/.local/bin/codebase-memory-mcp "$lang" /tmp/bench/"$lang" /tmp/eval-results
+  scripts/benchmark-index.sh ~/.local/bin/semantic-memory-mcp "$lang" /tmp/bench/"$lang" /tmp/eval-results
   index_ms=$(( $(now_ms) - t0 ))                 # clone+index wall-clock → manifest + report (§5)
 
   # --- step 3: record per-type histograms (zeros back-filled) ---
@@ -293,7 +293,7 @@ for lang in $ALL_LANGS; do                      # ALL_LANGS = full 159-name list
   #               + per-language report + (deferred, blind) judge ---
 
   # --- step 8: delete THIS language's index so the next is cold, then mark done ---
-  rm -f ~/.cache/codebase-memory-mcp/*.db
+  rm -f ~/.cache/semantic-memory-mcp/*.db
   manifest_mark_done "$lang" "$index_ms"
 done
 ```
@@ -860,10 +860,10 @@ Deep-Dive section.
 scripts/clone-bench-repos.sh /tmp/bench
 
 # 2. Cold index all 159 (LSP cohort in full mode)
-rm -f ~/.cache/codebase-memory-mcp/*.db
+rm -f ~/.cache/semantic-memory-mcp/*.db
 mkdir -p /tmp/eval-results
 for lang in $ALL_LANGS; do
-  scripts/benchmark-index.sh ~/.local/bin/codebase-memory-mcp "$lang" /tmp/bench/"$lang" /tmp/eval-results
+  scripts/benchmark-index.sh ~/.local/bin/semantic-memory-mcp "$lang" /tmp/bench/"$lang" /tmp/eval-results
 done
 
 # 3. Cross-repo pass for the 9 LSP pairs (index each service dir, then cross-repo-intelligence)
@@ -1010,7 +1010,7 @@ D5→`search_code("instance ")` + `search_graph(name_pattern=".*walk.*|.*query.*
 
 > The report below is reproduced in full, unedited, as required by project policy.
 
-#### Challenge Review: EVALUATION_PLAN.md — codebase-memory-mcp 159-Language Benchmark
+#### Challenge Review: EVALUATION_PLAN.md — semantic-memory-mcp 159-Language Benchmark
 
 ##### What Looks Good
 
@@ -1102,7 +1102,7 @@ If the Graph agent returns zero results on D2 (zero-result rate flagged in §5),
 4. **Session continuity (§13):** What happens when the main session context window fills up or hits the usage limit at language 94? Is there a described checkpoint format — e.g., a manifest of completed languages that `clone-bench-repos.sh` can consult to skip already-done languages — or does the whole run restart from zero?
 5. **D5 cross-group comparability (§3, §8):** You aggregate D5 scores across all 159 languages. But D5 for Go means `semantic_query=["dispatch","route"]` surfacing functions from a vector index. D5 for gitignore means "naming-pattern / config↔code links." These are different operations using different graph tools. Do you actually intend the cross-language D5 rollup in §10.1 to be meaningful, or is it cosmetic?
 6. **S2 ground truth (§11.2):** "3–5 known near-duplicate function pairs" — how will you construct this set for each of the 9 LSP languages? Will you use the simhash output the indexer already produces, or is this a manual read? A 3-pair sample with no inter-rater agreement cannot support a recall claim. What is the minimum ground-truth size you consider credible?
-7. **Token exclusion policy (§5):** If a developer is deciding whether to adopt codebase-memory-mcp, they pay the full session cost, including agent spawn, orientation, and formatting. Why should the reported "Token Ratio" exclude the Explorer's orientation cost? Would you consider reporting both the narrow metric and the full-session metric?
+7. **Token exclusion policy (§5):** If a developer is deciding whether to adopt semantic-memory-mcp, they pay the full session cost, including agent spawn, orientation, and formatting. Why should the reported "Token Ratio" exclude the Explorer's orientation cost? Would you consider reporting both the narrow metric and the full-session metric?
 8. **The 159-vs-tiered question (over-engineering check):** The plan acknowledges ~30 ⚠️ repos need validation before questions can be written. For languages like `regex` (fixture corpus), `csv` (data, not code), `dotenv` (a handful of fixture files), `sshconfig` (few files), what meaningful D1–D5 question set can be written? Is the signal from these languages worth the cost of the infrastructure to collect it?
 
 ##### Recommendation

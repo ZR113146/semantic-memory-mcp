@@ -1,5 +1,5 @@
 /*
- * hook_augment.c — `codebase-memory-mcp hook-augment`
+ * hook_augment.c — `semantic-memory-mcp hook-augment`
  *
  * A non-blocking Claude Code PreToolUse augmenter. Reads the hook JSON from
  * stdin, and for Grep/Glob calls injects matching graph symbols as

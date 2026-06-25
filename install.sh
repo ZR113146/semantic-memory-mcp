@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# install.sh — One-line installer for codebase-memory-mcp.
+# install.sh — One-line installer for semantic-memory-mcp.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/ZR113146/semantic-memory-mcp/main/install.sh | bash
 #   curl -fsSL ... | bash -s -- --ui          # Install the UI variant
 #   curl -fsSL ... | bash -s -- --dir /path   # Custom install directory
 #
@@ -17,7 +17,7 @@ set -euo pipefail
 # called because the final line hasn't arrived yet.
 main() {
 
-REPO="DeusData/codebase-memory-mcp"
+REPO="ZR113146/semantic-memory-mcp"
 INSTALL_DIR="$HOME/.local/bin"
 VARIANT="standard"
 SKIP_CONFIG=false
@@ -83,11 +83,11 @@ detect_arch() {
 OS=$(detect_os)
 ARCH=$(detect_arch)
 
-echo "codebase-memory-mcp installer"
+echo "semantic-memory-mcp installer"
 echo "  os:      $OS"
 echo "  arch:    $ARCH"
 echo "  variant: $VARIANT"
-echo "  target:  $INSTALL_DIR/codebase-memory-mcp"
+echo "  target:  $INSTALL_DIR/semantic-memory-mcp"
 echo ""
 
 # Build download URL
@@ -104,9 +104,9 @@ PORTABLE=""
 [ "$OS" = "linux" ] && PORTABLE="-portable"
 
 if [ "$VARIANT" = "ui" ]; then
-    ARCHIVE="codebase-memory-mcp-ui-${OS}-${ARCH}${PORTABLE}.${EXT}"
+    ARCHIVE="semantic-memory-mcp-ui-${OS}-${ARCH}${PORTABLE}.${EXT}"
 else
-    ARCHIVE="codebase-memory-mcp-${OS}-${ARCH}${PORTABLE}.${EXT}"
+    ARCHIVE="semantic-memory-mcp-${OS}-${ARCH}${PORTABLE}.${EXT}"
 fi
 
 URL="${CBM_DOWNLOAD_URL}/${ARCHIVE}"
@@ -157,7 +157,7 @@ else
     tar -xzf "$ARCHIVE"
 fi
 
-DLBIN="$DLDIR/codebase-memory-mcp"
+DLBIN="$DLDIR/semantic-memory-mcp"
 if [ ! -f "$DLBIN" ]; then
     echo "error: binary not found after extraction" >&2
     exit 1
@@ -172,7 +172,7 @@ fi
 
 # Install
 mkdir -p "$INSTALL_DIR"
-DEST="$INSTALL_DIR/codebase-memory-mcp"
+DEST="$INSTALL_DIR/semantic-memory-mcp"
 if [ -f "$DEST" ]; then
     rm -f "$DEST"
 fi
@@ -199,7 +199,7 @@ else
     "$DEST" install -y 2>&1 || {
         echo ""
         echo "Agent configuration failed (non-fatal)."
-        echo "Run manually: codebase-memory-mcp install"
+        echo "Run manually: semantic-memory-mcp install"
     }
 fi
 
@@ -213,7 +213,7 @@ if ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR"; then
 fi
 
 echo ""
-echo "Done! Restart your coding agent to start using codebase-memory-mcp."
+echo "Done! Restart your coding agent to start using semantic-memory-mcp."
 
 } # end main()
 

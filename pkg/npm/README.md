@@ -1,9 +1,9 @@
-# codebase-memory-mcp
+# semantic-memory-mcp
 
-[![npm](https://img.shields.io/npm/v/codebase-memory-mcp?style=flat&color=blue)](https://www.npmjs.com/package/codebase-memory-mcp)
-[![GitHub Release](https://img.shields.io/github/v/release/DeusData/codebase-memory-mcp?style=flat&color=blue)](https://github.com/DeusData/codebase-memory-mcp/releases/latest)
-[![License](https://img.shields.io/badge/license-MIT-green)](https://github.com/DeusData/codebase-memory-mcp/blob/main/LICENSE)
-[![Platform](https://img.shields.io/badge/macOS_%7C_Linux_%7C_Windows-supported-lightgrey)](https://github.com/DeusData/codebase-memory-mcp/releases/latest)
+[![npm](https://img.shields.io/npm/v/semantic-memory-mcp?style=flat&color=blue)](https://www.npmjs.com/package/semantic-memory-mcp)
+[![GitHub Release](https://img.shields.io/github/v/release/ZR113146/semantic-memory-mcp?style=flat&color=blue)](https://github.com/ZR113146/semantic-memory-mcp/releases/latest)
+[![License](https://img.shields.io/badge/license-MIT-green)](https://github.com/ZR113146/semantic-memory-mcp/blob/main/LICENSE)
+[![Platform](https://img.shields.io/badge/macOS_%7C_Linux_%7C_Windows-supported-lightgrey)](https://github.com/ZR113146/semantic-memory-mcp/releases/latest)
 
 **The fastest and most efficient code intelligence engine for AI coding agents.** Full-indexes an average repository in milliseconds, the Linux kernel (28M LOC, 75K files) in 3 minutes. Answers structural queries in under 1ms. Ships as a single static binary — this package downloads and runs it automatically.
 
@@ -12,18 +12,18 @@ High-quality parsing through [tree-sitter](https://tree-sitter.github.io/tree-si
 ## Installation
 
 ```bash
-npm install -g codebase-memory-mcp
+npm install -g semantic-memory-mcp
 ```
 
 The binary for your platform is downloaded automatically at install time. Then configure your coding agents:
 
 ```bash
-codebase-memory-mcp install
+semantic-memory-mcp install
 ```
 
 Restart your agent. Say **"Index this project"** — done.
 
-## Why codebase-memory-mcp
+## Why semantic-memory-mcp
 
 - **Extreme indexing speed** — Linux kernel (28M LOC, 75K files) in 3 minutes. RAM-first pipeline with LZ4 compression and in-memory SQLite.
 - **Plug and play** — single static binary for macOS (arm64/amd64), Linux (arm64/amd64), and Windows (amd64). No Docker, no runtime dependencies, no API keys.
@@ -43,11 +43,11 @@ Restart your agent. Say **"Index this project"** — done.
 ## Usage
 
 ```bash
-codebase-memory-mcp install          # configure all detected coding agents
-codebase-memory-mcp --version
-codebase-memory-mcp --help
-codebase-memory-mcp update           # update to latest release
-codebase-memory-mcp uninstall        # remove agent configs
+semantic-memory-mcp install          # configure all detected coding agents
+semantic-memory-mcp --version
+semantic-memory-mcp --help
+semantic-memory-mcp update           # update to latest release
+semantic-memory-mcp uninstall        # remove agent configs
 ```
 
 ### CLI Mode
@@ -55,10 +55,10 @@ codebase-memory-mcp uninstall        # remove agent configs
 Every MCP tool is also available directly from the command line:
 
 ```bash
-codebase-memory-mcp cli index_repository '{"repo_path": "/path/to/repo"}'
-codebase-memory-mcp cli search_graph '{"name_pattern": ".*Handler.*", "label": "Function"}'
-codebase-memory-mcp cli trace_call_path '{"function_name": "main", "direction": "both"}'
-codebase-memory-mcp cli get_architecture '{}'
+semantic-memory-mcp cli index_repository '{"repo_path": "/path/to/repo"}'
+semantic-memory-mcp cli search_graph '{"name_pattern": ".*Handler.*", "label": "Function"}'
+semantic-memory-mcp cli trace_call_path '{"function_name": "main", "direction": "both"}'
+semantic-memory-mcp cli get_architecture '{}'
 ```
 
 ## MCP Tools
@@ -83,7 +83,7 @@ Benchmarked on Apple M3 Pro:
 
 ## Full Documentation
 
-See [github.com/DeusData/codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) for the full README including all MCP tools, configuration options, graph data model, and language support details.
+See [github.com/ZR113146/semantic-memory-mcp](https://github.com/ZR113146/semantic-memory-mcp) for the full README including all MCP tools, configuration options, graph data model, and language support details.
 
 ## License
 

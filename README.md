@@ -1,17 +1,17 @@
-# codebase-memory-mcp
+# semantic-memory-mcp
 
-[![GitHub Release](https://img.shields.io/github/v/release/DeusData/codebase-memory-mcp?style=flat&color=blue)](https://github.com/DeusData/codebase-memory-mcp/releases/latest)
+[![GitHub Release](https://img.shields.io/github/v/release/ZR113146/semantic-memory-mcp?style=flat&color=blue)](https://github.com/ZR113146/semantic-memory-mcp/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![CI](https://img.shields.io/github/actions/workflow/status/DeusData/codebase-memory-mcp/dry-run.yml?label=CI)](https://github.com/DeusData/codebase-memory-mcp/actions/workflows/dry-run.yml)
-[![Tests](https://img.shields.io/badge/tests-5604_passing-brightgreen)](https://github.com/DeusData/codebase-memory-mcp)
-[![Languages](https://img.shields.io/badge/languages-158-orange)](https://github.com/DeusData/codebase-memory-mcp)
+[![CI](https://img.shields.io/github/actions/workflow/status/ZR113146/semantic-memory-mcp/dry-run.yml?label=CI)](https://github.com/ZR113146/semantic-memory-mcp/actions/workflows/dry-run.yml)
+[![Tests](https://img.shields.io/badge/tests-5604_passing-brightgreen)](https://github.com/ZR113146/semantic-memory-mcp)
+[![Languages](https://img.shields.io/badge/languages-158-orange)](https://github.com/ZR113146/semantic-memory-mcp)
 [![Hybrid LSP](https://img.shields.io/badge/Hybrid_LSP-9_languages-blue)](#hybrid-lsp)
-[![Agents](https://img.shields.io/badge/agents-11-purple)](https://github.com/DeusData/codebase-memory-mcp)
-[![Pure C](https://img.shields.io/badge/pure_C-zero_dependencies-blue)](https://github.com/DeusData/codebase-memory-mcp)
-[![Platform](https://img.shields.io/badge/macOS_%7C_Linux_%7C_Windows-supported-lightgrey)](https://github.com/DeusData/codebase-memory-mcp/releases/latest)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/DeusData/codebase-memory-mcp/badge)](https://scorecard.dev/viewer/?uri=github.com/DeusData/codebase-memory-mcp)
+[![Agents](https://img.shields.io/badge/agents-11-purple)](https://github.com/ZR113146/semantic-memory-mcp)
+[![Pure C](https://img.shields.io/badge/pure_C-zero_dependencies-blue)](https://github.com/ZR113146/semantic-memory-mcp)
+[![Platform](https://img.shields.io/badge/macOS_%7C_Linux_%7C_Windows-supported-lightgrey)](https://github.com/ZR113146/semantic-memory-mcp/releases/latest)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ZR113146/semantic-memory-mcp/badge)](https://scorecard.dev/viewer/?uri=github.com/ZR113146/semantic-memory-mcp)
 [![SLSA 3](https://slsa.dev/images/gh-badge-level3.svg)](https://slsa.dev)
-[![VirusTotal](https://img.shields.io/badge/VirusTotal-scanned_every_release-brightgreen?logo=virustotal)](https://github.com/DeusData/codebase-memory-mcp/releases/latest)
+[![VirusTotal](https://img.shields.io/badge/VirusTotal-scanned_every_release-brightgreen?logo=virustotal)](https://github.com/ZR113146/semantic-memory-mcp/releases/latest)
 [![arXiv](https://img.shields.io/badge/arXiv-2603.27277-b31b1b?logo=arxiv)](https://arxiv.org/abs/2603.27277)
 
 **The fastest and most efficient code intelligence engine for AI coding agents.** Full-indexes an average repository in milliseconds, the Linux kernel (28M LOC, 75K files) in 3 minutes. Answers structural queries in under 1ms. Ships as a single static binary for macOS, Linux, and Windows — download, run `install`, done.
@@ -20,15 +20,15 @@ High-quality parsing through [tree-sitter](https://tree-sitter.github.io/tree-si
 
 > **Research** — The design and benchmarks behind this project are described in the preprint [*Codebase-Memory: Tree-Sitter-Based Knowledge Graphs for LLM Code Exploration via MCP*](https://arxiv.org/abs/2603.27277) (arXiv:2603.27277). Evaluated across 31 real-world repositories: 83% answer quality, 10× fewer tokens, 2.1× fewer tool calls vs. file-by-file exploration.
 
-> **Security & Trust** — This tool reads your codebase and writes to your agent configuration files. That is what it is designed to do. If you prefer to audit before running, the [full source is here](https://github.com/DeusData/codebase-memory-mcp) — every release binary is signed, checksummed, and scanned by 70+ antivirus engines. All processing happens 100% locally; your code never leaves your machine. Found a security issue? We want to know — see [SECURITY.md](SECURITY.md). Security is Priority #1 for us.
+> **Security & Trust** — This tool reads your codebase and writes to your agent configuration files. That is what it is designed to do. If you prefer to audit before running, the [full source is here](https://github.com/ZR113146/semantic-memory-mcp) — every release binary is signed, checksummed, and scanned by 70+ antivirus engines. All processing happens 100% locally; your code never leaves your machine. Found a security issue? We want to know — see [SECURITY.md](SECURITY.md). Security is Priority #1 for us.
 
 <p align="center">
-  <img src="docs/graph-ui-screenshot.png" alt="Graph visualization UI showing the codebase-memory-mcp knowledge graph" width="800">
+  <img src="docs/graph-ui-screenshot.png" alt="Graph visualization UI showing the semantic-memory-mcp knowledge graph" width="800">
   <br>
   <em>Built-in 3D graph visualization (UI variant) — explore your knowledge graph at localhost:9749</em>
 </p>
 
-## Why codebase-memory-mcp
+## Why semantic-memory-mcp
 
 - **Extreme indexing speed** — Linux kernel (28M LOC, 75K files) in 3 minutes. RAM-first pipeline: LZ4 compression, in-memory SQLite, fused Aho-Corasick pattern matching. Memory released after indexing.
 - **Plug and play** — single static binary for macOS (arm64/amd64), Linux (arm64/amd64), and Windows (amd64). No Docker, no runtime dependencies, no API keys. Download → `install` → restart agent → done.
@@ -43,18 +43,18 @@ High-quality parsing through [tree-sitter](https://tree-sitter.github.io/tree-si
 
 **One-line install** (macOS / Linux):
 ```bash
-curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ZR113146/semantic-memory-mcp/main/install.sh | bash
 ```
 
 With graph visualization UI:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash -s -- --ui
+curl -fsSL https://raw.githubusercontent.com/ZR113146/semantic-memory-mcp/main/install.sh | bash -s -- --ui
 ```
 
 **Windows** (PowerShell):
 ```powershell
 # 1. Download the installer
-Invoke-WebRequest -Uri https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.ps1 -OutFile install.ps1
+Invoke-WebRequest -Uri https://raw.githubusercontent.com/ZR113146/semantic-memory-mcp/main/install.ps1 -OutFile install.ps1
 
 # 2. (Optional but recommended) Inspect the script
 notepad install.ps1
@@ -71,21 +71,21 @@ Restart your coding agent. Say **"Index this project"** — done.
 <details>
 <summary>Manual install</summary>
 
-1. **Download** the archive for your platform from the [latest release](https://github.com/DeusData/codebase-memory-mcp/releases/latest):
-   - `codebase-memory-mcp-<os>-<arch>.tar.gz` (macOS/Linux) or `.zip` (Windows) — standard
-   - `codebase-memory-mcp-ui-<os>-<arch>.tar.gz` / `.zip` — with graph visualization
+1. **Download** the archive for your platform from the [latest release](https://github.com/ZR113146/semantic-memory-mcp/releases/latest):
+   - `semantic-memory-mcp-<os>-<arch>.tar.gz` (macOS/Linux) or `.zip` (Windows) — standard
+   - `semantic-memory-mcp-ui-<os>-<arch>.tar.gz` / `.zip` — with graph visualization
 
 2. **Extract and install** (each archive includes `install.sh` or `install.ps1`):
 
    macOS / Linux:
    ```bash
-   tar xzf codebase-memory-mcp-*.tar.gz
+   tar xzf semantic-memory-mcp-*.tar.gz
    ./install.sh
    ```
 
    Windows (PowerShell):
    ```powershell
-   Expand-Archive codebase-memory-mcp-windows-amd64.zip -DestinationPath .
+   Expand-Archive semantic-memory-mcp-windows-amd64.zip -DestinationPath .
    .\install.ps1
    ```
 
@@ -101,7 +101,7 @@ The `install` command auto-detects all installed coding agents and configures MC
 If you downloaded the `ui` variant:
 
 ```bash
-codebase-memory-mcp --ui=true --port=9749
+semantic-memory-mcp --ui=true --port=9749
 ```
 
 Open `http://localhost:9749` in your browser. The UI runs as a background thread alongside the MCP server — it's available whenever your agent is connected.
@@ -111,7 +111,7 @@ Open `http://localhost:9749` in your browser. The UI runs as a background thread
 Enable automatic indexing on MCP session start:
 
 ```bash
-codebase-memory-mcp config set auto_index true
+semantic-memory-mcp config set auto_index true
 ```
 
 When enabled, new projects are indexed automatically on first connection. Previously-indexed projects are registered with the background watcher for ongoing git-based change detection. Configurable file limit: `config set auto_index_limit 50000`.
@@ -119,7 +119,7 @@ When enabled, new projects are indexed automatically on first connection. Previo
 ### Keeping Up to Date
 
 ```bash
-codebase-memory-mcp update
+semantic-memory-mcp update
 ```
 
 The MCP server also checks for updates on startup and notifies on the first tool call if a newer release is available.
@@ -127,7 +127,7 @@ The MCP server also checks for updates on startup and notifies on the first tool
 ### Uninstall
 
 ```bash
-codebase-memory-mcp uninstall
+semantic-memory-mcp uninstall
 ```
 
 Removes all agent configs, skills, hooks, and instructions. Does not remove the binary or SQLite databases.
@@ -175,17 +175,17 @@ Removes all agent configs, skills, hooks, and instructions. Does not remove the 
 - **RAM-first pipeline**: LZ4 compression, in-memory SQLite, single dump at end. Memory released after.
 
 ### Distribution & operation
-- **Single static binary, zero infrastructure**: SQLite-backed, persists to `~/.cache/codebase-memory-mcp/`
+- **Single static binary, zero infrastructure**: SQLite-backed, persists to `~/.cache/semantic-memory-mcp/`
 - **Auto-sync**: Background watcher detects file changes and re-indexes automatically
 - **Route nodes**: REST endpoints are first-class graph entities
-- **CLI mode**: `codebase-memory-mcp cli search_graph '{"name_pattern": ".*Handler.*"}'`
+- **CLI mode**: `semantic-memory-mcp cli search_graph '{"name_pattern": ".*Handler.*"}'`
 - **Available on**: npm, PyPI, Homebrew, Scoop, Winget, Chocolatey, AUR, `go install`
 
 ## Team-Shared Graph Artifact
 
 Commit a single compressed file to your repo and your teammates skip the reindex.
 
-`.codebase-memory/graph.db.zst` is a zstd-compressed snapshot of the knowledge graph that lives next to your source. When you index, the artifact is written or refreshed; when a teammate clones the repo and runs `codebase-memory-mcp` for the first time, the artifact is decompressed and incremental indexing fills in their local diff.
+`.semantic-memory/graph.db.zst` is a zstd-compressed snapshot of the knowledge graph that lives next to your source. When you index, the artifact is written or refreshed; when a teammate clones the repo and runs `semantic-memory-mcp` for the first time, the artifact is decompressed and incremental indexing fills in their local diff.
 
 - **Format**: SQLite database, indexes stripped, `VACUUM INTO` compacted, then zstd 1.5.7 compressed (8–13:1 ratio typical)
 - **Two tiers**:
@@ -193,20 +193,20 @@ Commit a single compressed file to your repo and your teammates skip the reindex
   - **Fast** (`zstd -3`) — written by the watcher for low-latency incremental updates
 - **Bootstrap**: when no local DB exists but the artifact is present, `index_repository` imports the artifact first, then runs incremental indexing — avoiding the full reindex cost
 - **No merge pain**: a `.gitattributes` line with `merge=ours` is auto-created on first export, so concurrent edits don't produce conflicts on the binary artifact
-- **Optional**: never committed unless you want it. Add `.codebase-memory/` to `.gitignore` if you prefer everyone to reindex from scratch.
+- **Optional**: never committed unless you want it. Add `.semantic-memory/` to `.gitignore` if you prefer everyone to reindex from scratch.
 
 The result is similar in spirit to graphify's `graphify-out/` directory, but as a single compressed file with explicit two-tier export, integrity-checked import, and zero merge friction.
 
 ## How It Works
 
-codebase-memory-mcp is a **structural analysis backend** — it builds and queries the knowledge graph. It does **not** include an LLM. Instead, it relies on your MCP client (Claude Code, or any MCP-compatible agent) to be the intelligence layer.
+semantic-memory-mcp is a **structural analysis backend** — it builds and queries the knowledge graph. It does **not** include an LLM. Instead, it relies on your MCP client (Claude Code, or any MCP-compatible agent) to be the intelligence layer.
 
 ```
 You: "what calls ProcessOrder?"
 
 Agent calls: trace_path(function_name="ProcessOrder", direction="inbound")
 
-codebase-memory-mcp: executes graph query, returns structured results
+semantic-memory-mcp: executes graph query, returns structured results
 
 Agent: presents the call chain in plain English
 ```
@@ -229,7 +229,7 @@ Benchmarked on Apple M3 Pro:
 
 **RAM-first pipeline**: All indexing runs in memory (LZ4 HC compressed read, in-memory SQLite, single dump at end). Memory is released back to the OS after indexing completes.
 
-**Token efficiency**: Five structural queries consumed ~3,400 tokens via codebase-memory-mcp versus ~412,000 tokens via file-by-file grep exploration — a **99.2% reduction**.
+**Token efficiency**: Five structural queries consumed ~3,400 tokens via semantic-memory-mcp versus ~412,000 tokens via file-by-file grep exploration — a **99.2% reduction**.
 
 ## Installation
 
@@ -237,11 +237,11 @@ Benchmarked on Apple M3 Pro:
 
 | Platform | Standard | With Graph UI |
 |----------|----------|---------------|
-| macOS (Apple Silicon) | `codebase-memory-mcp-darwin-arm64.tar.gz` | `codebase-memory-mcp-ui-darwin-arm64.tar.gz` |
-| macOS (Intel) | `codebase-memory-mcp-darwin-amd64.tar.gz` | `codebase-memory-mcp-ui-darwin-amd64.tar.gz` |
-| Linux (x86_64) | `codebase-memory-mcp-linux-amd64.tar.gz` | `codebase-memory-mcp-ui-linux-amd64.tar.gz` |
-| Linux (ARM64) | `codebase-memory-mcp-linux-arm64.tar.gz` | `codebase-memory-mcp-ui-linux-arm64.tar.gz` |
-| Windows (x86_64) | `codebase-memory-mcp-windows-amd64.zip` | `codebase-memory-mcp-ui-windows-amd64.zip` |
+| macOS (Apple Silicon) | `semantic-memory-mcp-darwin-arm64.tar.gz` | `semantic-memory-mcp-ui-darwin-arm64.tar.gz` |
+| macOS (Intel) | `semantic-memory-mcp-darwin-amd64.tar.gz` | `semantic-memory-mcp-ui-darwin-amd64.tar.gz` |
+| Linux (x86_64) | `semantic-memory-mcp-linux-amd64.tar.gz` | `semantic-memory-mcp-ui-linux-amd64.tar.gz` |
+| Linux (ARM64) | `semantic-memory-mcp-linux-arm64.tar.gz` | `semantic-memory-mcp-ui-linux-arm64.tar.gz` |
+| Windows (x86_64) | `semantic-memory-mcp-windows-amd64.zip` | `semantic-memory-mcp-ui-windows-amd64.zip` |
 
 Every release includes `checksums.txt` with SHA-256 hashes. All binaries are statically linked — no shared library dependencies.
 
@@ -255,13 +255,13 @@ Every release includes `checksums.txt` with SHA-256 hashes. All binaries are sta
 **macOS / Linux:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/scripts/setup.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ZR113146/semantic-memory-mcp/main/scripts/setup.sh | bash
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-irm https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/scripts/setup-windows.ps1 | iex
+irm https://raw.githubusercontent.com/ZR113146/semantic-memory-mcp/main/scripts/setup-windows.ps1 | iex
 ```
 
 </details>
@@ -269,19 +269,19 @@ irm https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/scripts/
 ### AUR (Arch Linux)
 
 ```bash
-yay -S codebase-memory-mcp-bin
+yay -S semantic-memory-mcp-bin
 ```
 
 ```bash
-paru -S codebase-memory-mcp-bin
+paru -S semantic-memory-mcp-bin
 ```
 
-The `codebase-memory-mcp-bin` package is available at: https://aur.archlinux.org/packages/codebase-memory-mcp-bin
+The `semantic-memory-mcp-bin` package is available at: https://aur.archlinux.org/packages/semantic-memory-mcp-bin
 
 ### Install via Claude Code
 
 ```
-You: "Install this MCP server: https://github.com/DeusData/codebase-memory-mcp"
+You: "Install this MCP server: https://github.com/ZR113146/semantic-memory-mcp"
 ```
 
 ### Build from Source
@@ -299,11 +299,11 @@ You: "Install this MCP server: https://github.com/DeusData/codebase-memory-mcp"
 </details>
 
 ```bash
-git clone https://github.com/DeusData/codebase-memory-mcp.git
-cd codebase-memory-mcp
+git clone https://github.com/ZR113146/semantic-memory-mcp.git
+cd semantic-memory-mcp
 scripts/build.sh                    # standard binary
 scripts/build.sh --with-ui          # with graph visualization
-# Binary at: build/c/codebase-memory-mcp
+# Binary at: build/c/semantic-memory-mcp
 ```
 
 ### Manual MCP Configuration
@@ -316,15 +316,15 @@ Add to `~/.claude/.mcp.json` (global) or project `.mcp.json`:
 ```json
 {
   "mcpServers": {
-    "codebase-memory-mcp": {
-      "command": "/path/to/codebase-memory-mcp",
+    "semantic-memory-mcp": {
+      "command": "/path/to/semantic-memory-mcp",
       "args": []
     }
   }
 }
 ```
 
-Restart your agent. Verify with `/mcp` — you should see `codebase-memory-mcp` with 14 tools.
+Restart your agent. Verify with `/mcp` — you should see `semantic-memory-mcp` with 14 tools.
 
 </details>
 
@@ -363,12 +363,12 @@ never gates and never blocks.
 Every MCP tool can be invoked from the command line:
 
 ```bash
-codebase-memory-mcp cli index_repository '{"repo_path": "/path/to/repo"}'
-codebase-memory-mcp cli search_graph '{"name_pattern": ".*Handler.*", "label": "Function"}'
-codebase-memory-mcp cli trace_path '{"function_name": "Search", "direction": "both"}'
-codebase-memory-mcp cli query_graph '{"query": "MATCH (f:Function) RETURN f.name LIMIT 5"}'
-codebase-memory-mcp cli list_projects
-codebase-memory-mcp cli --raw search_graph '{"label": "Function"}' | jq '.results[].name'
+semantic-memory-mcp cli index_repository '{"repo_path": "/path/to/repo"}'
+semantic-memory-mcp cli search_graph '{"name_pattern": ".*Handler.*", "label": "Function"}'
+semantic-memory-mcp cli trace_path '{"function_name": "Search", "direction": "both"}'
+semantic-memory-mcp cli query_graph '{"query": "MATCH (f:Function) RETURN f.name LIMIT 5"}'
+semantic-memory-mcp cli list_projects
+semantic-memory-mcp cli --raw search_graph '{"label": "Function"}' | jq '.results[].name'
 ```
 
 ## MCP Tools
@@ -434,17 +434,17 @@ Layered: hardcoded patterns (`.git`, `node_modules`, etc.) → `.gitignore` hier
 ## Configuration
 
 ```bash
-codebase-memory-mcp config list                          # show all settings
-codebase-memory-mcp config set auto_index true           # auto-index on session start
-codebase-memory-mcp config set auto_index_limit 50000    # max files for auto-index
-codebase-memory-mcp config reset auto_index              # reset to default
+semantic-memory-mcp config list                          # show all settings
+semantic-memory-mcp config set auto_index true           # auto-index on session start
+semantic-memory-mcp config set auto_index_limit 50000    # max files for auto-index
+semantic-memory-mcp config reset auto_index              # reset to default
 ```
 
 ### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CBM_CACHE_DIR` | `~/.cache/codebase-memory-mcp` | Override the database storage directory. All project indexes and config are stored here. |
+| `CBM_CACHE_DIR` | `~/.cache/semantic-memory-mcp` | Override the database storage directory. All project indexes and config are stored here. |
 | `CBM_DIAGNOSTICS` | `false` | Set to `1` or `true` to enable periodic diagnostics output to `/tmp/cbm-diagnostics-<pid>.json`. |
 | `CBM_DOWNLOAD_URL` | *(GitHub releases)* | Override the download URL for updates. Used for testing or self-hosted deployments. |
 | `CBM_LOG_LEVEL` | `info` | Set the minimum log level. Accepted values (case-insensitive): `debug`, `info`, `warn`, `error`, `none` — or their numeric equivalents `0`–`4` matching the internal enum. Logs go to stderr; stdout is reserved for MCP JSON-RPC. |
@@ -461,13 +461,13 @@ Map additional file extensions to supported languages via JSON config files. Use
 
 **Per-project** (in your repo root):
 ```json
-// .codebase-memory.json
+// .semantic-memory.json
 {"extra_extensions": {".blade.php": "php", ".mjs": "javascript"}}
 ```
 
 **Global** (applies to all projects):
 ```json
-// ~/.config/codebase-memory-mcp/config.json  (or $XDG_CONFIG_HOME/...)
+// ~/.config/semantic-memory-mcp/config.json  (or $XDG_CONFIG_HOME/...)
 {"extra_extensions": {".twig": "html", ".phtml": "php"}}
 ```
 
@@ -475,7 +475,7 @@ Project config overrides global for conflicting extensions. Unknown language val
 
 ## Persistence
 
-SQLite databases stored at `~/.cache/codebase-memory-mcp/`. Persists across restarts (WAL mode, ACID-safe). To reset: `rm -rf ~/.cache/codebase-memory-mcp/`.
+SQLite databases stored at `~/.cache/semantic-memory-mcp/`. Persists across restarts (WAL mode, ACID-safe). To reset: `rm -rf ~/.cache/semantic-memory-mcp/`.
 
 ## Troubleshooting
 
@@ -494,7 +494,7 @@ SQLite databases stored at `~/.cache/codebase-memory-mcp/`. Persists across rest
 
 Tree-sitter alone gives a syntactic AST. That handles naming, structure, and call sites well, but it can't tell you that `user.profile.display_name()` resolves to `Profile.display_name` declared three modules away — tree-sitter doesn't track imports, generics, inheritance, or stdlib types.
 
-codebase-memory-mcp ships a **lightweight C implementation of language type-resolution algorithms, structurally inspired by and compatible with major language servers** (tsserver / typescript-go, pyright, gopls, Roslyn, Eclipse JDT, rust-analyzer), embedded directly into the static binary. No language server process, no per-project setup, no API key. We call this layer **Hybrid LSP**: it runs alongside tree-sitter on every parse and refines `CALLS`, `USAGE`, and `RESOLVED_CALLS` edges with type information, so the resulting graph mirrors what an IDE "Go to Definition" would resolve.
+semantic-memory-mcp ships a **lightweight C implementation of language type-resolution algorithms, structurally inspired by and compatible with major language servers** (tsserver / typescript-go, pyright, gopls, Roslyn, Eclipse JDT, rust-analyzer), embedded directly into the static binary. No language server process, no per-project setup, no API key. We call this layer **Hybrid LSP**: it runs alongside tree-sitter on every parse and refines `CALLS`, `USAGE`, and `RESOLVED_CALLS` edges with type information, so the resulting graph mirrors what an IDE "Go to Definition" would resolve.
 
 **Languages with full Hybrid LSP:**
 
@@ -552,7 +552,7 @@ internal/cbm/         Vendored tree-sitter grammars (158 languages) + AST extrac
 Every release binary is verified through a multi-layer pipeline before publication:
 
 - **VirusTotal** — all binaries scanned by 70+ antivirus engines (zero detections required to publish)
-- **SLSA Level 3** — cryptographic build provenance generated by GitHub Actions; verify with `gh attestation verify <file> --repo DeusData/codebase-memory-mcp`
+- **SLSA Level 3** — cryptographic build provenance generated by GitHub Actions; verify with `gh attestation verify <file> --repo ZR113146/semantic-memory-mcp`
 - **Sigstore cosign** — keyless signatures on all artifacts; bundles included in every release
 - **SHA-256 checksums** — `checksums.txt` published with every release; verified by both install scripts before extraction
 - **CodeQL SAST** — blocks release pipeline if any open alerts remain

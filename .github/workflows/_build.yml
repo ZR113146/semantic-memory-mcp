@@ -71,7 +71,7 @@ jobs:
 
       - name: Ad-hoc sign macOS binary
         if: startsWith(matrix.os, 'macos')
-        run: codesign --sign - --force build/c/codebase-memory-mcp
+        run: codesign --sign - --force build/c/semantic-memory-mcp
 
       - name: Archive standard binary
         env:
@@ -80,8 +80,8 @@ jobs:
         run: |
           cp LICENSE install.sh build/c/
           scripts/gen-third-party-notices.sh build/c/THIRD_PARTY_NOTICES.md
-          tar -czf "codebase-memory-mcp-${GOOS}-${GOARCH}.tar.gz" \
-            -C build/c codebase-memory-mcp LICENSE install.sh THIRD_PARTY_NOTICES.md
+          tar -czf "semantic-memory-mcp-${GOOS}-${GOARCH}.tar.gz" \
+            -C build/c semantic-memory-mcp LICENSE install.sh THIRD_PARTY_NOTICES.md
 
       - name: Build UI binary
         env:
@@ -97,7 +97,7 @@ jobs:
 
       - name: Ad-hoc sign macOS UI binary
         if: startsWith(matrix.os, 'macos')
-        run: codesign --sign - --force build/c/codebase-memory-mcp
+        run: codesign --sign - --force build/c/semantic-memory-mcp
 
       - name: Frontend integrity scan
         if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
@@ -110,8 +110,8 @@ jobs:
         run: |
           cp LICENSE install.sh build/c/
           scripts/gen-third-party-notices.sh build/c/THIRD_PARTY_NOTICES.md
-          tar -czf "codebase-memory-mcp-ui-${GOOS}-${GOARCH}.tar.gz" \
-            -C build/c codebase-memory-mcp LICENSE install.sh THIRD_PARTY_NOTICES.md
+          tar -czf "semantic-memory-mcp-ui-${GOOS}-${GOARCH}.tar.gz" \
+            -C build/c semantic-memory-mcp LICENSE install.sh THIRD_PARTY_NOTICES.md
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -152,11 +152,11 @@ jobs:
       - name: Archive standard binary
         shell: msys2 {0}
         run: |
-          BIN=build/c/codebase-memory-mcp
+          BIN=build/c/semantic-memory-mcp
           [ -f "${BIN}.exe" ] && BIN="${BIN}.exe"
-          cp "$BIN" codebase-memory-mcp.exe
+          cp "$BIN" semantic-memory-mcp.exe
           scripts/gen-third-party-notices.sh THIRD_PARTY_NOTICES.md
-          zip codebase-memory-mcp-windows-amd64.zip codebase-memory-mcp.exe LICENSE install.ps1 THIRD_PARTY_NOTICES.md
+          zip semantic-memory-mcp-windows-amd64.zip semantic-memory-mcp.exe LICENSE install.ps1 THIRD_PARTY_NOTICES.md
 
       - name: Build UI binary
         shell: msys2 {0}
@@ -172,11 +172,11 @@ jobs:
       - name: Archive UI binary
         shell: msys2 {0}
         run: |
-          BIN=build/c/codebase-memory-mcp
+          BIN=build/c/semantic-memory-mcp
           [ -f "${BIN}.exe" ] && BIN="${BIN}.exe"
-          cp "$BIN" codebase-memory-mcp.exe
+          cp "$BIN" semantic-memory-mcp.exe
           scripts/gen-third-party-notices.sh THIRD_PARTY_NOTICES.md
-          zip codebase-memory-mcp-ui-windows-amd64.zip codebase-memory-mcp.exe LICENSE install.ps1 THIRD_PARTY_NOTICES.md
+          zip semantic-memory-mcp-ui-windows-amd64.zip semantic-memory-mcp.exe LICENSE install.ps1 THIRD_PARTY_NOTICES.md
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -218,8 +218,8 @@ jobs:
 
       - name: Verify static linking
         run: |
-          file build/c/codebase-memory-mcp
-          ldd build/c/codebase-memory-mcp 2>&1 | grep -q "not a dynamic executable" || ldd build/c/codebase-memory-mcp 2>&1 | grep -q "statically linked"
+          file build/c/semantic-memory-mcp
+          ldd build/c/semantic-memory-mcp 2>&1 | grep -q "not a dynamic executable" || ldd build/c/semantic-memory-mcp 2>&1 | grep -q "statically linked"
 
       - name: Archive standard binary
         env:
@@ -227,8 +227,8 @@ jobs:
         run: |
           cp LICENSE install.sh build/c/
           scripts/gen-third-party-notices.sh build/c/THIRD_PARTY_NOTICES.md
-          tar -czf "codebase-memory-mcp-linux-${ARCH}-portable.tar.gz" \
-            -C build/c codebase-memory-mcp LICENSE install.sh THIRD_PARTY_NOTICES.md
+          tar -czf "semantic-memory-mcp-linux-${ARCH}-portable.tar.gz" \
+            -C build/c semantic-memory-mcp LICENSE install.sh THIRD_PARTY_NOTICES.md
 
       - name: Build UI binary (static)
         env:
@@ -246,8 +246,8 @@ jobs:
         run: |
           cp LICENSE install.sh build/c/
           scripts/gen-third-party-notices.sh build/c/THIRD_PARTY_NOTICES.md
-          tar -czf "codebase-memory-mcp-ui-linux-${ARCH}-portable.tar.gz" \
-            -C build/c codebase-memory-mcp LICENSE install.sh THIRD_PARTY_NOTICES.md
+          tar -czf "semantic-memory-mcp-ui-linux-${ARCH}-portable.tar.gz" \
+            -C build/c semantic-memory-mcp LICENSE install.sh THIRD_PARTY_NOTICES.md
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

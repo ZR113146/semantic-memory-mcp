@@ -38,41 +38,41 @@ jobs:
       - name: Extract binary
         run: |
           SUFFIX=${{ matrix.variant == 'ui' && '-ui' || '' }}
-          tar -xzf codebase-memory-mcp${SUFFIX}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
-          chmod +x codebase-memory-mcp
+          tar -xzf semantic-memory-mcp${SUFFIX}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+          chmod +x semantic-memory-mcp
 
       - name: Start artifact server
         run: |
           mkdir -p /tmp/smoke-server
-          cp codebase-memory-mcp /tmp/smoke-server/
+          cp semantic-memory-mcp /tmp/smoke-server/
           OS=${{ matrix.goos }}; ARCH=${{ matrix.goarch }}
           SUFFIX=${{ matrix.variant == 'ui' && '-ui' || '' }}
-          tar -czf "/tmp/smoke-server/codebase-memory-mcp${SUFFIX}-${OS}-${ARCH}.tar.gz" \
-            -C /tmp/smoke-server codebase-memory-mcp
+          tar -czf "/tmp/smoke-server/semantic-memory-mcp${SUFFIX}-${OS}-${ARCH}.tar.gz" \
+            -C /tmp/smoke-server semantic-memory-mcp
           if [ -n "$SUFFIX" ]; then
-            cp "/tmp/smoke-server/codebase-memory-mcp${SUFFIX}-${OS}-${ARCH}.tar.gz" \
-               "/tmp/smoke-server/codebase-memory-mcp-${OS}-${ARCH}.tar.gz"
+            cp "/tmp/smoke-server/semantic-memory-mcp${SUFFIX}-${OS}-${ARCH}.tar.gz" \
+               "/tmp/smoke-server/semantic-memory-mcp-${OS}-${ARCH}.tar.gz"
           fi
           cd /tmp/smoke-server
           sha256sum *.tar.gz > checksums.txt 2>/dev/null || shasum -a 256 *.tar.gz > checksums.txt
           python3 -m http.server 18080 -d /tmp/smoke-server &
 
       - name: Smoke test
-        run: scripts/smoke-test.sh ./codebase-memory-mcp
+        run: scripts/smoke-test.sh ./semantic-memory-mcp
         env:
           SMOKE_DOWNLOAD_URL: http://localhost:18080
 
       - name: Security audits
         run: |
-          scripts/security-strings.sh ./codebase-memory-mcp
-          scripts/security-install.sh ./codebase-memory-mcp
-          scripts/security-network.sh ./codebase-memory-mcp
+          scripts/security-strings.sh ./semantic-memory-mcp
+          scripts/security-install.sh ./semantic-memory-mcp
+          scripts/security-network.sh ./semantic-memory-mcp
 
       - name: MCP robustness test (linux-amd64 standard only)
         if: matrix.variant == 'standard' && matrix.goos == 'linux' && matrix.goarch == 'amd64'
         run: |
-          scripts/security-fuzz.sh ./codebase-memory-mcp
-          scripts/security-fuzz-random.sh ./codebase-memory-mcp 60
+          scripts/security-fuzz.sh ./semantic-memory-mcp
+          scripts/security-fuzz-random.sh ./semantic-memory-mcp 60
 
       - name: ClamAV scan (Linux)
         if: startsWith(matrix.os, 'ubuntu')
@@ -82,7 +82,7 @@ jobs:
           grep -q "DatabaseMirror" /etc/clamav/freshclam.conf 2>/dev/null || \
             echo "DatabaseMirror database.clamav.net" | sudo tee -a /etc/clamav/freshclam.conf > /dev/null
           sudo freshclam --quiet
-          clamscan --no-summary ./codebase-memory-mcp
+          clamscan --no-summary ./semantic-memory-mcp
 
       - name: ClamAV scan (macOS)
         if: startsWith(matrix.os, 'macos')
@@ -95,7 +95,7 @@ jobs:
             echo "DatabaseMirror database.clamav.net" >> "$CLAMAV_ETC/freshclam.conf"
           fi
           freshclam --quiet --no-warnings 2>/dev/null || freshclam --quiet 2>/dev/null || echo "WARNING: freshclam update failed"
-          clamscan --no-summary ./codebase-memory-mcp
+          clamscan --no-summary ./semantic-memory-mcp
 
   smoke-windows:
     strategy:
@@ -125,40 +125,40 @@ jobs:
         shell: msys2 {0}
         run: |
           SUFFIX=${{ matrix.variant == 'ui' && '-ui' || '' }}
-          unzip -o "codebase-memory-mcp${SUFFIX}-windows-amd64.zip"
-          [ -n "$SUFFIX" ] && cp "codebase-memory-mcp${SUFFIX}.exe" codebase-memory-mcp.exe || true
+          unzip -o "semantic-memory-mcp${SUFFIX}-windows-amd64.zip"
+          [ -n "$SUFFIX" ] && cp "semantic-memory-mcp${SUFFIX}.exe" semantic-memory-mcp.exe || true
 
       - name: Start artifact server
         shell: msys2 {0}
         run: |
           mkdir -p /tmp/smoke-server
-          cp codebase-memory-mcp.exe /tmp/smoke-server/
+          cp semantic-memory-mcp.exe /tmp/smoke-server/
           SUFFIX=${{ matrix.variant == 'ui' && '-ui' || '' }}
           cd /tmp/smoke-server
-          zip -q "codebase-memory-mcp${SUFFIX}-windows-amd64.zip" codebase-memory-mcp.exe
+          zip -q "semantic-memory-mcp${SUFFIX}-windows-amd64.zip" semantic-memory-mcp.exe
           if [ -n "$SUFFIX" ]; then
-            cp "codebase-memory-mcp${SUFFIX}-windows-amd64.zip" "codebase-memory-mcp-windows-amd64.zip"
+            cp "semantic-memory-mcp${SUFFIX}-windows-amd64.zip" "semantic-memory-mcp-windows-amd64.zip"
           fi
           sha256sum *.zip > checksums.txt
           python3 -m http.server 18080 -d /tmp/smoke-server &
 
       - name: Smoke test
         shell: msys2 {0}
-        run: scripts/smoke-test.sh ./codebase-memory-mcp.exe
+        run: scripts/smoke-test.sh ./semantic-memory-mcp.exe
         env:
           SMOKE_DOWNLOAD_URL: http://localhost:18080
 
       - name: Security audits
         shell: msys2 {0}
         run: |
-          scripts/security-strings.sh ./codebase-memory-mcp.exe
-          scripts/security-install.sh ./codebase-memory-mcp.exe
+          scripts/security-strings.sh ./semantic-memory-mcp.exe
+          scripts/security-install.sh ./semantic-memory-mcp.exe
 
       - name: Windows Defender scan
         shell: pwsh
         run: |
           & "C:\Program Files\Windows Defender\MpCmdRun.exe" -SignatureUpdate 2>$null
-          $result = & "C:\Program Files\Windows Defender\MpCmdRun.exe" -Scan -ScanType 3 -File "$PWD\codebase-memory-mcp.exe" -DisableRemediation
+          $result = & "C:\Program Files\Windows Defender\MpCmdRun.exe" -Scan -ScanType 3 -File "$PWD\semantic-memory-mcp.exe" -DisableRemediation
           Write-Host $result
           if ($LASTEXITCODE -ne 0) { Write-Host "BLOCKED: Windows Defender flagged binary!"; exit 1 }
           Write-Host "=== Windows Defender: clean ==="
@@ -185,22 +185,22 @@ jobs:
       - name: Extract and smoke test
         run: |
           SUFFIX=${{ matrix.variant == 'ui' && '-ui' || '' }}
-          tar -xzf codebase-memory-mcp${SUFFIX}-linux-${{ matrix.arch }}-portable.tar.gz
-          chmod +x codebase-memory-mcp
-          scripts/smoke-test.sh ./codebase-memory-mcp
+          tar -xzf semantic-memory-mcp${SUFFIX}-linux-${{ matrix.arch }}-portable.tar.gz
+          chmod +x semantic-memory-mcp
+          scripts/smoke-test.sh ./semantic-memory-mcp
 
       # The -portable binary is what all linux install/update paths now deliver;
       # it MUST start on old glibc (Debian 11 / RHEL 8 / Ubuntu 20.04). Runs it
       # in debian:bullseye (glibc 2.31) — the standard dynamic binary would fail
       # here with `GLIBC_2.38 not found`.
       - name: Old-glibc compatibility
-        run: scripts/ci/check-glibc-compat.sh ./codebase-memory-mcp
+        run: scripts/ci/check-glibc-compat.sh ./semantic-memory-mcp
 
       - name: Security audits
         run: |
-          scripts/security-strings.sh ./codebase-memory-mcp
-          scripts/security-install.sh ./codebase-memory-mcp
-          scripts/security-network.sh ./codebase-memory-mcp
+          scripts/security-strings.sh ./semantic-memory-mcp
+          scripts/security-install.sh ./semantic-memory-mcp
+          scripts/security-network.sh ./semantic-memory-mcp
 
   # ── Glama directory check image (non-gating) ──────────────────────
   # Builds pkg/glama/Dockerfile — the image Glama builds to score the

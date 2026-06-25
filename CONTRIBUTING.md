@@ -1,4 +1,4 @@
-# Contributing to codebase-memory-mcp
+# Contributing to semantic-memory-mcp
 
 Contributions are welcome. This guide covers setup, testing, and PR guidelines.
 
@@ -9,8 +9,8 @@ Contributions are welcome. This guide covers setup, testing, and PR guidelines.
 **Prerequisites**: C compiler (gcc or clang), make, zlib, Git. Optional: Node.js 22+ (for graph UI).
 
 ```bash
-git clone https://github.com/DeusData/codebase-memory-mcp.git
-cd codebase-memory-mcp
+git clone https://github.com/ZR113146/semantic-memory-mcp.git
+cd semantic-memory-mcp
 git config core.hooksPath scripts/hooks  # activates pre-commit security checks
 scripts/build.sh
 ```
@@ -18,7 +18,7 @@ scripts/build.sh
 macOS: `xcode-select --install` provides clang.
 Linux: `sudo apt install build-essential zlib1g-dev` (Debian/Ubuntu) or `sudo dnf install gcc zlib-devel` (Fedora).
 
-The binary is output to `build/c/codebase-memory-mcp`.
+The binary is output to `build/c/semantic-memory-mcp`.
 
 ## Run Tests
 
@@ -160,7 +160,7 @@ If you add a new `system()`, `popen()`, `fork()`, or network call, it must be ju
 
 ## Good First Issues
 
-Check [issues labeled `good first issue`](https://github.com/DeusData/codebase-memory-mcp/labels/good%20first%20issue) for beginner-friendly tasks with clear scope and guidance.
+Check [issues labeled `good first issue`](https://github.com/ZR113146/semantic-memory-mcp/labels/good%20first%20issue) for beginner-friendly tasks with clear scope and guidance.
 
 ## License and sign-off (DCO) — required on every commit
 

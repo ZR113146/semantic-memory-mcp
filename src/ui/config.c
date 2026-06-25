@@ -1,7 +1,7 @@
 /*
  * config.c — Persistent UI configuration (JSON via yyjson).
  *
- * Config file: ~/.cache/codebase-memory-mcp/config.json
+ * Config file: ~/.cache/semantic-memory-mcp/config.json
  * Format: {"ui_enabled": false, "ui_port": 9749}
  */
 #include "foundation/constants.h"

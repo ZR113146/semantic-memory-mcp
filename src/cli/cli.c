@@ -1,7 +1,7 @@
 /*
  * cli.c — CLI subcommand handlers for install, uninstall, update, version.
  *
- * Port of Go cmd/codebase-memory-mcp/ install/update logic.
+ * Port of Go cmd/semantic-memory-mcp/ install/update logic.
  * All functions accept explicit paths for testability.
  */
 #include "cli/cli.h"
@@ -113,7 +113,7 @@ static void (*cbm_sqlite_transient_fn(void))(void *) {
 #define TAR_SIZE_OFFSET 124 /* octal size field offset */
 #define TAR_SIZE_LEN 13     /* octal size field: bytes 124-135 + NUL */
 #define TAR_TYPE_OFFSET 156 /* type flag byte */
-#define TAR_BINARY_NAME "codebase-memory-mcp"
+#define TAR_BINARY_NAME "semantic-memory-mcp"
 #define TAR_BINARY_NAME_LEN 19
 #define TAR_BLOCK_SIZE CBM_SZ_512 /* tar record alignment */
 #define TAR_BLOCK_MASK 511        /* TAR_BLOCK_SIZE - 1 */
@@ -417,7 +417,7 @@ static const char skill_content[] =
     "Cypher query examples, edge types, how to use search_graph.\n"
     "---\n"
     "\n"
-    "# Codebase Memory — Knowledge Graph Tools\n"
+    "# Semantic Memory — Knowledge Graph Tools\n"
     "\n"
     "Graph tools return precise structural results in ~500 tokens vs ~80K for grep.\n"
     "\n"
@@ -485,7 +485,7 @@ static const char skill_content[] =
 static const char codex_instructions_content[] =
     "# Codebase Knowledge Graph\n"
     "\n"
-    "This project uses codebase-memory-mcp to maintain a knowledge graph of the codebase.\n"
+    "This project uses semantic-memory-mcp to maintain a knowledge graph of the codebase.\n"
     "Use the MCP tools to explore and understand the code:\n"
     "\n"
     "- `search_graph` — find functions, classes, routes by pattern\n"
@@ -659,7 +659,7 @@ bool cbm_remove_old_monolithic_skill(const char *skills_dir, bool dry_run) {
     }
 
     char old_path[CLI_BUF_1K];
-    snprintf(old_path, sizeof(old_path), "%s/codebase-memory-mcp", skills_dir);
+    snprintf(old_path, sizeof(old_path), "%s/semantic-memory-mcp", skills_dir);
     struct stat st;
     if (stat(old_path, &st) != 0 || !S_ISDIR(st.st_mode)) {
         return false;
@@ -777,12 +777,12 @@ int cbm_install_editor_mcp(const char *binary_path, const char *config_path) {
     }
 
     /* Remove existing entry if present */
-    yyjson_mut_obj_remove_key(servers, "codebase-memory-mcp");
+    yyjson_mut_obj_remove_key(servers, "semantic-memory-mcp");
 
     /* Add our entry */
     yyjson_mut_val *entry = yyjson_mut_obj(mdoc);
     yyjson_mut_obj_add_str(mdoc, entry, "command", binary_path);
-    yyjson_mut_obj_add_val(mdoc, servers, "codebase-memory-mcp", entry);
+    yyjson_mut_obj_add_val(mdoc, servers, "semantic-memory-mcp", entry);
 
     int rc = write_json_file(config_path, mdoc);
     yyjson_mut_doc_free(mdoc);
@@ -814,7 +814,7 @@ int cbm_remove_editor_mcp(const char *config_path) {
         return 0;
     }
 
-    yyjson_mut_obj_remove_key(servers, "codebase-memory-mcp");
+    yyjson_mut_obj_remove_key(servers, "semantic-memory-mcp");
 
     int rc = write_json_file(config_path, mdoc);
     yyjson_mut_doc_free(mdoc);
@@ -853,12 +853,12 @@ int cbm_install_vscode_mcp(const char *binary_path, const char *config_path) {
         yyjson_mut_obj_add_val(mdoc, root, "servers", servers);
     }
 
-    yyjson_mut_obj_remove_key(servers, "codebase-memory-mcp");
+    yyjson_mut_obj_remove_key(servers, "semantic-memory-mcp");
 
     yyjson_mut_val *entry = yyjson_mut_obj(mdoc);
     yyjson_mut_obj_add_str(mdoc, entry, "type", "stdio");
     yyjson_mut_obj_add_str(mdoc, entry, "command", binary_path);
-    yyjson_mut_obj_add_val(mdoc, servers, "codebase-memory-mcp", entry);
+    yyjson_mut_obj_add_val(mdoc, servers, "semantic-memory-mcp", entry);
 
     int rc = write_json_file(config_path, mdoc);
     yyjson_mut_doc_free(mdoc);
@@ -890,7 +890,7 @@ int cbm_remove_vscode_mcp(const char *config_path) {
         return 0;
     }
 
-    yyjson_mut_obj_remove_key(servers, "codebase-memory-mcp");
+    yyjson_mut_obj_remove_key(servers, "semantic-memory-mcp");
 
     int rc = write_json_file(config_path, mdoc);
     yyjson_mut_doc_free(mdoc);
@@ -929,14 +929,14 @@ int cbm_install_zed_mcp(const char *binary_path, const char *config_path) {
         yyjson_mut_obj_add_val(mdoc, root, "context_servers", servers);
     }
 
-    yyjson_mut_obj_remove_key(servers, "codebase-memory-mcp");
+    yyjson_mut_obj_remove_key(servers, "semantic-memory-mcp");
 
     yyjson_mut_val *entry = yyjson_mut_obj(mdoc);
     yyjson_mut_obj_add_str(mdoc, entry, "command", binary_path);
     yyjson_mut_val *args = yyjson_mut_arr(mdoc);
     yyjson_mut_arr_add_str(mdoc, args, "");
     yyjson_mut_obj_add_val(mdoc, entry, "args", args);
-    yyjson_mut_obj_add_val(mdoc, servers, "codebase-memory-mcp", entry);
+    yyjson_mut_obj_add_val(mdoc, servers, "semantic-memory-mcp", entry);
 
     int rc = write_json_file(config_path, mdoc);
     yyjson_mut_doc_free(mdoc);
@@ -968,7 +968,7 @@ int cbm_remove_zed_mcp(const char *config_path) {
         return 0;
     }
 
-    yyjson_mut_obj_remove_key(servers, "codebase-memory-mcp");
+    yyjson_mut_obj_remove_key(servers, "semantic-memory-mcp");
 
     int rc = write_json_file(config_path, mdoc);
     yyjson_mut_doc_free(mdoc);
@@ -1107,9 +1107,9 @@ cbm_detected_agents_t cbm_detect_agents(const char *home_dir) {
 /* ── Shared agent instructions content ────────────────────────── */
 
 static const char agent_instructions_content[] =
-    "# Codebase Knowledge Graph (codebase-memory-mcp)\n"
+    "# Codebase Knowledge Graph (semantic-memory-mcp)\n"
     "\n"
-    "This project uses codebase-memory-mcp to maintain a knowledge graph of the codebase.\n"
+    "This project uses semantic-memory-mcp to maintain a knowledge graph of the codebase.\n"
     "ALWAYS prefer MCP graph tools over grep/glob/file-search for code discovery.\n"
     "\n"
     "## Priority Order\n"
@@ -1135,8 +1135,8 @@ const char *cbm_get_agent_instructions(void) {
 
 /* ── Instructions file upsert ─────────────────────────────────── */
 
-#define CMM_MARKER_START "<!-- codebase-memory-mcp:start -->"
-#define CMM_MARKER_END "<!-- codebase-memory-mcp:end -->"
+#define CMM_MARKER_START "<!-- semantic-memory-mcp:start -->"
+#define CMM_MARKER_END "<!-- semantic-memory-mcp:end -->"
 
 /* Read entire file into malloc'd buffer. Returns NULL on error. */
 static char *read_file_str(const char *path, size_t *out_len) {
@@ -1321,7 +1321,7 @@ int cbm_remove_instructions(const char *path) {
 
 /* ── Codex MCP config (TOML) ─────────────────────────────────── */
 
-#define CODEX_CMM_SECTION "[mcp_servers.codebase-memory-mcp]"
+#define CODEX_CMM_SECTION "[mcp_servers.semantic-memory-mcp]"
 
 int cbm_upsert_codex_mcp(const char *binary_path, const char *config_path) {
     if (!binary_path || !config_path) {
@@ -1343,7 +1343,7 @@ int cbm_upsert_codex_mcp(const char *binary_path, const char *config_path) {
     /* Check if our section already exists */
     char *existing = strstr(content, CODEX_CMM_SECTION);
     if (existing) {
-        /* Remove old section: from [mcp_servers.codebase-memory-mcp] to next [section] or EOF */
+        /* Remove old section: from [mcp_servers.semantic-memory-mcp] to next [section] or EOF */
         char *section_end = existing + strlen(CODEX_CMM_SECTION);
         /* Find next [section] header */
         char *next_section = strstr(section_end, "\n[");
@@ -1440,19 +1440,19 @@ int cbm_remove_codex_mcp(const char *config_path) {
 /* ── SessionStart reminder hook (Codex / Gemini / Antigravity) ──────
  * Same methodology as the Claude Code SessionStart hook: a non-blocking
  * lifecycle hook whose stdout is injected as session context, reminding the
- * agent to use codebase-memory-mcp graph tools first. The command is written
+ * agent to use semantic-memory-mcp graph tools first. The command is written
  * so it is valid both inside a TOML single-quoted literal (Codex config.toml)
  * and a JSON string (Gemini settings.json) — i.e. it contains NO single quotes
  * and NO newlines. (issues #330 + Gemini/Antigravity parity) */
 #define CMM_SESSION_REMINDER_CMD                                                    \
-    "echo \"Code discovery: prefer codebase-memory-mcp (search_graph, trace_path, " \
+    "echo \"Code discovery: prefer semantic-memory-mcp (search_graph, trace_path, " \
     "get_code_snippet, query_graph, search_code) over grep/file-read; run "         \
     "index_repository first if the project is not indexed.\""
 
 /* Sentinel-delimited block so upsert/remove are robust to the nested TOML
  * array-of-tables (which both start with '['). */
-#define CODEX_HOOK_BEGIN "# >>> codebase-memory-mcp SessionStart >>>"
-#define CODEX_HOOK_END "# <<< codebase-memory-mcp SessionStart <<<"
+#define CODEX_HOOK_BEGIN "# >>> semantic-memory-mcp SessionStart >>>"
+#define CODEX_HOOK_END "# <<< semantic-memory-mcp SessionStart <<<"
 
 /* Splice out an existing [CODEX_HOOK_BEGIN .. CODEX_HOOK_END] block (inclusive,
  * plus a leading newline). Returns a newly-malloc'd string the caller frees, or
@@ -1579,7 +1579,7 @@ int cbm_upsert_opencode_mcp(const char *binary_path, const char *config_path) {
         yyjson_mut_obj_add_val(mdoc, root, "mcp", mcp);
     }
 
-    yyjson_mut_obj_remove_key(mcp, "codebase-memory-mcp");
+    yyjson_mut_obj_remove_key(mcp, "semantic-memory-mcp");
 
     yyjson_mut_val *entry = yyjson_mut_obj(mdoc);
     yyjson_mut_obj_add_bool(mdoc, entry, "enabled", true);
@@ -1587,7 +1587,7 @@ int cbm_upsert_opencode_mcp(const char *binary_path, const char *config_path) {
     yyjson_mut_val *cmd_arr = yyjson_mut_arr(mdoc);
     yyjson_mut_arr_add_str(mdoc, cmd_arr, binary_path);
     yyjson_mut_obj_add_val(mdoc, entry, "command", cmd_arr);
-    yyjson_mut_obj_add_val(mdoc, mcp, "codebase-memory-mcp", entry);
+    yyjson_mut_obj_add_val(mdoc, mcp, "semantic-memory-mcp", entry);
 
     int rc = write_json_file(config_path, mdoc);
     yyjson_mut_doc_free(mdoc);
@@ -1619,7 +1619,7 @@ int cbm_remove_opencode_mcp(const char *config_path) {
         return 0;
     }
 
-    yyjson_mut_obj_remove_key(mcp, "codebase-memory-mcp");
+    yyjson_mut_obj_remove_key(mcp, "semantic-memory-mcp");
 
     int rc = write_json_file(config_path, mdoc);
     yyjson_mut_doc_free(mdoc);
@@ -1892,7 +1892,7 @@ void cbm_install_hook_gate_script(const char *home, const char *binary_path) {
     }
     (void)fprintf(f,
                   "#!/bin/bash\n"
-                  "# codebase-memory-mcp search augmenter (Claude Code PreToolUse).\n"
+                  "# semantic-memory-mcp search augmenter (Claude Code PreToolUse).\n"
                   "# NOTE: the legacy filename is kept for zero-migration upgrades.\n"
                   "# Despite the name this NEVER blocks a tool call - it only adds\n"
                   "# graph context. Any failure is silent (exit 0, no output).\n"
@@ -1936,11 +1936,11 @@ static void cbm_install_session_reminder_script(const char *home) {
     }
     (void)fprintf(
         f, "#!/bin/bash\n"
-           "# SessionStart hook: remind agent to use codebase-memory-mcp tools.\n"
-           "# Installed by codebase-memory-mcp. Fires on startup/resume/clear/compact.\n"
+           "# SessionStart hook: remind agent to use semantic-memory-mcp tools.\n"
+           "# Installed by semantic-memory-mcp. Fires on startup/resume/clear/compact.\n"
            "cat << 'REMINDER'\n"
            "CRITICAL - Code Discovery Protocol:\n"
-           "1. ALWAYS use codebase-memory-mcp tools FIRST for ANY code exploration:\n"
+           "1. ALWAYS use semantic-memory-mcp tools FIRST for ANY code exploration:\n"
            "   - search_graph(name_pattern/label/qn_pattern) to find functions/classes/routes\n"
            "   - trace_path(function_name, mode=calls|data_flow|cross_service) for call chains\n"
            "   - get_code_snippet(qualified_name) for exact symbol source (precise ranges)\n"
@@ -1993,7 +1993,7 @@ static int cbm_remove_session_hooks(const char *settings_path) {
  * is an advisory reminder, not a gate over the agent's file reads. */
 #define GEMINI_HOOK_MATCHER "google_search|grep_search"
 #define GEMINI_HOOK_COMMAND                                               \
-    "echo 'Reminder: prefer codebase-memory-mcp search_graph/trace_path/" \
+    "echo 'Reminder: prefer semantic-memory-mcp search_graph/trace_path/" \
     "get_code_snippet over grep/file search for code discovery.' >&2"
 
 int cbm_upsert_gemini_hooks(const char *settings_path) {
@@ -2081,7 +2081,7 @@ int cbm_ensure_path(const char *bin_dir, const char *rc_file, bool dry_run) {
         return CLI_ERR;
     }
 
-    (void)fprintf(f, "\n# Added by codebase-memory-mcp install\n%s\n", line);
+    (void)fprintf(f, "\n# Added by semantic-memory-mcp install\n%s\n", line);
     (void)fclose(f);
     return 0;
 }
@@ -2197,7 +2197,7 @@ unsigned char *cbm_extract_binary_from_targz(const unsigned char *data, int data
         return NULL;
     }
 
-    /* Parse tar: find entry starting with "codebase-memory-mcp" */
+    /* Parse tar: find entry starting with "semantic-memory-mcp" */
     size_t pos = 0;
     while (pos + TAR_BLOCK_SIZE <= total) {
         const unsigned char *hdr = decompressed + pos;
@@ -2346,8 +2346,8 @@ unsigned char *cbm_extract_binary_from_zip(const unsigned char *data, int data_l
         const char *basename = strrchr(fname, '/');
         basename = basename ? basename + CLI_SKIP_ONE : fname;
 
-        if (strcmp(basename, "codebase-memory-mcp") == 0 ||
-            strcmp(basename, "codebase-memory-mcp.exe") == 0) {
+        if (strcmp(basename, "semantic-memory-mcp") == 0 ||
+            strcmp(basename, "semantic-memory-mcp.exe") == 0) {
             return zip_extract_entry(data + header_end, method, comp_size, uncomp_size, out_len);
         }
 
@@ -2572,7 +2572,7 @@ int cbm_config_delete(cbm_config_t *cfg, const char *key) {
 
 int cbm_cmd_config(int argc, char **argv) {
     if (argc == 0) {
-        printf("Usage: codebase-memory-mcp config <command> [args]\n\n");
+        printf("Usage: semantic-memory-mcp config <command> [args]\n\n");
         printf("Commands:\n");
         printf("  list             Show all config values\n");
         printf("  get <key>        Get a config value\n");
@@ -2762,14 +2762,14 @@ static int cbm_kill_other_instances(void) {
      * Use /FI filter to exclude our own PID. */
     char pid_filter[CBM_SZ_64];
     snprintf(pid_filter, sizeof(pid_filter), "PID ne %lu", (unsigned long)GetCurrentProcessId());
-    const char *argv[] = {"taskkill", "/F",       "/FI", "IMAGENAME eq codebase-memory-mcp.exe",
+    const char *argv[] = {"taskkill", "/F",       "/FI", "IMAGENAME eq semantic-memory-mcp.exe",
                           "/FI",      pid_filter, NULL};
     (void)cbm_exec_no_shell(argv);
     return 0;
 #else
     int killed = 0;
     pid_t self = getpid();
-    FILE *fp = cbm_popen("pgrep -x codebase-memory-mcp", "r");
+    FILE *fp = cbm_popen("pgrep -x semantic-memory-mcp", "r");
     if (!fp) {
         return 0;
     }
@@ -2801,7 +2801,7 @@ static int verify_download_checksum(const char *archive_path, const char *archiv
         snprintf(checksum_url, sizeof(checksum_url), "%s/checksums.txt", dl_base);
     } else {
         snprintf(checksum_url, sizeof(checksum_url), "%s",
-                 "https://github.com/DeusData/codebase-memory-mcp/releases/latest/download/"
+                 "https://github.com/ZR113146/semantic-memory-mcp/releases/latest/download/"
                  "checksums.txt");
     }
     int rc = cbm_download_to_file_quiet(checksum_url, checksum_file);
@@ -3066,7 +3066,7 @@ static void install_gemini_config(const char *home, const char *binary_path, boo
         cbm_upsert_gemini_hooks(cp);
         cbm_upsert_gemini_session_hooks(cp);
     }
-    printf("  hooks: BeforeTool + SessionStart (codebase-memory-mcp reminder)\n");
+    printf("  hooks: BeforeTool + SessionStart (semantic-memory-mcp reminder)\n");
 }
 
 static void install_cli_agent_configs(const cbm_detected_agents_t *agents, const char *home,
@@ -3084,7 +3084,7 @@ static void install_cli_agent_configs(const cbm_detected_agents_t *agents, const
             if (!dry_run) {
                 cbm_upsert_codex_hooks(cp);
             }
-            printf("  hooks: SessionStart (codebase-memory-mcp reminder)\n");
+            printf("  hooks: SessionStart (semantic-memory-mcp reminder)\n");
         }
     }
     if (agents->gemini) {
@@ -3123,7 +3123,7 @@ static void install_cli_agent_configs(const cbm_detected_agents_t *agents, const
             if (!dry_run) {
                 cbm_upsert_gemini_session_hooks(sp);
             }
-            printf("  hooks: SessionStart (codebase-memory-mcp reminder)\n");
+            printf("  hooks: SessionStart (semantic-memory-mcp reminder)\n");
         }
     }
     if (agents->aider) {
@@ -3168,7 +3168,7 @@ static void install_editor_agent_configs(const cbm_detected_agents_t *agents, co
                  "%s/Code/User/globalStorage/kilocode.kilo-code/settings/mcp_settings.json",
                  cbm_app_config_dir());
 #endif
-        snprintf(ip, sizeof(ip), "%s/.kilocode/rules/codebase-memory-mcp.md", home);
+        snprintf(ip, sizeof(ip), "%s/.kilocode/rules/semantic-memory-mcp.md", home);
         install_generic_agent_config("KiloCode", binary_path, cp, ip, dry_run,
                                      cbm_install_editor_mcp);
     }
@@ -3264,9 +3264,9 @@ static void cbm_detect_self_path(char *buf, size_t buf_sz, const char *home) {
 #endif
     if (!buf[0]) {
 #ifdef _WIN32
-        snprintf(buf, buf_sz, "%s/.local/bin/codebase-memory-mcp.exe", home);
+        snprintf(buf, buf_sz, "%s/.local/bin/semantic-memory-mcp.exe", home);
 #else
-        snprintf(buf, buf_sz, "%s/.local/bin/codebase-memory-mcp", home);
+        snprintf(buf, buf_sz, "%s/.local/bin/semantic-memory-mcp", home);
 #endif
     }
 }
@@ -3340,7 +3340,7 @@ char *cbm_build_install_plan_json(const char *home, const char *binary_path) {
     yyjson_mut_obj_add_val(doc, root, "hooks_planned", hooks);
     yyjson_mut_obj_add_bool(doc, root, "writes_started", false);
     yyjson_mut_obj_add_bool(doc, root, "network_after_install", false);
-    yyjson_mut_obj_add_str(doc, root, "next_safe_command", "codebase-memory-mcp install -y");
+    yyjson_mut_obj_add_str(doc, root, "next_safe_command", "semantic-memory-mcp install -y");
 
     char *json = yyjson_mut_write(doc, YYJSON_WRITE_PRETTY, NULL);
     yyjson_mut_doc_free(doc);
@@ -3387,7 +3387,7 @@ int cbm_cmd_install(int argc, char **argv) {
         return 0;
     }
 
-    printf("codebase-memory-mcp install %s\n\n", CBM_VERSION);
+    printf("semantic-memory-mcp install %s\n\n", CBM_VERSION);
 
     int index_count = count_db_indexes(home);
     if (index_count > 0) {
@@ -3416,7 +3416,7 @@ int cbm_cmd_install(int argc, char **argv) {
 #ifdef __APPLE__
     {
         char sign_path[CLI_BUF_1K];
-        snprintf(sign_path, sizeof(sign_path), "%s/.local/bin/codebase-memory-mcp", home);
+        snprintf(sign_path, sizeof(sign_path), "%s/.local/bin/semantic-memory-mcp", home);
         struct stat sign_st;
         if (stat(sign_path, &sign_st) == 0) {
             (void)cbm_macos_adhoc_sign(sign_path);
@@ -3602,7 +3602,7 @@ static void uninstall_editor_agents(const cbm_detected_agents_t *agents, const c
                  "%s/Code/User/globalStorage/kilocode.kilo-code/settings/mcp_settings.json",
                  cbm_app_config_dir());
 #endif
-        snprintf(ip, sizeof(ip), "%s/.kilocode/rules/codebase-memory-mcp.md", home);
+        snprintf(ip, sizeof(ip), "%s/.kilocode/rules/semantic-memory-mcp.md", home);
         uninstall_agent_mcp_instr((mcp_uninstall_args_t){"KiloCode", cp, ip}, dry_run,
                                   cbm_remove_editor_mcp);
     }
@@ -3651,7 +3651,7 @@ int cbm_cmd_uninstall(int argc, char **argv) {
         return CLI_TRUE;
     }
 
-    printf("codebase-memory-mcp uninstall\n\n");
+    printf("semantic-memory-mcp uninstall\n\n");
 
     cbm_detected_agents_t agents = cbm_detect_agents(home);
     if (agents.claude_code) {
@@ -3676,9 +3676,9 @@ int cbm_cmd_uninstall(int argc, char **argv) {
     /* Step 3: Remove binary */
     char bin_path[CLI_BUF_1K];
 #ifdef _WIN32
-    snprintf(bin_path, sizeof(bin_path), "%s/.local/bin/codebase-memory-mcp.exe", home);
+    snprintf(bin_path, sizeof(bin_path), "%s/.local/bin/semantic-memory-mcp.exe", home);
 #else
-    snprintf(bin_path, sizeof(bin_path), "%s/.local/bin/codebase-memory-mcp", home);
+    snprintf(bin_path, sizeof(bin_path), "%s/.local/bin/semantic-memory-mcp", home);
 #endif
     struct stat st;
     if (stat(bin_path, &st) == 0) {
@@ -3759,14 +3759,14 @@ static void build_update_url(char *url, int url_sz, const char *os, const char *
     const char *base_url =
         cbm_safe_getenv("CBM_DOWNLOAD_URL", base_url_buf, sizeof(base_url_buf), NULL);
     if (!base_url || !base_url[0]) {
-        base_url = "https://github.com/DeusData/codebase-memory-mcp/releases/latest/download";
+        base_url = "https://github.com/ZR113146/semantic-memory-mcp/releases/latest/download";
     }
     /* Linux ships a fully-static "-portable" build; the standard linux binary
      * dynamically links glibc 2.38+ and fails on older distros. macOS/Windows
      * have no such variant. Keep in sync with install.sh / install.js / pypi
      * _cli.py. */
     const char *portable = (strcmp(os, "linux") == 0) ? "-portable" : "";
-    snprintf(url, url_sz, "%s/codebase-memory-mcp-%s%s-%s%s.%s", base_url, want_ui ? "ui-" : "", os,
+    snprintf(url, url_sz, "%s/semantic-memory-mcp-%s%s-%s%s.%s", base_url, want_ui ? "ui-" : "", os,
              arch, portable, ext);
 }
 
@@ -3808,7 +3808,7 @@ static int download_verify_install(const char *url, const char *ext, const char 
     char archive_name[CLI_BUF_256];
     /* Must match build_update_url: linux uses the static "-portable" asset. */
     const char *portable = (strcmp(os, "linux") == 0) ? "-portable" : "";
-    snprintf(archive_name, sizeof(archive_name), "codebase-memory-mcp-%s%s-%s%s.%s",
+    snprintf(archive_name, sizeof(archive_name), "semantic-memory-mcp-%s%s-%s%s.%s",
              want_ui ? "ui-" : "", os, arch, portable, ext);
     int crc = verify_download_checksum(tmp_archive, archive_name);
     if (crc == CLI_TRUE) {
@@ -3871,7 +3871,7 @@ static bool prefix_icase(const char *s, const char *prefix) {
  * Returns heap-allocated tag (e.g. "v0.5.7") or NULL on failure. */
 static char *fetch_latest_tag(void) {
     FILE *fp = cbm_popen(
-        "curl -sfI https://github.com/DeusData/codebase-memory-mcp/releases/latest 2>/dev/null",
+        "curl -sfI https://github.com/ZR113146/semantic-memory-mcp/releases/latest 2>/dev/null",
         "r");
     if (!fp) {
         return NULL;
@@ -3953,7 +3953,7 @@ int cbm_cmd_update(int argc, char **argv) {
         return CLI_TRUE;
     }
 
-    printf("codebase-memory-mcp update (current: %s)\n\n", CBM_VERSION);
+    printf("semantic-memory-mcp update (current: %s)\n\n", CBM_VERSION);
 
     /* Version check — skip download if already on latest (not in dry-run). */
     if (!force && !dry_run && check_already_latest()) {
@@ -3990,7 +3990,7 @@ int cbm_cmd_update(int argc, char **argv) {
 
     if (dry_run) {
         printf("\n(dry-run — skipping download, extraction, and binary replacement)\n");
-        printf("  target: %s/.local/bin/codebase-memory-mcp\n", home);
+        printf("  target: %s/.local/bin/semantic-memory-mcp\n", home);
         printf("  variant: %s\n", variant_label);
         printf("  os/arch: %s/%s\n", os, arch);
         printf("\nUpdate dry-run complete.\n");
@@ -4001,9 +4001,9 @@ int cbm_cmd_update(int argc, char **argv) {
     /* Step 4-5: Download, verify, and install binary */
     char bin_dest[CLI_BUF_1K];
 #ifdef _WIN32
-    snprintf(bin_dest, sizeof(bin_dest), "%s/.local/bin/codebase-memory-mcp.exe", home);
+    snprintf(bin_dest, sizeof(bin_dest), "%s/.local/bin/semantic-memory-mcp.exe", home);
 #else
-    snprintf(bin_dest, sizeof(bin_dest), "%s/.local/bin/codebase-memory-mcp", home);
+    snprintf(bin_dest, sizeof(bin_dest), "%s/.local/bin/semantic-memory-mcp", home);
 #endif
     char bin_dir[CLI_BUF_1K];
     snprintf(bin_dir, sizeof(bin_dir), "%s/.local/bin", home);

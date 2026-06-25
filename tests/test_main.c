@@ -104,7 +104,7 @@ extern void suite_stack_overflow(void);
 extern void cbm_kind_in_set_free_cache(void);
 
 int main(void) {
-    printf("\n  codebase-memory-mcp  C test suite\n");
+    printf("\n  semantic-memory-mcp  C test suite\n");
 
     /* Foundation */
     RUN_SUITE(arena);

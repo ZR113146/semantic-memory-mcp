@@ -1,4 +1,4 @@
-# 代码审计报告 · memory framework-mcp
+# 代码审计报告 · semantic-memory-mcp
 
 > 审计基准：《图谱式长期记忆框架 · 工程落地方案》§14 验收标准
 > 审计时间：2026-06-25

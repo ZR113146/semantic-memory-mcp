@@ -109,11 +109,11 @@ jobs:
             'spdxVersion': 'SPDX-2.3',
             'dataLicense': 'CC0-1.0',
             'SPDXID': 'SPDXRef-DOCUMENT',
-            'name': 'codebase-memory-mcp-${{ inputs.version }}',
-            'documentNamespace': 'https://github.com/DeusData/codebase-memory-mcp/releases/${{ inputs.version }}',
+            'name': 'semantic-memory-mcp-${{ inputs.version }}',
+            'documentNamespace': 'https://github.com/ZR113146/semantic-memory-mcp/releases/${{ inputs.version }}',
             'creationInfo': {
               'created': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
-              'creators': ['Tool: codebase-memory-mcp-release-pipeline']
+              'creators': ['Tool: semantic-memory-mcp-release-pipeline']
             },
             'packages': [
               {'SPDXID': 'SPDXRef-Package-sqlite3', 'name': 'sqlite3', 'versionInfo': '3.51.3', 'licenseDeclared': 'blessing', 'downloadLocation': 'https://sqlite.org', 'filesAnalyzed': False},
@@ -128,7 +128,7 @@ jobs:
               {'SPDXID': 'SPDXRef-Package-verstable', 'name': 'verstable', 'versionInfo': '2.2.1', 'licenseDeclared': 'MIT', 'downloadLocation': 'https://github.com/JacksonAllan/Verstable', 'filesAnalyzed': False},
               {'SPDXID': 'SPDXRef-Package-wyhash', 'name': 'wyhash', 'versionInfo': 'final-4.3', 'licenseDeclared': 'Unlicense', 'downloadLocation': 'https://github.com/wangyi-fudan/wyhash', 'filesAnalyzed': False},
               {'SPDXID': 'SPDXRef-Package-nomic-embed-code', 'name': 'nomic-embed-code-token-embeddings', 'versionInfo': '1.0', 'licenseDeclared': 'Apache-2.0', 'downloadLocation': 'https://huggingface.co/nomic-ai/nomic-embed-code', 'filesAnalyzed': False, 'comment': 'Derived int8 token embeddings; see vendored/nomic/NOTICE'},
-              {'SPDXID': 'SPDXRef-Package-tree-sitter-grammars', 'name': 'tree-sitter-grammars-aggregate', 'versionInfo': '158-grammars', 'licenseDeclared': 'MIT', 'downloadLocation': 'NOASSERTION', 'filesAnalyzed': False, 'comment': 'Aggregate of 158 vendored tree-sitter grammars. Predominantly MIT; exceptions: clojure CC0-1.0, jinja2 + just Apache-2.0, first-party grammars (c) DeusData MIT. Per-grammar provenance: internal/cbm/vendored/grammars/MANIFEST.md; full texts ship in THIRD_PARTY_NOTICES.md inside each archive.'}
+              {'SPDXID': 'SPDXRef-Package-tree-sitter-grammars', 'name': 'tree-sitter-grammars-aggregate', 'versionInfo': '158-grammars', 'licenseDeclared': 'MIT', 'downloadLocation': 'NOASSERTION', 'filesAnalyzed': False, 'comment': 'Aggregate of 158 vendored tree-sitter grammars. Predominantly MIT; exceptions: clojure CC0-1.0, jinja2 + just Apache-2.0, first-party grammars (c) ZR113146 MIT. Per-grammar provenance: internal/cbm/vendored/grammars/MANIFEST.md; full texts ship in THIRD_PARTY_NOTICES.md inside each archive.'}
             ]
           }
           json.dump(sbom, open('sbom.json', 'w'), indent=2)
@@ -205,12 +205,12 @@ jobs:
           for f in assets/*.tar.gz; do
             NAME=$(basename "$f" .tar.gz)
             tar -xzf "$f" -C binaries/ 2>/dev/null || true
-            [ -f binaries/codebase-memory-mcp ] && mv binaries/codebase-memory-mcp "binaries/${NAME}"
+            [ -f binaries/semantic-memory-mcp ] && mv binaries/semantic-memory-mcp "binaries/${NAME}"
           done
           for f in assets/*.zip; do
             NAME=$(basename "$f" .zip)
             unzip -o "$f" -d binaries/ 2>/dev/null || true
-            [ -f binaries/codebase-memory-mcp.exe ] && mv binaries/codebase-memory-mcp.exe "binaries/${NAME}.exe"
+            [ -f binaries/semantic-memory-mcp.exe ] && mv binaries/semantic-memory-mcp.exe "binaries/${NAME}.exe"
           done
           cp install.sh binaries/ 2>/dev/null || true
           cp install.ps1 binaries/ 2>/dev/null || true
@@ -254,16 +254,16 @@ jobs:
           TABLE+="| Binary | SHA-256 | VirusTotal |\n"
           TABLE+="|--------|---------|------------|\n"
 
-          for bin in binaries/codebase-memory-mcp-*; do
+          for bin in binaries/semantic-memory-mcp-*; do
             [ -f "$bin" ] || continue
             name=$(basename "$bin")
             # Skip UI variants and non-binary files
             echo "$name" | grep -qE \
-              '^codebase-memory-mcp-(linux|darwin|windows)-(amd64|arm64)(\.exe)?$' || continue
+              '^semantic-memory-mcp-(linux|darwin|windows)-(amd64|arm64)(\.exe)?$' || continue
             sha256=$(sha256sum "$bin" 2>/dev/null | awk '{print $1}' \
               || shasum -a 256 "$bin" | awk '{print $1}')
             label=$(echo "$name" \
-              | sed 's/^codebase-memory-mcp-//' \
+              | sed 's/^semantic-memory-mcp-//' \
               | sed 's/\.exe$//')
             short="${sha256:0:20}..."
             vt_url="https://www.virustotal.com/gui/file/${sha256}/detection"

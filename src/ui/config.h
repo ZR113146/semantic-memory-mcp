@@ -1,7 +1,7 @@
 /*
  * config.h — Persistent UI configuration.
  *
- * Stores ui_enabled and ui_port in ~/.cache/codebase-memory-mcp/config.json.
+ * Stores ui_enabled and ui_port in ~/.cache/semantic-memory-mcp/config.json.
  * Thread-safe: load/save are independent operations on the filesystem.
  */
 #ifndef CBM_UI_CONFIG_H

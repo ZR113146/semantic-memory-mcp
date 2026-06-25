@@ -10,7 +10,7 @@ const path = require('path');
 const os = require('os');
 const { execFileSync } = require('child_process');
 
-const REPO = 'DeusData/codebase-memory-mcp';
+const REPO = 'ZR113146/semantic-memory-mcp';
 const VERSION = require('./package.json').version;
 const BIN_DIR = path.join(__dirname, 'bin');
 
@@ -83,7 +83,7 @@ async function verifyChecksum(archivePath, archiveName) {
         `Checksum mismatch for ${archiveName}:\n  expected: ${expected}\n  actual:   ${actual}`,
       );
     }
-    process.stdout.write('codebase-memory-mcp: checksum verified.\n');
+    process.stdout.write('semantic-memory-mcp: checksum verified.\n');
   } catch (err) {
     if (err.message.startsWith('Checksum mismatch')) throw err;
     // Non-fatal: checksum unavailable (network issue, pre-release, etc.)
@@ -96,7 +96,7 @@ async function main() {
   const platform = getPlatform();
   const arch = getArch();
   const ext = platform === 'windows' ? 'zip' : 'tar.gz';
-  const binName = platform === 'windows' ? 'codebase-memory-mcp.exe' : 'codebase-memory-mcp';
+  const binName = platform === 'windows' ? 'semantic-memory-mcp.exe' : 'semantic-memory-mcp';
   const binPath = path.join(BIN_DIR, binName);
 
   if (fs.existsSync(binPath)) {
@@ -109,10 +109,10 @@ async function main() {
   // dynamically links glibc 2.38+ and fails on older distros. macOS/Windows
   // have no such variant. Keep in sync with install.sh / pypi _cli.py / cli.c.
   const variant = platform === 'linux' ? '-portable' : '';
-  const archive = `codebase-memory-mcp-${platform}-${arch}${variant}.${ext}`;
+  const archive = `semantic-memory-mcp-${platform}-${arch}${variant}.${ext}`;
   const url = `https://github.com/${REPO}/releases/download/v${VERSION}/${archive}`;
 
-  process.stdout.write(`codebase-memory-mcp: downloading v${VERSION} for ${platform}/${arch}...\n`);
+  process.stdout.write(`semantic-memory-mcp: downloading v${VERSION} for ${platform}/${arch}...\n`);
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cbm-install-'));
   const tmpArchive = path.join(tmpDir, `cbm.${ext}`);
@@ -145,14 +145,14 @@ async function main() {
     fs.copyFileSync(extracted, binPath);
     fs.chmodSync(binPath, 0o755);
 
-    process.stdout.write('codebase-memory-mcp: ready.\n');
+    process.stdout.write('semantic-memory-mcp: ready.\n');
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 }
 
 main().catch((err) => {
-  process.stderr.write(`\ncodebase-memory-mcp: install failed — ${err.message}\n`);
+  process.stderr.write(`\nsemantic-memory-mcp: install failed — ${err.message}\n`);
   process.stderr.write(`You can install manually: https://github.com/${REPO}#installation\n`);
   // Non-fatal: don't block the rest of npm install
   process.exit(0);

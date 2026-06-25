@@ -242,7 +242,7 @@ static void handle_message(const char *msg) {
     if (strcmp(method, "initialize") == 0) {
         send_result(id ? id : "0",
             "{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{\"tools\":{}},"
-            "\"serverInfo\":{\"name\":\"memory-framework-mcp\",\"version\":\"0.1.0\"}}");
+            "\"serverInfo\":{\"name\":\"semantic-memory-mcp\",\"version\":\"0.1.0\"}}");
     }
     else if (strcmp(method, "tools/list") == 0) {
         char buf[4096];
