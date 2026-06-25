@@ -37,7 +37,7 @@ High-quality parsing through [tree-sitter](https://tree-sitter.github.io/tree-si
 - **11 agents, one command** — `install` auto-detects Claude Code, Codex CLI, Gemini CLI, Zed, OpenCode, Antigravity, Aider, KiloCode, VS Code, OpenClaw, and Kiro — configures MCP entries, instruction files, and pre-tool hooks for each.
 - **Built-in graph visualization** — 3D interactive UI at `localhost:9749` (optional UI binary variant).
 - **Infrastructure-as-code indexing** — Dockerfiles, Kubernetes manifests, and Kustomize overlays indexed as graph nodes with cross-references. `Resource` nodes for K8s kinds, `Module` nodes for Kustomize overlays with `IMPORTS` edges to referenced resources.
-- **14 MCP tools** — search, trace, architecture, impact analysis, Cypher queries, dead code detection, cross-service HTTP linking, ADR management, and more.
+- **14 MCP tools** — search, trace, architecture, impact analysis, Cypher queries, dead code detection, cross-service HTTP linking, long-term memory MVP, and more.
 
 ## Quick Start
 
@@ -136,7 +136,7 @@ Removes all agent configs, skills, hooks, and instructions. Does not remove the 
 
 ### Graph & analysis
 - **Architecture overview**: `get_architecture` returns languages, packages, entry points, routes, hotspots, boundaries, layers, and clusters in a single call
-- **Architecture Decision Records**: `manage_adr` persists architectural decisions across sessions
+- **Graph long-term memory MVP**: `events`, `memories_retrieve`, `admin_consolidate`, `admin_decay`, and `memory_health` provide the new SQLite-backed memory entrypoints
 - **Louvain community detection**: Discovers functional modules by clustering call edges
 - **Git diff impact mapping**: `detect_changes` maps uncommitted changes to affected symbols with risk classification
 - **Call graph**: Resolves function calls across files and packages (import-aware, type-inferred)
@@ -394,7 +394,11 @@ codebase-memory-mcp cli --raw search_graph '{"label": "Function"}' | jq '.result
 | `get_code_snippet` | Read source code for a function by qualified name. |
 | `get_architecture` | Codebase overview: languages, packages, routes, hotspots, clusters, ADR. |
 | `search_code` | Grep-like text search within indexed project files. |
-| `manage_adr` | CRUD for Architecture Decision Records. |
+| `events` | Append raw long-term memory events through the synchronous hot path. |
+| `memories_retrieve` | Retrieve task-relevant long-term memories and update hit counters. |
+| `admin_consolidate` | Run the deterministic candidate consolidation pass. |
+| `admin_decay` | Run explainable decay and archive stale active memories. |
+| `memory_health` | Inspect memory MVP counters and candidate backlog. |
 | `ingest_traces` | Ingest runtime traces to validate HTTP_CALLS edges. |
 
 ## Graph Data Model
