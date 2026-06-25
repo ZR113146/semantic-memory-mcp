@@ -461,6 +461,8 @@ int cbm_store_memory_retrieve(cbm_store_t *s, const cbm_memory_query_t *query,
                               cbm_memory_result_t *out);
 int cbm_store_memory_mark_hits(cbm_store_t *s, const char **ids, int count, int64_t now_ms);
 int cbm_store_memory_update_status(cbm_store_t *s, const char *id, const char *project, const char *status);
+int cbm_store_memory_feedback(cbm_store_t *s, const char *id, const char *project, const char *feedback,
+                              const char *note, const char *user, char **out_event_id);
 int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit, int *processed);
 int cbm_store_memory_decay(cbm_store_t *s, const char *project, int limit, int *processed);
 int cbm_store_memory_health(cbm_store_t *s, const char *project, cbm_memory_health_t *out);

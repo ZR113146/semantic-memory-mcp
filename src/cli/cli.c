@@ -457,7 +457,7 @@ static const char skill_content[] =
     "`index_repository`, `index_status`, `list_projects`, `delete_project`,\n"
     "`search_graph`, `search_code`, `trace_path`, `detect_changes`,\n"
     "`query_graph`, `get_graph_schema`, `get_code_snippet`, `get_architecture`,\n"
-    "`events`, `memories_retrieve`, `memory_update_status`, `admin_consolidate`, `memory_health`\n"
+    "`events`, `memories_retrieve`, `memory_update_status`, `memory_feedback`, `admin_consolidate`, `memory_health`\n"
     "\n"
     "## Edge Types\n"
     "CALLS, HTTP_CALLS, ASYNC_CALLS, IMPORTS, DEFINES, DEFINES_METHOD,\n"

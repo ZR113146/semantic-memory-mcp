@@ -459,6 +459,12 @@ static const tool_def_t TOOLS[] = {
      "\"id\":{\"type\":\"string\"},\"status\":{\"type\":\"string\","
      "\"enum\":[\"candidate\",\"active\",\"deprecated\",\"archived\",\"retracted\"]}},"
      "\"required\":[\"project\",\"id\",\"status\"]}"},
+    {"memory_feedback", "Record feedback on a retrieved memory and adjust its retrieval health",
+     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
+     "\"id\":{\"type\":\"string\"},\"feedback\":{\"type\":\"string\","
+     "\"enum\":[\"useful\",\"not_useful\",\"wrong\",\"stale\"]},"
+     "\"note\":{\"type\":\"string\"},\"user\":{\"type\":\"string\"}},"
+     "\"required\":[\"project\",\"id\",\"feedback\"]}"},
 
     {"admin_consolidate", "Run the deterministic memory consolidation pass for candidate items",
      "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
@@ -4292,6 +4298,40 @@ static char *handle_memory_update_status(cbm_mcp_server_t *srv, const char *args
     return result;
 }
 
+static char *handle_memory_feedback(cbm_mcp_server_t *srv, const char *args) {
+    char *project = cbm_mcp_get_string_arg(args, "project");
+    char *id = cbm_mcp_get_string_arg(args, "id");
+    char *feedback = cbm_mcp_get_string_arg(args, "feedback");
+    char *note = cbm_mcp_get_string_arg(args, "note");
+    char *user = cbm_mcp_get_string_arg(args, "user");
+    if (!project || !id || !feedback) {
+        free(project); free(id); free(feedback); free(note); free(user);
+        return cbm_mcp_text_result("project, id, and feedback are required", true);
+    }
+    cbm_store_t *store = resolve_memory_store(srv, project);
+    if (!store) {
+        char *_err = build_project_list_error("project not found or not indexed");
+        char *_res = cbm_mcp_text_result(_err, true);
+        free(_err); free(project); free(id); free(feedback); free(note); free(user);
+        return _res;
+    }
+    char *event_id = NULL;
+    int rc = cbm_store_memory_feedback(store, id, project, feedback, note, user, &event_id);
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_str(doc, root, "project", project);
+    yyjson_mut_obj_add_str(doc, root, "id", id);
+    yyjson_mut_obj_add_str(doc, root, "feedback", feedback);
+    yyjson_mut_obj_add_str(doc, root, "status", rc == CBM_STORE_NOT_FOUND ? "not_found" : (rc == CBM_STORE_OK ? "recorded" : "error"));
+    yyjson_mut_obj_add_str(doc, root, "event_id", event_id ? event_id : "");
+    char *json = yy_doc_to_str(doc);
+    yyjson_mut_doc_free(doc);
+    char *result = cbm_mcp_text_result(json, rc != CBM_STORE_OK);
+    free(json); free(event_id); free(project); free(id); free(feedback); free(note); free(user);
+    return result;
+}
+
 static char *handle_admin_consolidate(cbm_mcp_server_t *srv, const char *args) {
     char *project = cbm_mcp_get_string_arg(args, "project");
     if (!project) return cbm_mcp_text_result("project is required", true);
@@ -4432,6 +4472,9 @@ char *cbm_mcp_handle_tool(cbm_mcp_server_t *srv, const char *tool_name, const ch
     }
     if (strcmp(tool_name, "memory_update_status") == 0) {
         return handle_memory_update_status(srv, args_json);
+    }
+    if (strcmp(tool_name, "memory_feedback") == 0) {
+        return handle_memory_feedback(srv, args_json);
     }
     if (strcmp(tool_name, "admin_consolidate") == 0 || strcmp(tool_name, "memory_consolidate") == 0) {
         return handle_admin_consolidate(srv, args_json);

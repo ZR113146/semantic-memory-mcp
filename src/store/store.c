@@ -2558,6 +2558,67 @@ int cbm_store_memory_update_status(cbm_store_t *s, const char *id, const char *p
     }
     return changed > 0 ? CBM_STORE_OK : CBM_STORE_NOT_FOUND;
 }
+static bool memory_feedback_allowed(const char *feedback) {
+    return feedback && (strcmp(feedback, "useful") == 0 || strcmp(feedback, "not_useful") == 0 ||
+                        strcmp(feedback, "wrong") == 0 || strcmp(feedback, "stale") == 0);
+}
+
+int cbm_store_memory_feedback(cbm_store_t *s, const char *id, const char *project, const char *feedback,
+                              const char *note, const char *user, char **out_event_id) {
+    if (out_event_id) *out_event_id = NULL;
+    if (!s || !s->db || !id || !id[0] || !memory_feedback_allowed(feedback)) {
+        return CBM_STORE_ERR;
+    }
+
+    const char *sql = NULL;
+    if (strcmp(feedback, "useful") == 0) {
+        sql = "UPDATE memory_item SET hit_count=hit_count+1,last_hit_at=?1,"
+              "confidence=MIN(1.0,confidence+0.05),reusability=MIN(1.0,reusability+0.05),"
+              "decay=MAX(0.0,decay-0.10),updated_at=?1 WHERE id=?2 AND (?3 IS NULL OR scope_project=?3);";
+    } else if (strcmp(feedback, "not_useful") == 0) {
+        sql = "UPDATE memory_item SET confidence=MAX(0.0,confidence-0.05),decay=decay+0.20,updated_at=?1 "
+              "WHERE id=?2 AND (?3 IS NULL OR scope_project=?3);";
+    } else if (strcmp(feedback, "wrong") == 0) {
+        sql = "UPDATE memory_item SET confidence=MAX(0.0,confidence-0.20),decay=decay+1.0,status='retracted',updated_at=?1 "
+              "WHERE id=?2 AND (?3 IS NULL OR scope_project=?3);";
+    } else {
+        sql = "UPDATE memory_item SET decay=MAX(decay,1.0),status='archived',updated_at=?1 "
+              "WHERE id=?2 AND (?3 IS NULL OR scope_project=?3);";
+    }
+
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
+        store_set_error_sqlite(s, "memory_feedback_prepare");
+        return CBM_STORE_ERR;
+    }
+    sqlite3_bind_int64(stmt, 1, memory_now_ms());
+    bind_text(stmt, 2, id);
+    memory_bind_nullable(stmt, 3, project);
+    int rc = sqlite3_step(stmt);
+    int changed = sqlite3_changes(s->db);
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        store_set_error_sqlite(s, "memory_feedback_update");
+        return CBM_STORE_ERR;
+    }
+    if (changed <= 0) {
+        return CBM_STORE_NOT_FOUND;
+    }
+
+    char payload[CBM_SZ_1K];
+    snprintf(payload, sizeof(payload), "feedback=%s item_id=%s note=%s", feedback, id, note ? note : "");
+    char context[CBM_SZ_512];
+    snprintf(context, sizeof(context), "{\"item_id\":\"%s\",\"feedback\":\"%s\"}", id, feedback);
+    cbm_memory_event_t ev = {0};
+    ev.type = "feedback";
+    ev.source = "mcp.memory_feedback";
+    ev.project = project;
+    ev.user = user;
+    ev.payload = payload;
+    ev.confidence = 1.0;
+    ev.context_json = context;
+    return cbm_store_memory_append_event(s, &ev, out_event_id);
+}
 static char *memory_summary_from_content(const char *content) {
     if (!content) {
         return heap_strdup("");

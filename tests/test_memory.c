@@ -519,6 +519,63 @@ TEST(memory_update_status_rejects_invalid_status) {
     return 0;
 }
 
+TEST(memory_feedback_useful_records_event_and_boosts_hit_signal) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_memory_item_t item = {0};
+    item.content = "Useful feedback target";
+    item.scope_project = "test-proj";
+    item.status = "active";
+    item.confidence = 0.5;
+    item.reusability = 0.5;
+    item.decay = 0.2;
+    char *id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+    char *event_id = NULL;
+    ASSERT(cbm_store_memory_feedback(s, id, "test-proj", "useful", "helped answer", "alice", &event_id) == CBM_STORE_OK);
+    ASSERT(event_id != NULL);
+    cbm_memory_item_t out = {0};
+    ASSERT(cbm_store_memory_get_item(s, id, &out) == CBM_STORE_OK);
+    ASSERT(out.hit_count == 1);
+    ASSERT(out.confidence > 0.54);
+    ASSERT(out.reusability > 0.54);
+    ASSERT(out.decay < 0.11);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_event WHERE type='feedback'") == 1);
+    cbm_store_memory_item_free(&out);
+    free(event_id);
+    free(id);
+    cbm_store_close(s);
+    return 0;
+}
+
+TEST(memory_feedback_wrong_retracts_from_default_retrieval) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_memory_item_t item = {0};
+    item.content = "Wrong feedback target";
+    item.scope_project = "test-proj";
+    item.status = "active";
+    item.confidence = 0.8;
+    char *id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+    ASSERT(cbm_store_memory_feedback(s, id, "test-proj", "wrong", "contradicted by user", NULL, NULL) == CBM_STORE_OK);
+    cbm_memory_query_t q = {0};
+    q.project = "test-proj";
+    q.limit = 5;
+    cbm_memory_result_t res = {0};
+    ASSERT(cbm_store_memory_retrieve(s, &q, &res) == CBM_STORE_OK);
+    ASSERT(res.count == 0);
+    cbm_store_memory_result_free(&res);
+    q.include_inactive = true;
+    ASSERT(cbm_store_memory_retrieve(s, &q, &res) == CBM_STORE_OK);
+    ASSERT(res.count == 1);
+    ASSERT(strcmp(res.items[0].status, "retracted") == 0);
+    cbm_store_memory_result_free(&res);
+    free(id);
+    cbm_store_close(s);
+    return 0;
+}
+
 TEST(memory_decay_archives_stale) {
     cbm_store_t *s = cbm_store_open_memory();
     ASSERT(s != NULL);
@@ -563,6 +620,8 @@ int main(void) {
     RUN(memory_mark_hits);
     RUN(memory_update_status_retracts_from_default_retrieval);
     RUN(memory_update_status_rejects_invalid_status);
+    RUN(memory_feedback_useful_records_event_and_boosts_hit_signal);
+    RUN(memory_feedback_wrong_retracts_from_default_retrieval);
     RUN(memory_decay_archives_stale);
     fprintf(stderr, "\n%d/%d passed\n", pass, total);
     return fail ? 1 : 0;
