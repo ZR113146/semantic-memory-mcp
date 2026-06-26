@@ -330,6 +330,13 @@ static void iso_now(char *buf, size_t sz) {
 
 /* ── Schema ─────────────────────────────────────────────────────── */
 
+/* Live SQLite schema version, tracked via PRAGMA user_version.
+ * Bump this and add a migration step in run_migrations() whenever the
+ * on-disk schema changes (new table, ALTER TABLE ADD COLUMN, etc.).
+ * NOTE: distinct from CBM_ARTIFACT_SCHEMA_VERSION (pipeline/artifact.h),
+ * which versions the compressed .zst export format, not the live DB. */
+#define CBM_SCHEMA_VERSION 1
+
 static int init_schema(cbm_store_t *s) {
     const char *ddl =
         "CREATE TABLE IF NOT EXISTS projects ("
@@ -465,6 +472,68 @@ static int init_schema(cbm_store_t *s) {
             sqlite3_free(fts_err);
         }
     }
+    return CBM_STORE_OK;
+}
+
+/* Read PRAGMA user_version (current on-disk schema version; 0 = fresh DB or
+ * a pre-migration legacy DB). */
+static int read_user_version(cbm_store_t *s) {
+    sqlite3_stmt *st = NULL;
+    int ver = 0;
+    if (sqlite3_prepare_v2(s->db, "PRAGMA user_version;", -1, &st, NULL) == SQLITE_OK) {
+        if (sqlite3_step(st) == SQLITE_ROW) {
+            ver = sqlite3_column_int(st, 0);
+        }
+    }
+    sqlite3_finalize(st);
+    return ver;
+}
+
+/* Schema migration runner. Replaces a bare init_schema() call at open time.
+ *
+ * Each migration step runs inside a transaction that also bumps user_version,
+ * so a step's DDL and its version stamp commit (or roll back) atomically —
+ * a crash can never leave "DDL applied but version not advanced" or vice versa.
+ *
+ * Step 0→1 is the baseline: it runs init_schema(), whose DDL is all
+ * CREATE TABLE IF NOT EXISTS / CREATE VIRTUAL TABLE IF NOT EXISTS. That makes
+ * it safe for both a truly fresh DB and a legacy DB that already has all the
+ * tables but was created before versioning existed (user_version stays 0 until
+ * we stamp it here). Future schema changes add `if (ver < N) { ... }` blocks
+ * using ALTER TABLE ADD COLUMN (which SQLite applies without rewriting the table).
+ *
+ * NOTE: PRAGMA user_version cannot be parameterized, so the version number is
+ * formatted into the statement; it is an internal compile-time constant, never
+ * user input. */
+static int run_migrations(cbm_store_t *s) {
+    int ver = read_user_version(s);
+
+    if (ver < 1) {
+        int rc = cbm_store_begin(s);
+        if (rc != CBM_STORE_OK) {
+            return rc;
+        }
+        rc = init_schema(s);
+        if (rc != CBM_STORE_OK) {
+            cbm_store_rollback(s);
+            return rc;
+        }
+        rc = exec_sql(s, "PRAGMA user_version = 1;");
+        if (rc != CBM_STORE_OK) {
+            cbm_store_rollback(s);
+            return rc;
+        }
+        rc = cbm_store_commit(s);
+        if (rc != CBM_STORE_OK) {
+            cbm_store_rollback(s);
+            return rc;
+        }
+    }
+
+    /* Future migrations:
+     *   if (ver < 2) { begin; ALTER TABLE ...; PRAGMA user_version = 2; commit; }
+     */
+
     return CBM_STORE_OK;
 }
 
@@ -782,7 +851,7 @@ static cbm_store_t *store_open_internal(const char *path, bool in_memory) {
     sqlite3_create_function(s->db, "cbm_camel_split", SKIP_ONE, SQLITE_UTF8 | SQLITE_DETERMINISTIC,
                             NULL, sqlite_camel_split, NULL, NULL);
 
-    if (configure_pragmas(s, in_memory) != CBM_STORE_OK || init_schema(s) != CBM_STORE_OK ||
+    if (configure_pragmas(s, in_memory) != CBM_STORE_OK || run_migrations(s) != CBM_STORE_OK ||
         create_user_indexes(s) != CBM_STORE_OK) {
         sqlite3_close(s->db);
         safe_str_free(&s->db_path);
@@ -2931,6 +3000,16 @@ int cbm_store_memory_feedback(cbm_store_t *s, const char *id, const char *projec
         store_set_error_sqlite(s, "memory_feedback_prepare");
         return CBM_STORE_ERR;
     }
+
+    /* The item UPDATE and its audit event must commit together: a crash between
+     * them would otherwise leave an item permanently retracted/archived with no
+     * trace of who/why. Wrap both in one transaction. */
+    if (cbm_store_begin(s) != CBM_STORE_OK) {
+        sqlite3_finalize(stmt);
+        store_set_error_sqlite(s, "memory_feedback_begin");
+        return CBM_STORE_ERR;
+    }
+
     sqlite3_bind_int64(stmt, 1, memory_now_ms());
     bind_text(stmt, 2, id);
     memory_bind_nullable(stmt, 3, project);
@@ -2938,10 +3017,13 @@ int cbm_store_memory_feedback(cbm_store_t *s, const char *id, const char *projec
     int changed = sqlite3_changes(s->db);
     sqlite3_finalize(stmt);
     if (rc != SQLITE_DONE) {
+        cbm_store_rollback(s);
         store_set_error_sqlite(s, "memory_feedback_update");
         return CBM_STORE_ERR;
     }
     if (changed <= 0) {
+        /* No matching item: nothing changed, so don't record an audit event. */
+        cbm_store_rollback(s);
         return CBM_STORE_NOT_FOUND;
     }
 
@@ -2957,7 +3039,12 @@ int cbm_store_memory_feedback(cbm_store_t *s, const char *id, const char *projec
     ev.payload = payload;
     ev.confidence = 1.0;
     ev.context_json = context;
-    return cbm_store_memory_append_event(s, &ev, out_event_id);
+    if (cbm_store_memory_append_event(s, &ev, out_event_id) != CBM_STORE_OK) {
+        cbm_store_rollback(s);
+        store_set_error_sqlite(s, "memory_feedback_event");
+        return CBM_STORE_ERR;
+    }
+    return cbm_store_commit(s);
 }
 static char *memory_summary_from_content(const char *content) {
     if (!content) {
@@ -3085,9 +3172,21 @@ int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit,
     int lim = limit > 0 ? limit : 100;
     const char *sql = "SELECT id,kind,content,scope_project,scope_user,scope_task,entity_key,predicate,confidence,source_event_ids "
                       "FROM memory_item WHERE status='candidate' AND (?1 IS NULL OR scope_project=?1) LIMIT ?2;";
+
+    /* One transaction for the whole batch. Each consolidated item touches
+     * memory_item + memory_edge + memory_vec + memory_fts; a crash mid-item
+     * would otherwise leave an item flipped to status='active' but missing its
+     * vector/FTS/edges. Acquiring the write lock with BEGIN IMMEDIATE *before*
+     * opening the read cursor avoids a begin-while-cursor-open lock ordering
+     * problem (the cursor then reads the same connection's pending writes). */
+    if (cbm_store_begin(s) != CBM_STORE_OK) {
+        store_set_error_sqlite(s, "memory_consolidate_begin");
+        return CBM_STORE_ERR;
+    }
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
         store_set_error_sqlite(s, "memory_consolidate_select");
+        cbm_store_rollback(s);
         return CBM_STORE_ERR;
     }
     memory_bind_nullable(stmt, 1, project);
@@ -3229,6 +3328,11 @@ int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit,
         n++;
     }
     sqlite3_finalize(stmt);
+    if (cbm_store_commit(s) != CBM_STORE_OK) {
+        cbm_store_rollback(s);
+        store_set_error_sqlite(s, "memory_consolidate_commit");
+        return CBM_STORE_ERR;
+    }
     if (processed) *processed = n;
     return CBM_STORE_OK;
 }

@@ -726,6 +726,125 @@ TEST(memory_mark_hits_relaxes_decay) {
     return 0;
 }
 
+/* ── A1: schema migration framework ─────────────────────────────── */
+
+TEST(migration_fresh_db_sets_version) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    /* A freshly opened DB must be stamped at the current schema version. */
+    ASSERT(scalar_int(s, "PRAGMA user_version") == 1);
+    /* Baseline tables must exist (migration 0->1 ran init_schema). */
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_item'") == 1);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_event'") == 1);
+    cbm_store_close(s);
+    return 0;
+}
+
+TEST(migration_idempotent_reopen) {
+    char path[512];
+    const char *tmp = getenv("TMP");
+    if (!tmp || !tmp[0]) tmp = getenv("TEMP");
+    if (!tmp || !tmp[0]) tmp = ".";
+    snprintf(path, sizeof(path), "%s/cbm_migrate_test_%d.db", tmp, (int)1234);
+    remove(path);
+
+    /* First open: fresh DB, runs baseline migration, writes an item. */
+    cbm_store_t *s = cbm_store_open_path(path);
+    ASSERT(s != NULL);
+    ASSERT(scalar_int(s, "PRAGMA user_version") == 1);
+    cbm_memory_item_t item = {0};
+    item.kind = "fact"; item.layer = "semantic"; item.title = "persisted";
+    item.content = "survives reopen"; item.scope_project = "test-proj";
+    item.status = "candidate"; item.confidence = 0.9;
+    char *id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+    free(id);
+    cbm_store_close(s);
+
+    /* Reopen the same on-disk DB: migration must be a no-op (already at v1),
+     * version unchanged, data intact. */
+    cbm_store_t *s2 = cbm_store_open_path(path);
+    ASSERT(s2 != NULL);
+    ASSERT(scalar_int(s2, "PRAGMA user_version") == 1);
+    ASSERT(scalar_int(s2, "SELECT COUNT(*) FROM memory_item") == 1);
+    cbm_store_close(s2);
+    remove(path);
+    return 0;
+}
+
+/* ── P0-1: memory-path transaction atomicity ────────────────────── */
+
+/* feedback writes a memory_item UPDATE + a memory_event audit row; both must
+ * commit together. Inject a failure on the event insert via a trigger, then
+ * assert the item UPDATE was rolled back (status NOT changed, no audit row). */
+TEST(feedback_atomic_rolls_back_item_on_event_failure) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_memory_item_t item = {0};
+    item.kind = "fact"; item.layer = "semantic"; item.title = "atomic feedback";
+    item.content = "feedback should be all-or-nothing"; item.scope_project = "test-proj";
+    item.status = "active"; item.confidence = 0.9;
+    char *id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+
+    /* Force any memory_event INSERT to fail mid-transaction. */
+    char *err = NULL;
+    ASSERT(sqlite3_exec(cbm_store_get_db(s),
+        "CREATE TRIGGER cbm_fail_event BEFORE INSERT ON memory_event "
+        "BEGIN SELECT RAISE(ABORT, 'injected event failure'); END;",
+        NULL, NULL, &err) == SQLITE_OK);
+
+    /* "wrong" feedback would retract the item AND write an audit event.
+     * The event insert fails -> the whole op must roll back. */
+    int rc = cbm_store_memory_feedback(s, id, "test-proj", "wrong", "should not persist", NULL, NULL);
+    ASSERT(rc == CBM_STORE_ERR);
+
+    /* Item must NOT be retracted (UPDATE rolled back). */
+    cbm_memory_item_t out = {0};
+    ASSERT(cbm_store_memory_get_item(s, id, &out) == CBM_STORE_OK);
+    ASSERT(strcmp(out.status, "active") == 0);
+    cbm_store_memory_item_free(&out);
+    /* No audit event persisted. */
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_event WHERE type='feedback'") == 0);
+
+    (void)sqlite3_exec(cbm_store_get_db(s), "DROP TRIGGER cbm_fail_event;", NULL, NULL, NULL);
+    free(id);
+    cbm_store_close(s);
+    return 0;
+}
+
+/* consolidate activates an item and writes its vector + FTS + edges in one
+ * batch transaction. Verify the positive invariant: a successfully activated
+ * item always has all secondary rows (never a half-written active item). */
+TEST(consolidate_active_item_fully_indexed) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_memory_item_t item = {0};
+    item.kind = "fact"; item.layer = "semantic"; item.title = "indexed";
+    item.content = "active items carry vector and fts and belongs_to edge";
+    item.scope_project = "test-proj"; item.status = "candidate"; item.confidence = 0.9;
+    char *id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+
+    int processed = 0;
+    ASSERT(cbm_store_memory_consolidate(s, "test-proj", 100, &processed) == CBM_STORE_OK);
+    ASSERT(processed == 1);
+
+    cbm_memory_item_t out = {0};
+    ASSERT(cbm_store_memory_get_item(s, id, &out) == CBM_STORE_OK);
+    ASSERT(strcmp(out.status, "active") == 0);
+    cbm_store_memory_item_free(&out);
+
+    /* All-or-nothing: the active item has its vector, FTS row, and belongs_to edge. */
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_vec") == 1);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_fts") == 1);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_edge WHERE type='belongs_to'") == 1);
+
+    free(id);
+    cbm_store_close(s);
+    return 0;
+}
+
 int main(void) {
     fprintf(stderr, "START\n");
     fflush(stderr);
@@ -752,6 +871,10 @@ int main(void) {
     RUN(memory_feedback_useful_records_event_and_boosts_hit_signal);
     RUN(memory_feedback_wrong_retracts_from_default_retrieval);
     RUN(memory_decay_archives_stale);
+    RUN(migration_fresh_db_sets_version);
+    RUN(migration_idempotent_reopen);
+    RUN(feedback_atomic_rolls_back_item_on_event_failure);
+    RUN(consolidate_active_item_fully_indexed);
     fprintf(stderr, "\n%d/%d passed\n", pass, total);
     return fail ? 1 : 0;
 }

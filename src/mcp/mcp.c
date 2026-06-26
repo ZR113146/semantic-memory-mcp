@@ -4208,7 +4208,19 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     event.confidence = confidence;
     event.context_json = context_json ? context_json : "{}";
     char *event_id = NULL;
+    /* Event + structured candidate must persist atomically. Wrap both in one
+     * transaction so a crash between them can't leave an orphan event row with
+     * no corresponding memory_item. The transaction lives at this business-op
+     * layer (not inside the store append fns) because those fns are also called
+     * standalone elsewhere — nesting a BEGIN inside them would fail. */
+    if (cbm_store_begin(store) != CBM_STORE_OK) {
+        free(project); free(type); free(source); free(user); free(task); free(kind); free(layer);
+        free(title); free(summary); free(entity_key); free(predicate); free(payload); free(content);
+        free(context_json);
+        return cbm_mcp_text_result("failed to begin memory transaction", true);
+    }
     if (cbm_store_memory_append_event(store, &event, &event_id) != CBM_STORE_OK) {
+        cbm_store_rollback(store);
         free(project); free(type); free(source); free(user); free(task); free(kind); free(layer);
         free(title); free(summary); free(entity_key); free(predicate); free(payload); free(content);
         free(context_json);
@@ -4237,19 +4249,38 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     char *item_id = NULL;
     int item_rc = cbm_store_memory_append_candidate(store, &item, &item_id);
 
+    /* Atomic: if the candidate write fails, roll back the event too so we never
+     * persist an orphan event. Otherwise commit both together. */
+    if (item_rc != CBM_STORE_OK) {
+        cbm_store_rollback(store);
+        free(event_id); free(item_id);
+        free(project); free(type); free(source); free(user); free(task); free(kind); free(layer);
+        free(title); free(summary); free(entity_key); free(predicate); free(payload); free(content);
+        free(context_json);
+        return cbm_mcp_text_result("failed to append memory candidate", true);
+    }
+    if (cbm_store_commit(store) != CBM_STORE_OK) {
+        cbm_store_rollback(store);
+        free(event_id); free(item_id);
+        free(project); free(type); free(source); free(user); free(task); free(kind); free(layer);
+        free(title); free(summary); free(entity_key); free(predicate); free(payload); free(content);
+        free(context_json);
+        return cbm_mcp_text_result("failed to commit memory transaction", true);
+    }
+
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
-    yyjson_mut_obj_add_str(doc, root, "status", item_rc == CBM_STORE_OK ? "accepted" : "event_only");
+    yyjson_mut_obj_add_str(doc, root, "status", "accepted");
     yyjson_mut_obj_add_str(doc, root, "policy_decision", policy_decision);
     yyjson_mut_obj_add_str(doc, root, "policy_reason", policy_reason ? policy_reason : "");
     yyjson_mut_obj_add_str(doc, root, "event_id", event_id ? event_id : "");
     yyjson_mut_obj_add_str(doc, root, "item_id", item_id ? item_id : "");
-    yyjson_mut_obj_add_str(doc, root, "item_status", item_rc == CBM_STORE_OK ? "candidate" : "write_error");
+    yyjson_mut_obj_add_str(doc, root, "item_status", "candidate");
     yyjson_mut_obj_add_str(doc, root, "hot_path", "event+structured candidate only; consolidation builds dedup, vectors, and evidence edges");
     char *json = yy_doc_to_str(doc);
     yyjson_mut_doc_free(doc);
-    char *result = cbm_mcp_text_result(json, item_rc != CBM_STORE_OK);
+    char *result = cbm_mcp_text_result(json, false);
     free(json); free(event_id); free(item_id);
     free(project); free(type); free(source); free(user); free(task); free(kind); free(layer);
     free(title); free(summary); free(entity_key); free(predicate); free(payload); free(content);
