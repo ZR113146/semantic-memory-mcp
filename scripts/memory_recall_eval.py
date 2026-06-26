@@ -54,6 +54,13 @@ TOLERANCE = {
 # Metrics where a HIGHER value is a regression.
 HIGHER_IS_WORSE = {"zero_result_rate", "false_positive"}
 
+# A negative-case hit at or above this retrieval_score counts as a false
+# positive. Set from observed data: genuine oblique-match positives land
+# ~0.24 while unrelated nearest-neighbours reach ~0.30–0.32, so the bands
+# overlap — this floor is a reporting line, not a clean separator. Lowering
+# it makes the metric stricter (more negatives flagged).
+FP_SCORE_FLOOR = 0.30
+
 
 class MCPClient:
     """Minimal stdio JSON-RPC client for the MCP server binary."""
@@ -155,12 +162,22 @@ def evaluate(client, project):
         expect = c["expect"]
 
         if expect is None:
-            # Negative case: any FTS-sourced hit is a false positive.
-            fp = any(m.get("retrieval_source") == "fts" for m in mems)
+            # Negative case: a false positive is any hit — regardless of source —
+            # scored at or above FP_SCORE_FLOOR. The original "fts-only" rule went
+            # blind once vector became a primary path: an unrelated query still
+            # pulls back its 5 nearest memories, and (because static mean-pooled
+            # embeddings compress all cosines into a narrow ~0.2–0.32 band) those
+            # can outscore a genuinely-relevant-but-obliquely-worded hit. So this
+            # metric deliberately reports the over-recall instead of hiding it.
+            fp_hits = [m for m in mems
+                       if (m.get("retrieval_score") or 0.0) >= FP_SCORE_FLOOR]
+            fp = len(fp_hits) > 0
             if fp:
                 false_pos += 1
             details.append({"query": c["query"], "expect": None,
-                            "false_positive": fp, "n": len(mems)})
+                            "false_positive": fp, "n": len(mems),
+                            "fp_top": round(max((m.get("retrieval_score") or 0.0)
+                                                 for m in mems), 3) if mems else 0.0})
             continue
 
         rank = None
@@ -208,7 +225,7 @@ def print_report(metrics):
     for d in metrics["_details"]:
         if d.get("expect") is None:
             flag = "FP!" if d.get("false_positive") else "ok "
-            print(f"  [neg] {flag} n={d['n']:<2} {d['query']}")
+            print(f"  [neg] {flag} top={d.get('fp_top', 0.0):.3f} n={d['n']:<2} {d['query']}")
         else:
             r = d.get("rank")
             mark = "MISS" if r is None else (f"#{r}")

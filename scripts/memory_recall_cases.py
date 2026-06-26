@@ -60,7 +60,21 @@ CASES = [
     # --- Mixed / cross-lingual token ---
     {"query": "JWT RS256", "expect": "RS256"},
     {"query": "SQLite 知识图谱", "expect": "知识图谱和长期记忆"},
-    # --- Negative cases (must NOT produce an FTS hit) ---
+    # --- Semantic recall (query shares few/no words with target; only the
+    #     768-d embedding can bridge meaning -> spelling. These MISS under a
+    #     pure-FTS / bag-of-words path and are the real measure of the
+    #     256->768 nomic upgrade. Keep `expect` a substring of the target
+    #     content but choose query wording that avoids those exact tokens.) ---
+    {"query": "怎么给接口做鉴权", "expect": "JWT 令牌"},
+    {"query": "登录态用什么方式校验", "expect": "RS256"},
+    {"query": "程序最终如何打包交付", "expect": "单一静态二进制"},
+    {"query": "节省磁盘空间的依赖安装方式", "expect": "pnpm 的硬链接节省磁盘"},
+    {"query": "为什么中文搜索结果总是空的", "expect": "分词器把整段中文"},
+    {"query": "a fast tool to search text inside source files", "expect": "ripgrep over grep"},
+    {"query": "can the dev service be reached from another machine", "expect": "binds to localhost"},
+    {"query": "how are writes kept safe across a crash", "expect": "WAL journal mode"},
+    {"query": "where does all the project data live", "expect": "统一存储在 SQLite"},
+    # --- Negative cases (must NOT produce a relevant hit) ---
     {"query": "区块链智能合约", "expect": None},
     {"query": "kubernetes deployment yaml", "expect": None},
     {"query": "用户的生日和家庭住址", "expect": None},
