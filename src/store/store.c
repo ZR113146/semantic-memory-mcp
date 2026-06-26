@@ -336,7 +336,7 @@ static void iso_now(char *buf, size_t sz) {
  * on-disk schema changes (new table, ALTER TABLE ADD COLUMN, etc.).
  * NOTE: distinct from CBM_ARTIFACT_SCHEMA_VERSION (pipeline/artifact.h),
  * which versions the compressed .zst export format, not the live DB. */
-#define CBM_SCHEMA_VERSION 3
+#define CBM_SCHEMA_VERSION 4
 
 static int init_schema(cbm_store_t *s) {
     const char *ddl =
@@ -613,6 +613,39 @@ static int run_migrations(cbm_store_t *s) {
             return CBM_STORE_ERR;
         }
         rc = exec_sql(s, "PRAGMA user_version = 3;");
+        if (rc != CBM_STORE_OK) {
+            cbm_store_rollback(s);
+            return rc;
+        }
+        rc = cbm_store_commit(s);
+        if (rc != CBM_STORE_OK) {
+            cbm_store_rollback(s);
+            return rc;
+        }
+    }
+
+    /* ver 3→4: soft-delete support (P0-2). A nullable deleted_at timestamp marks
+     * an item as awaiting physical removal: it is hidden from all retrieval paths
+     * immediately, but kept on disk through a grace window so a soft delete can be
+     * undone (restore). A retention sweep physically purges items past the window.
+     * ALTER TABLE ADD COLUMN is instant in SQLite (no table rewrite); NULL means
+     * "live". The partial-ish index keeps the sweep's deleted_at scan cheap. */
+    if (ver < 4) {
+        int rc = cbm_store_begin(s);
+        if (rc != CBM_STORE_OK) {
+            return rc;
+        }
+        rc = exec_sql(s, "ALTER TABLE memory_item ADD COLUMN deleted_at INTEGER;");
+        if (rc != CBM_STORE_OK) {
+            cbm_store_rollback(s);
+            return rc;
+        }
+        rc = exec_sql(s, "CREATE INDEX IF NOT EXISTS idx_memory_item_deleted ON memory_item(deleted_at);");
+        if (rc != CBM_STORE_OK) {
+            cbm_store_rollback(s);
+            return rc;
+        }
+        rc = exec_sql(s, "PRAGMA user_version = 4;");
         if (rc != CBM_STORE_OK) {
             cbm_store_rollback(s);
             return rc;
@@ -2933,6 +2966,7 @@ static int memory_append_vector_candidates(cbm_store_t *s, const cbm_memory_quer
         "WHERE (?2 IS NULL OR m.scope_project=?2) AND (?3 IS NULL OR m.scope_user=?3 OR m.scope_user IS NULL) AND "
         "(?4 IS NULL OR m.scope_task=?4 OR m.scope_task IS NULL) AND (?5 IS NULL OR m.entity_key=?5) AND "
         "(?6 IS NULL OR m.kind=?6) AND (?7 != 0 OR m.status IN ('active','candidate')) "
+        "AND m.deleted_at IS NULL "
         "ORDER BY vscore DESC, (m.importance + m.confidence + m.reusability + m.specificity + m.hit_count - m.decay) DESC "
         "LIMIT ?8;";
     sqlite3_stmt *stmt = NULL;
@@ -3043,6 +3077,7 @@ int cbm_store_memory_retrieve(cbm_store_t *s, const cbm_memory_query_t *query,
             "WHERE (?2 IS NULL OR m.scope_project=?2) AND (?3 IS NULL OR m.scope_user=?3 OR m.scope_user IS NULL) AND "
             "  (?4 IS NULL OR m.scope_task=?4 OR m.scope_task IS NULL) AND (?5 IS NULL OR m.entity_key=?5) AND "
             "  (?6 IS NULL OR m.kind=?6) AND (?7 != 0 OR m.status IN ('active','candidate')) "
+            "  AND m.deleted_at IS NULL "
             "ORDER BY fts.rank LIMIT ?9;";
         sqlite3_stmt *stmt = NULL;
         if (sqlite3_prepare_v2(s->db, fts_sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
@@ -3145,6 +3180,7 @@ int cbm_store_memory_retrieve(cbm_store_t *s, const cbm_memory_query_t *query,
              "(?1 IS NULL OR scope_project=?1) AND (?2 IS NULL OR scope_user=?2 OR scope_user IS NULL) AND "
              "(?3 IS NULL OR scope_task=?3 OR scope_task IS NULL) AND (?4 IS NULL OR entity_key=?4) AND "
              "(?5 IS NULL OR kind=?5) AND (?6 != 0 OR status IN ('active','candidate')) "
+             "AND deleted_at IS NULL "
              "ORDER BY (importance + confidence + reusability + specificity + hit_count - decay) DESC, updated_at DESC "
              "LIMIT %d;", memory_select_cols, limit > 0 ? limit * 4 : 40);
     sqlite3_stmt *stmt = NULL;
@@ -3314,6 +3350,321 @@ int cbm_store_memory_feedback(cbm_store_t *s, const char *id, const char *projec
     }
     return cbm_store_commit(s);
 }
+
+/* ── Hard delete + soft delete + retention sweep (P0-2) ──────────────
+ * Three deletion semantics, all transaction-wrapped (mirroring the P0-1
+ * feedback pattern) so a crash mid-delete never leaves an item stripped of
+ * some-but-not-all satellite rows:
+ *   - soft  : set deleted_at; hidden from retrieval, undoable until the sweep
+ *             physically purges it past the grace window.
+ *   - hard  : delete item + vec + fts + edges now; source events KEPT (audit).
+ *   - purge : hard, plus delete the item's own source events (GDPR erasure).
+ * Every path leaves a tombstone audit event (the tombstone itself survives
+ * even in purge mode — it records who/when/why, not the erased content). */
+
+/* Delete the item's satellite rows (vec, fts, edges) and the item itself.
+ * Caller must already hold an open transaction. When purge_event_ids is non-NULL
+ * it is the item's source_event_ids JSON; every quoted id in it is deleted from
+ * memory_event too. Returns CBM_STORE_OK / CBM_STORE_ERR. */
+static int memory_delete_rows(cbm_store_t *s, const char *id, const char *project,
+                              const char *purge_event_ids) {
+    sqlite3_stmt *st = NULL;
+
+    if (sqlite3_prepare_v2(s->db, "DELETE FROM memory_fts WHERE item_id=?1;", CBM_NOT_FOUND, &st, NULL) != SQLITE_OK) {
+        store_set_error_sqlite(s, "memory_delete_fts");
+        return CBM_STORE_ERR;
+    }
+    bind_text(st, 1, id);
+    if (sqlite3_step(st) != SQLITE_DONE) { sqlite3_finalize(st); store_set_error_sqlite(s, "memory_delete_fts_step"); return CBM_STORE_ERR; }
+    sqlite3_finalize(st); st = NULL;
+
+    if (sqlite3_prepare_v2(s->db, "DELETE FROM memory_vec WHERE item_id=?1;", CBM_NOT_FOUND, &st, NULL) != SQLITE_OK) {
+        store_set_error_sqlite(s, "memory_delete_vec");
+        return CBM_STORE_ERR;
+    }
+    bind_text(st, 1, id);
+    if (sqlite3_step(st) != SQLITE_DONE) { sqlite3_finalize(st); store_set_error_sqlite(s, "memory_delete_vec_step"); return CBM_STORE_ERR; }
+    sqlite3_finalize(st); st = NULL;
+
+    /* Cascade every edge touching this item, in either direction — covers
+     * about_code anchors, contradicts/supersedes links, evidence edges. */
+    if (sqlite3_prepare_v2(s->db, "DELETE FROM memory_edge WHERE src_id=?1 OR dst_id=?1;", CBM_NOT_FOUND, &st, NULL) != SQLITE_OK) {
+        store_set_error_sqlite(s, "memory_delete_edge");
+        return CBM_STORE_ERR;
+    }
+    bind_text(st, 1, id);
+    if (sqlite3_step(st) != SQLITE_DONE) { sqlite3_finalize(st); store_set_error_sqlite(s, "memory_delete_edge_step"); return CBM_STORE_ERR; }
+    sqlite3_finalize(st); st = NULL;
+
+    /* GDPR erasure: delete the item's own source events. source_event_ids is a
+     * JSON array of quoted ids; walk every "..."-quoted token and delete it. */
+    if (purge_event_ids && purge_event_ids[0]) {
+        sqlite3_stmt *del = NULL;
+        if (sqlite3_prepare_v2(s->db, "DELETE FROM memory_event WHERE id=?1;", CBM_NOT_FOUND, &del, NULL) == SQLITE_OK) {
+            const char *p = purge_event_ids;
+            while ((p = strchr(p, '"')) != NULL) {
+                p++;
+                const char *e = strchr(p, '"');
+                if (!e) break;
+                size_t n = (size_t)(e - p);
+                if (n > 0 && n < CBM_SZ_128) {
+                    char evid[CBM_SZ_128];
+                    memcpy(evid, p, n);
+                    evid[n] = '\0';
+                    sqlite3_reset(del);
+                    sqlite3_clear_bindings(del);
+                    bind_text(del, 1, evid);
+                    (void)sqlite3_step(del);
+                }
+                p = e + 1;
+            }
+            sqlite3_finalize(del);
+        }
+    }
+
+    /* The item row last, scope-guarded so a delete can't cross project bounds. */
+    if (sqlite3_prepare_v2(s->db, "DELETE FROM memory_item WHERE id=?1 AND (?2 IS NULL OR scope_project=?2);", CBM_NOT_FOUND, &st, NULL) != SQLITE_OK) {
+        store_set_error_sqlite(s, "memory_delete_item");
+        return CBM_STORE_ERR;
+    }
+    bind_text(st, 1, id);
+    memory_bind_nullable(st, 2, project);
+    if (sqlite3_step(st) != SQLITE_DONE) { sqlite3_finalize(st); store_set_error_sqlite(s, "memory_delete_item_step"); return CBM_STORE_ERR; }
+    sqlite3_finalize(st);
+    return CBM_STORE_OK;
+}
+
+/* Write a tombstone audit event for a delete/soft-delete/restore. Caller holds
+ * an open transaction. Best-effort id capture; returns the append result. */
+static int memory_delete_audit(cbm_store_t *s, const char *type, const char *mode,
+                               const char *id, const char *project, const char *user) {
+    char payload[CBM_SZ_512];
+    snprintf(payload, sizeof(payload), "mode=%s item_id=%s", mode ? mode : "", id ? id : "");
+    char context[CBM_SZ_512];
+    snprintf(context, sizeof(context), "{\"item_id\":\"%s\",\"mode\":\"%s\"}", id ? id : "", mode ? mode : "");
+    cbm_memory_event_t ev = {0};
+    ev.type = type;
+    ev.source = "mcp.memory_delete";
+    ev.project = project;
+    ev.user = user;
+    ev.payload = payload;
+    ev.confidence = 1.0;
+    ev.context_json = context;
+    return cbm_store_memory_append_event(s, &ev, NULL);
+}
+
+int cbm_store_memory_delete(cbm_store_t *s, const char *id, const char *project,
+                            const char *mode, const char *user) {
+    if (!s || !s->db || !id || !id[0]) {
+        return CBM_STORE_ERR;
+    }
+    if (!mode || !mode[0]) {
+        mode = "soft";
+    }
+    bool is_soft  = strcmp(mode, "soft") == 0;
+    bool is_hard  = strcmp(mode, "hard") == 0;
+    bool is_purge = strcmp(mode, "purge") == 0;
+    if (!is_soft && !is_hard && !is_purge) {
+        return CBM_STORE_ERR;
+    }
+
+    /* Pre-flight outside any transaction: load the item (scope-guarded) so we can
+     * return NOT_FOUND cleanly, and capture source_event_ids for purge. For soft,
+     * an already-soft-deleted item is treated as not-found (idempotent). */
+    cbm_memory_item_t item = {0};
+    int grc = cbm_store_memory_get_item(s, id, &item);
+    if (grc != CBM_STORE_OK) {
+        return CBM_STORE_NOT_FOUND;
+    }
+    if (project && item.scope_project && strcmp(project, item.scope_project) != 0) {
+        cbm_store_memory_item_free(&item);
+        return CBM_STORE_NOT_FOUND;
+    }
+    if (project && !item.scope_project) {
+        /* scoped delete against an unscoped item: treat as out-of-scope. */
+        cbm_store_memory_item_free(&item);
+        return CBM_STORE_NOT_FOUND;
+    }
+    char *source_ids = (is_purge && item.source_event_ids) ? heap_strdup(item.source_event_ids) : NULL;
+    cbm_store_memory_item_free(&item);
+
+    if (cbm_store_begin(s) != CBM_STORE_OK) {
+        free(source_ids);
+        store_set_error_sqlite(s, "memory_delete_begin");
+        return CBM_STORE_ERR;
+    }
+
+    int rc;
+    if (is_soft) {
+        sqlite3_stmt *st = NULL;
+        const char *sql = "UPDATE memory_item SET deleted_at=?1,updated_at=?1 "
+                          "WHERE id=?2 AND deleted_at IS NULL AND (?3 IS NULL OR scope_project=?3);";
+        if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &st, NULL) != SQLITE_OK) {
+            cbm_store_rollback(s); free(source_ids);
+            store_set_error_sqlite(s, "memory_soft_delete_prepare");
+            return CBM_STORE_ERR;
+        }
+        sqlite3_bind_int64(st, 1, memory_now_ms());
+        bind_text(st, 2, id);
+        memory_bind_nullable(st, 3, project);
+        rc = sqlite3_step(st);
+        int changed = sqlite3_changes(s->db);
+        sqlite3_finalize(st);
+        if (rc != SQLITE_DONE) {
+            cbm_store_rollback(s); free(source_ids);
+            store_set_error_sqlite(s, "memory_soft_delete_step");
+            return CBM_STORE_ERR;
+        }
+        if (changed <= 0) {
+            /* Already soft-deleted (deleted_at not NULL): idempotent no-op. */
+            cbm_store_rollback(s); free(source_ids);
+            return CBM_STORE_NOT_FOUND;
+        }
+        if (memory_delete_audit(s, "soft_delete", mode, id, project, user) != CBM_STORE_OK) {
+            cbm_store_rollback(s); free(source_ids);
+            store_set_error_sqlite(s, "memory_soft_delete_audit");
+            return CBM_STORE_ERR;
+        }
+    } else {
+        rc = memory_delete_rows(s, id, project, source_ids);
+        if (rc != CBM_STORE_OK) {
+            cbm_store_rollback(s); free(source_ids);
+            return CBM_STORE_ERR;
+        }
+        /* The tombstone audit event must outlive the erased content. */
+        if (memory_delete_audit(s, "delete", mode, id, project, user) != CBM_STORE_OK) {
+            cbm_store_rollback(s); free(source_ids);
+            store_set_error_sqlite(s, "memory_delete_audit");
+            return CBM_STORE_ERR;
+        }
+    }
+
+    free(source_ids);
+    return cbm_store_commit(s);
+}
+
+int cbm_store_memory_restore(cbm_store_t *s, const char *id, const char *project,
+                             const char *user) {
+    if (!s || !s->db || !id || !id[0]) {
+        return CBM_STORE_ERR;
+    }
+    if (cbm_store_begin(s) != CBM_STORE_OK) {
+        store_set_error_sqlite(s, "memory_restore_begin");
+        return CBM_STORE_ERR;
+    }
+    sqlite3_stmt *st = NULL;
+    const char *sql = "UPDATE memory_item SET deleted_at=NULL,updated_at=?1 "
+                      "WHERE id=?2 AND deleted_at IS NOT NULL AND (?3 IS NULL OR scope_project=?3);";
+    if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &st, NULL) != SQLITE_OK) {
+        cbm_store_rollback(s);
+        store_set_error_sqlite(s, "memory_restore_prepare");
+        return CBM_STORE_ERR;
+    }
+    sqlite3_bind_int64(st, 1, memory_now_ms());
+    bind_text(st, 2, id);
+    memory_bind_nullable(st, 3, project);
+    int rc = sqlite3_step(st);
+    int changed = sqlite3_changes(s->db);
+    sqlite3_finalize(st);
+    if (rc != SQLITE_DONE) {
+        cbm_store_rollback(s);
+        store_set_error_sqlite(s, "memory_restore_step");
+        return CBM_STORE_ERR;
+    }
+    if (changed <= 0) {
+        /* Not soft-deleted (or wrong scope): nothing to restore. */
+        cbm_store_rollback(s);
+        return CBM_STORE_NOT_FOUND;
+    }
+    if (memory_delete_audit(s, "restore", "restore", id, project, user) != CBM_STORE_OK) {
+        cbm_store_rollback(s);
+        store_set_error_sqlite(s, "memory_restore_audit");
+        return CBM_STORE_ERR;
+    }
+    return cbm_store_commit(s);
+}
+
+int cbm_store_memory_purge_expired(cbm_store_t *s, const char *project,
+                                   int64_t grace_ms, int *purged) {
+    if (purged) *purged = 0;
+    if (!s || !s->db) {
+        return CBM_STORE_ERR;
+    }
+    if (grace_ms < 0) grace_ms = 0;
+    int64_t cutoff = memory_now_ms() - grace_ms;
+
+    /* Collect (id, source_event_ids) for every item soft-deleted before the
+     * cutoff FIRST (finalize the read cursor), then delete in one batch txn —
+     * mirrors the v3 migration's collect-then-act to avoid a cursor-vs-write
+     * SQLITE_BUSY on commit. Expired soft-deletes are always full purges
+     * (source events go too): the grace window was the user's undo chance. */
+    char **ids = NULL;
+    char **srcs = NULL;
+    int count = 0, cap = 0;
+    sqlite3_stmt *sel = NULL;
+    const char *sel_sql = "SELECT id, source_event_ids FROM memory_item "
+                          "WHERE deleted_at IS NOT NULL AND deleted_at <= ?1 "
+                          "AND (?2 IS NULL OR scope_project=?2);";
+    if (sqlite3_prepare_v2(s->db, sel_sql, CBM_NOT_FOUND, &sel, NULL) != SQLITE_OK) {
+        store_set_error_sqlite(s, "memory_purge_select");
+        return CBM_STORE_ERR;
+    }
+    sqlite3_bind_int64(sel, 1, cutoff);
+    memory_bind_nullable(sel, 2, project);
+    while (sqlite3_step(sel) == SQLITE_ROW) {
+        const char *iid = (const char *)sqlite3_column_text(sel, 0);
+        const char *src = (const char *)sqlite3_column_text(sel, 1);
+        if (!iid) continue;
+        if (count == cap) {
+            int ncap = cap ? cap * 2 : 16;
+            char **ni = realloc(ids, (size_t)ncap * sizeof(*ni));
+            char **ns = realloc(srcs, (size_t)ncap * sizeof(*ns));
+            if (!ni || !ns) { free(ni ? ni : ids); free(ns ? ns : srcs); ids = NULL; srcs = NULL; count = 0; break; }
+            ids = ni; srcs = ns; cap = ncap;
+        }
+        ids[count] = heap_strdup(iid);
+        srcs[count] = src ? heap_strdup(src) : NULL;
+        count++;
+    }
+    sqlite3_finalize(sel);
+
+    if (count == 0) {
+        free(ids); free(srcs);
+        return CBM_STORE_OK;
+    }
+
+    if (cbm_store_begin(s) != CBM_STORE_OK) {
+        for (int i = 0; i < count; i++) { free(ids[i]); free(srcs[i]); }
+        free(ids); free(srcs);
+        store_set_error_sqlite(s, "memory_purge_begin");
+        return CBM_STORE_ERR;
+    }
+    int ok = 1;
+    int done = 0;
+    for (int i = 0; i < count && ok; i++) {
+        if (memory_delete_rows(s, ids[i], project, srcs[i]) != CBM_STORE_OK) {
+            ok = 0;
+            break;
+        }
+        if (memory_delete_audit(s, "delete", "sweep", ids[i], project, NULL) != CBM_STORE_OK) {
+            ok = 0;
+            break;
+        }
+        done++;
+    }
+    for (int i = 0; i < count; i++) { free(ids[i]); free(srcs[i]); }
+    free(ids); free(srcs);
+    if (!ok) {
+        cbm_store_rollback(s);
+        return CBM_STORE_ERR;
+    }
+    int crc = cbm_store_commit(s);
+    if (crc == CBM_STORE_OK && purged) {
+        *purged = done;
+    }
+    return crc;
+}
+
 static char *memory_summary_from_content(const char *content) {
     if (!content) {
         return heap_strdup("");
@@ -3453,7 +3804,7 @@ int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit,
     if (!s || !s->db) return CBM_STORE_ERR;
     int lim = limit > 0 ? limit : 100;
     const char *sql = "SELECT id,kind,content,scope_project,scope_user,scope_task,entity_key,predicate,confidence,source_event_ids "
-                      "FROM memory_item WHERE status='candidate' AND (?1 IS NULL OR scope_project=?1) LIMIT ?2;";
+                      "FROM memory_item WHERE status='candidate' AND deleted_at IS NULL AND (?1 IS NULL OR scope_project=?1) LIMIT ?2;";
 
     /* One transaction for the whole batch. Each consolidated item touches
      * memory_item + memory_edge + memory_vec + memory_fts; a crash mid-item
@@ -3494,7 +3845,7 @@ int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit,
         memory_first_source_id(source_ids, source_event_id, sizeof(source_event_id));
 
         sqlite3_stmt *dup = NULL;
-        const char *dup_sql = "SELECT id,content FROM memory_item WHERE status='active' AND entity_key=?1 AND predicate=?2 "
+        const char *dup_sql = "SELECT id,content FROM memory_item WHERE status='active' AND deleted_at IS NULL AND entity_key=?1 AND predicate=?2 "
                               "AND ((?3 IS NULL AND scope_project IS NULL) OR scope_project=?3) "
                               "AND ((?4 IS NULL AND scope_user IS NULL) OR scope_user=?4) "
                               "AND ((?5 IS NULL AND scope_task IS NULL) OR scope_task=?5) LIMIT 20;";
@@ -3639,7 +3990,7 @@ int cbm_store_memory_reindex_fts(cbm_store_t *s, const char *project, int *proce
     }
     const char *sel_sql =
         "SELECT id,title,summary,content FROM memory_item "
-        "WHERE (?1 IS NULL OR scope_project=?1) AND status IN ('active','candidate','deprecated');";
+        "WHERE (?1 IS NULL OR scope_project=?1) AND deleted_at IS NULL AND status IN ('active','candidate','deprecated');";
     sqlite3_stmt *sel = NULL;
     if (sqlite3_prepare_v2(s->db, sel_sql, CBM_NOT_FOUND, &sel, NULL) != SQLITE_OK) {
         store_set_error_sqlite(s, "memory_reindex_select");
@@ -3665,7 +4016,7 @@ int cbm_store_memory_decay(cbm_store_t *s, const char *project, int limit, int *
     if (!s || !s->db) return CBM_STORE_ERR;
     int lim = limit > 0 ? limit : 100;
     int64_t now = memory_now_ms();
-    const char *sql = "SELECT id,last_hit_at,confidence,reusability,decay FROM memory_item WHERE status='active' AND (?1 IS NULL OR scope_project=?1) LIMIT ?2;";
+    const char *sql = "SELECT id,last_hit_at,confidence,reusability,decay FROM memory_item WHERE status='active' AND deleted_at IS NULL AND (?1 IS NULL OR scope_project=?1) LIMIT ?2;";
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) return CBM_STORE_ERR;
     memory_bind_nullable(stmt, 1, project);
@@ -3717,11 +4068,23 @@ int cbm_store_memory_maintain_if_due(cbm_store_t *s, const char *project,
     }
 
     enum {
-        CONSOLIDATE_THRESHOLD = 8,         /* candidates needed to trigger early */
-        MIN_INTERVAL_MS = 60 * 1000,       /* debounce: don't consolidate more often */
-        MAX_INTERVAL_MS = 5 * 60 * 1000,   /* backstop: any pending candidate eventually */
-        DECAY_INTERVAL_MS = 60 * 60 * 1000 /* decay is time-driven only */
+        CONSOLIDATE_THRESHOLD = 8,           /* candidates needed to trigger early */
+        MIN_INTERVAL_MS = 60 * 1000,         /* debounce: don't consolidate more often */
+        MAX_INTERVAL_MS = 5 * 60 * 1000,     /* backstop: any pending candidate eventually */
+        DECAY_INTERVAL_MS = 60 * 60 * 1000,  /* decay is time-driven only */
+        SWEEP_INTERVAL_MS = 60 * 60 * 1000   /* retention sweep cadence (time-driven) */
     };
+    /* Grace window before a soft-deleted item is physically purged. Default 7
+     * days; override with CBM_MEMORY_DELETE_GRACE_MS (e.g. 0 in tests). */
+    int64_t grace_ms = 7LL * 24 * 60 * 60 * 1000;
+    {
+        char gbuf[32];
+        cbm_safe_getenv("CBM_MEMORY_DELETE_GRACE_MS", gbuf, sizeof(gbuf), NULL);
+        if (gbuf[0]) {
+            long long g = atoll(gbuf);
+            if (g >= 0) grace_ms = (int64_t)g;
+        }
+    }
 
     int64_t now = memory_now_ms();
 
@@ -3775,6 +4138,23 @@ int cbm_store_memory_maintain_if_due(cbm_store_t *s, const char *project,
         }
     }
 
+    /* Retention sweep on a fixed time cadence: physically purge soft-deletes
+     * past the grace window. Best-effort — a failure here never fails the
+     * caller, and we only stamp the cadence marker on success. */
+    {
+        int64_t last = memory_meta_get_i64(s, "last_delete_sweep_ms", 0);
+        if (now - last >= SWEEP_INTERVAL_MS) {
+            int purged = 0;
+            if (cbm_store_memory_purge_expired(s, project, grace_ms, &purged) == CBM_STORE_OK) {
+                memory_meta_set_i64(s, "last_delete_sweep_ms", now);
+                if (out) {
+                    out->swept = true;
+                    out->sweep_count = purged;
+                }
+            }
+        }
+    }
+
     return CBM_STORE_OK;
 }
 
@@ -3788,14 +4168,15 @@ int cbm_store_memory_health(cbm_store_t *s, const char *project, cbm_memory_heal
         "(SELECT COUNT(*) FROM memory_event WHERE ?1 IS NULL OR project=?1),"
         "(SELECT COUNT(*) FROM memory_item WHERE ?1 IS NULL OR scope_project=?1),"
         "(SELECT COUNT(*) FROM memory_edge),"
-        "(SELECT COUNT(*) FROM memory_item WHERE status='candidate' AND (?1 IS NULL OR scope_project=?1)),"
-        "(SELECT COUNT(*) FROM memory_item WHERE status='active' AND (?1 IS NULL OR scope_project=?1)),"
-        "(SELECT COUNT(*) FROM memory_item WHERE status='deprecated' AND (?1 IS NULL OR scope_project=?1)),"
-        "(SELECT COUNT(*) FROM memory_item WHERE status='archived' AND (?1 IS NULL OR scope_project=?1)),"
-        "(SELECT COUNT(*) FROM memory_item WHERE status='retracted' AND (?1 IS NULL OR scope_project=?1)),"
+        "(SELECT COUNT(*) FROM memory_item WHERE status='candidate' AND deleted_at IS NULL AND (?1 IS NULL OR scope_project=?1)),"
+        "(SELECT COUNT(*) FROM memory_item WHERE status='active' AND deleted_at IS NULL AND (?1 IS NULL OR scope_project=?1)),"
+        "(SELECT COUNT(*) FROM memory_item WHERE status='deprecated' AND deleted_at IS NULL AND (?1 IS NULL OR scope_project=?1)),"
+        "(SELECT COUNT(*) FROM memory_item WHERE status='archived' AND deleted_at IS NULL AND (?1 IS NULL OR scope_project=?1)),"
+        "(SELECT COUNT(*) FROM memory_item WHERE status='retracted' AND deleted_at IS NULL AND (?1 IS NULL OR scope_project=?1)),"
         "(SELECT COALESCE(SUM(hit_count),0) FROM memory_item WHERE ?1 IS NULL OR scope_project=?1),"
         "(SELECT COUNT(*) FROM memory_edge WHERE type='contradicts'),"
-        "(SELECT COUNT(DISTINCT COALESCE(scope_project, scope_user, scope_task, 'global')) FROM memory_item WHERE ?1 IS NULL OR scope_project=?1);";
+        "(SELECT COUNT(DISTINCT COALESCE(scope_project, scope_user, scope_task, 'global')) FROM memory_item WHERE ?1 IS NULL OR scope_project=?1),"
+        "(SELECT COUNT(*) FROM memory_item WHERE deleted_at IS NOT NULL AND (?1 IS NULL OR scope_project=?1));";
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
         store_set_error_sqlite(s, "memory_health_prepare");
@@ -3814,6 +4195,7 @@ int cbm_store_memory_health(cbm_store_t *s, const char *project, cbm_memory_heal
         out->total_hits = sqlite3_column_int64(stmt, 8);
         out->conflict_count = sqlite3_column_int(stmt, 9);
         out->scope_count = sqlite3_column_int(stmt, 10);
+        out->deleted_count = sqlite3_column_int(stmt, 11);
         out->hit_rate = out->item_count > 0 ? (double)out->total_hits / (double)out->item_count : 0.0;
     }
     sqlite3_finalize(stmt);

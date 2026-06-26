@@ -899,7 +899,7 @@ TEST(migration_fresh_db_sets_version) {
     cbm_store_t *s = cbm_store_open_memory();
     ASSERT(s != NULL);
     /* A freshly opened DB must be stamped at the current schema version. */
-    ASSERT(scalar_int(s, "PRAGMA user_version") == 3);
+    ASSERT(scalar_int(s, "PRAGMA user_version") == 4);
     /* Baseline tables must exist (migration 0->1 ran init_schema). */
     ASSERT(scalar_int(s, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_item'") == 1);
     ASSERT(scalar_int(s, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_event'") == 1);
@@ -918,7 +918,7 @@ TEST(migration_idempotent_reopen) {
     /* First open: fresh DB, runs baseline migration, writes an item. */
     cbm_store_t *s = cbm_store_open_path(path);
     ASSERT(s != NULL);
-    ASSERT(scalar_int(s, "PRAGMA user_version") == 3);
+    ASSERT(scalar_int(s, "PRAGMA user_version") == 4);
     cbm_memory_item_t item = {0};
     item.kind = "fact"; item.layer = "semantic"; item.title = "persisted";
     item.content = "survives reopen"; item.scope_project = "test-proj";
@@ -932,7 +932,7 @@ TEST(migration_idempotent_reopen) {
      * version unchanged, data intact. */
     cbm_store_t *s2 = cbm_store_open_path(path);
     ASSERT(s2 != NULL);
-    ASSERT(scalar_int(s2, "PRAGMA user_version") == 3);
+    ASSERT(scalar_int(s2, "PRAGMA user_version") == 4);
     ASSERT(scalar_int(s2, "SELECT COUNT(*) FROM memory_item") == 1);
     cbm_store_close(s2);
     remove(path);
@@ -1017,7 +1017,7 @@ TEST(consolidate_active_item_fully_indexed) {
 TEST(migration_v2_adds_meta_table) {
     cbm_store_t *s = cbm_store_open_memory();
     ASSERT(s != NULL);
-    ASSERT(scalar_int(s, "PRAGMA user_version") == 3);
+    ASSERT(scalar_int(s, "PRAGMA user_version") == 4);
     ASSERT(scalar_int(s, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_meta'") == 1);
     cbm_store_close(s);
     return 0;
@@ -1127,6 +1127,262 @@ TEST(maintain_disabled_by_env) {
     return 0;
 }
 
+/* ── P0-2: hard / soft / purge delete + retention sweep ─────────────── */
+
+TEST(memory_migration_v4_adds_deleted_at) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    ASSERT(scalar_int(s, "PRAGMA user_version") == 4);
+    /* deleted_at column exists on memory_item. */
+    ASSERT(scalar_int(s,
+        "SELECT COUNT(*) FROM pragma_table_info('memory_item') WHERE name='deleted_at'") == 1);
+    /* sweep index exists. */
+    ASSERT(scalar_int(s,
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_memory_item_deleted'") == 1);
+    cbm_store_close(s);
+    return 0;
+}
+
+TEST(memory_hard_delete_removes_all_rows) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_memory_item_t item = {0};
+    item.kind = "fact"; item.layer = "semantic";
+    item.content = "hard delete removes every satellite row";
+    item.scope_project = "test-proj"; item.status = "candidate";
+    char *id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+    int processed = 0;
+    ASSERT(cbm_store_memory_consolidate(s, "test-proj", 100, &processed) == CBM_STORE_OK);
+    ASSERT(processed == 1);
+    /* Baseline: item + vec + fts rows present. */
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_item") == 1);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_vec") == 1);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_fts") == 1);
+    /* Hard delete. */
+    ASSERT(cbm_store_memory_delete(s, id, "test-proj", "hard", "tester") == CBM_STORE_OK);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_item") == 0);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_vec")  == 0);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_fts")  == 0);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_edge") == 0);
+    /* A delete tombstone audit event was written. */
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_event WHERE type='delete'") == 1);
+    /* Idempotent: second delete finds nothing. */
+    ASSERT(cbm_store_memory_delete(s, id, "test-proj", "hard", "tester") == CBM_STORE_NOT_FOUND);
+    free(id);
+    cbm_store_close(s);
+    return 0;
+}
+
+TEST(memory_delete_cascades_edges) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_memory_item_t a = {0}, b = {0};
+    a.kind = "fact"; a.content = "edge cascade item A"; a.scope_project = "test-proj"; a.status = "active";
+    b.kind = "fact"; b.content = "edge cascade item B"; b.scope_project = "test-proj"; b.status = "active";
+    char *id_a = NULL, *id_b = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &a, &id_a) == CBM_STORE_OK);
+    ASSERT(cbm_store_memory_append_candidate(s, &b, &id_b) == CBM_STORE_OK);
+    /* Insert an edge A->B directly. */
+    sqlite3_stmt *st = NULL;
+    ASSERT(sqlite3_prepare_v2(cbm_store_get_db(s),
+        "INSERT INTO memory_edge (id,src_id,dst_id,type,weight,origin,confidence,created_at) "
+        "VALUES ('e1',?1,?2,'supports',1.0,'test',1.0,1);", -1, &st, NULL) == SQLITE_OK);
+    sqlite3_bind_text(st, 1, id_a, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 2, id_b, -1, SQLITE_TRANSIENT);
+    ASSERT(sqlite3_step(st) == SQLITE_DONE);
+    sqlite3_finalize(st);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_edge") == 1);
+    /* Deleting A removes the edge (dst_id=B side too), B survives. */
+    ASSERT(cbm_store_memory_delete(s, id_a, "test-proj", "hard", NULL) == CBM_STORE_OK);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_edge") == 0);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_item") == 1);
+    free(id_a); free(id_b);
+    cbm_store_close(s);
+    return 0;
+}
+
+TEST(memory_soft_delete_hides_from_retrieve) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_memory_item_t item = {0};
+    item.kind = "fact"; item.content = "soft delete hides this from retrieval";
+    item.scope_project = "test-proj"; item.status = "candidate";
+    char *id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+    int processed = 0;
+    ASSERT(cbm_store_memory_consolidate(s, "test-proj", 100, &processed) == CBM_STORE_OK);
+    /* Soft delete. */
+    ASSERT(cbm_store_memory_delete(s, id, "test-proj", "soft", "tester") == CBM_STORE_OK);
+    /* Row is still on disk, but marked. */
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_item") == 1);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_item WHERE deleted_at IS NOT NULL") == 1);
+    /* Hidden from retrieval even with include_inactive. */
+    cbm_memory_query_t q = {0};
+    q.project = "test-proj"; q.query = "soft delete hides"; q.limit = 5; q.include_inactive = true;
+    cbm_memory_result_t res = {0};
+    ASSERT(cbm_store_memory_retrieve(s, &q, &res) == CBM_STORE_OK);
+    ASSERT(res.count == 0);
+    cbm_store_memory_result_free(&res);
+    /* Structured path too. */
+    cbm_memory_query_t q2 = {0};
+    q2.project = "test-proj"; q2.limit = 5; q2.include_inactive = true;
+    cbm_memory_result_t res2 = {0};
+    ASSERT(cbm_store_memory_retrieve(s, &q2, &res2) == CBM_STORE_OK);
+    ASSERT(res2.count == 0);
+    cbm_store_memory_result_free(&res2);
+    /* Soft-delete audit event written. */
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_event WHERE type='soft_delete'") == 1);
+    /* Idempotent: a second soft delete is a no-op NOT_FOUND. */
+    ASSERT(cbm_store_memory_delete(s, id, "test-proj", "soft", "tester") == CBM_STORE_NOT_FOUND);
+    free(id);
+    cbm_store_close(s);
+    return 0;
+}
+
+TEST(memory_restore_undeletes) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_memory_item_t item = {0};
+    item.kind = "fact"; item.content = "restore brings this back to retrieval";
+    item.scope_project = "test-proj"; item.status = "candidate";
+    char *id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+    int processed = 0;
+    ASSERT(cbm_store_memory_consolidate(s, "test-proj", 100, &processed) == CBM_STORE_OK);
+    ASSERT(cbm_store_memory_delete(s, id, "test-proj", "soft", NULL) == CBM_STORE_OK);
+    /* Restore. */
+    ASSERT(cbm_store_memory_restore(s, id, "test-proj", "tester") == CBM_STORE_OK);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_item WHERE deleted_at IS NOT NULL") == 0);
+    /* Retrievable again. */
+    cbm_memory_query_t q = {0};
+    q.project = "test-proj"; q.query = "restore brings this back"; q.limit = 5;
+    cbm_memory_result_t res = {0};
+    ASSERT(cbm_store_memory_retrieve(s, &q, &res) == CBM_STORE_OK);
+    ASSERT(res.count >= 1);
+    cbm_store_memory_result_free(&res);
+    /* Restoring a live item is a NOT_FOUND no-op. */
+    ASSERT(cbm_store_memory_restore(s, id, "test-proj", NULL) == CBM_STORE_NOT_FOUND);
+    free(id);
+    cbm_store_close(s);
+    return 0;
+}
+
+TEST(memory_purge_expired_respects_grace) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_memory_item_t old_item = {0}, fresh = {0};
+    old_item.kind = "fact"; old_item.content = "old soft-deleted item past grace";
+    old_item.scope_project = "test-proj"; old_item.status = "candidate";
+    fresh.kind = "fact"; fresh.content = "freshly soft-deleted item within grace";
+    fresh.scope_project = "test-proj"; fresh.status = "candidate";
+    char *id_old = NULL, *id_fresh = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &old_item, &id_old) == CBM_STORE_OK);
+    ASSERT(cbm_store_memory_append_candidate(s, &fresh, &id_fresh) == CBM_STORE_OK);
+    int processed = 0;
+    ASSERT(cbm_store_memory_consolidate(s, "test-proj", 100, &processed) == CBM_STORE_OK);
+    /* Soft delete both. */
+    ASSERT(cbm_store_memory_delete(s, id_old, "test-proj", "soft", NULL) == CBM_STORE_OK);
+    ASSERT(cbm_store_memory_delete(s, id_fresh, "test-proj", "soft", NULL) == CBM_STORE_OK);
+    /* Backdate the "old" one's deleted_at well past any grace window. */
+    sqlite3_stmt *st = NULL;
+    ASSERT(sqlite3_prepare_v2(cbm_store_get_db(s),
+        "UPDATE memory_item SET deleted_at=1000 WHERE id=?1;", -1, &st, NULL) == SQLITE_OK);
+    sqlite3_bind_text(st, 1, id_old, -1, SQLITE_TRANSIENT);
+    ASSERT(sqlite3_step(st) == SQLITE_DONE);
+    sqlite3_finalize(st);
+    /* Sweep with a 1-day grace: old purged, fresh kept. */
+    int purged = 0;
+    int64_t grace = 24LL * 60 * 60 * 1000;
+    ASSERT(cbm_store_memory_purge_expired(s, "test-proj", grace, &purged) == CBM_STORE_OK);
+    ASSERT(purged == 1);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_item") == 1);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_vec")  == 1);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_item WHERE id IN (SELECT id FROM memory_item)") == 1);
+    free(id_old); free(id_fresh);
+    cbm_store_close(s);
+    return 0;
+}
+
+TEST(memory_purge_mode_deletes_source_events) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    /* Append a real event, then an item whose source_event_ids references it. */
+    cbm_memory_event_t ev = {0};
+    ev.type = "conversation"; ev.source = "user"; ev.project = "test-proj";
+    ev.payload = "{\"k\":\"v\"}"; ev.confidence = 0.8;
+    char *ev_id = NULL;
+    ASSERT(cbm_store_memory_append_event(s, &ev, &ev_id) == CBM_STORE_OK);
+    ASSERT(ev_id != NULL);
+    char src_json[256];
+    snprintf(src_json, sizeof(src_json), "[\"%s\"]", ev_id);
+    cbm_memory_item_t item = {0};
+    item.kind = "fact"; item.content = "purge mode erases my source event";
+    item.scope_project = "test-proj"; item.status = "active";
+    item.source_event_ids = src_json;
+    char *id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+    /* The referenced event exists. */
+    char qbuf[256];
+    snprintf(qbuf, sizeof(qbuf), "SELECT COUNT(*) FROM memory_event WHERE id='%s'", ev_id);
+    ASSERT(scalar_int(s, qbuf) == 1);
+    /* Purge mode deletes the source event too. */
+    ASSERT(cbm_store_memory_delete(s, id, "test-proj", "purge", "tester") == CBM_STORE_OK);
+    ASSERT(scalar_int(s, qbuf) == 0);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_item") == 0);
+    /* The delete tombstone event still survives. */
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_event WHERE type='delete'") == 1);
+    free(ev_id); free(id);
+    cbm_store_close(s);
+    return 0;
+}
+
+TEST(memory_hard_delete_keeps_source_events) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_memory_event_t ev = {0};
+    ev.type = "conversation"; ev.source = "user"; ev.project = "test-proj";
+    ev.payload = "{\"k\":\"v\"}"; ev.confidence = 0.8;
+    char *ev_id = NULL;
+    ASSERT(cbm_store_memory_append_event(s, &ev, &ev_id) == CBM_STORE_OK);
+    char src_json[256];
+    snprintf(src_json, sizeof(src_json), "[\"%s\"]", ev_id);
+    cbm_memory_item_t item = {0};
+    item.kind = "fact"; item.content = "hard delete keeps my source event";
+    item.scope_project = "test-proj"; item.status = "active";
+    item.source_event_ids = src_json;
+    char *id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+    char qbuf[256];
+    snprintf(qbuf, sizeof(qbuf), "SELECT COUNT(*) FROM memory_event WHERE id='%s'", ev_id);
+    ASSERT(scalar_int(s, qbuf) == 1);
+    /* Hard mode keeps the source event. */
+    ASSERT(cbm_store_memory_delete(s, id, "test-proj", "hard", NULL) == CBM_STORE_OK);
+    ASSERT(scalar_int(s, qbuf) == 1);
+    free(ev_id); free(id);
+    cbm_store_close(s);
+    return 0;
+}
+
+TEST(memory_delete_scope_guard) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_memory_item_t item = {0};
+    item.kind = "fact"; item.content = "scope guard protects cross-project delete";
+    item.scope_project = "proj-a"; item.status = "active";
+    char *id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+    /* Wrong project: NOT_FOUND, row untouched. */
+    ASSERT(cbm_store_memory_delete(s, id, "proj-b", "hard", NULL) == CBM_STORE_NOT_FOUND);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_item") == 1);
+    /* Correct project: deletes. */
+    ASSERT(cbm_store_memory_delete(s, id, "proj-a", "hard", NULL) == CBM_STORE_OK);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_item") == 0);
+    free(id);
+    cbm_store_close(s);
+    return 0;
+}
+
 int main(void) {
     fprintf(stderr, "START\n");
     fflush(stderr);
@@ -1165,6 +1421,15 @@ int main(void) {
     RUN(maintain_triggers_consolidate_on_threshold);
     RUN(maintain_below_threshold_does_not_consolidate);
     RUN(maintain_disabled_by_env);
+    RUN(memory_migration_v4_adds_deleted_at);
+    RUN(memory_hard_delete_removes_all_rows);
+    RUN(memory_delete_cascades_edges);
+    RUN(memory_soft_delete_hides_from_retrieve);
+    RUN(memory_restore_undeletes);
+    RUN(memory_purge_expired_respects_grace);
+    RUN(memory_purge_mode_deletes_source_events);
+    RUN(memory_hard_delete_keeps_source_events);
+    RUN(memory_delete_scope_guard);
     fprintf(stderr, "\n%d/%d passed\n", pass, total);
     return fail ? 1 : 0;
 }

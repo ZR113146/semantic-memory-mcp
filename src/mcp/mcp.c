@@ -465,6 +465,12 @@ static const tool_def_t TOOLS[] = {
      "\"enum\":[\"useful\",\"not_useful\",\"wrong\",\"stale\"]},"
      "\"note\":{\"type\":\"string\"},\"user\":{\"type\":\"string\"}},"
      "\"required\":[\"project\",\"id\",\"feedback\"]}"},
+    {"memory_delete", "Delete a memory item. mode=soft (default; hide + undoable until retention sweep), hard (remove now, keep source events), purge (remove now + erase source events / GDPR), restore (undo a soft delete)",
+     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
+     "\"id\":{\"type\":\"string\"},\"mode\":{\"type\":\"string\","
+     "\"enum\":[\"soft\",\"hard\",\"purge\",\"restore\"]},"
+     "\"user\":{\"type\":\"string\"}},"
+     "\"required\":[\"project\",\"id\"]}"},
 
     {"admin_consolidate", "Run the deterministic memory consolidation pass for candidate items",
      "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
@@ -4502,6 +4508,51 @@ static char *handle_memory_feedback(cbm_mcp_server_t *srv, const char *args) {
     return result;
 }
 
+static char *handle_memory_delete(cbm_mcp_server_t *srv, const char *args) {
+    char *project = cbm_mcp_get_string_arg(args, "project");
+    char *id      = cbm_mcp_get_string_arg(args, "id");
+    char *mode    = cbm_mcp_get_string_arg(args, "mode");
+    char *user    = cbm_mcp_get_string_arg(args, "user");
+    if (!project || !id) {
+        free(project); free(id); free(mode); free(user);
+        return cbm_mcp_text_result("project and id are required", true);
+    }
+    const char *m = (mode && mode[0]) ? mode : "soft";
+    cbm_store_t *store = resolve_memory_store(srv, project);
+    if (!store) {
+        char *_err = build_project_list_error("project not found or not indexed");
+        char *_res = cbm_mcp_text_result(_err, true);
+        free(_err); free(project); free(id); free(mode); free(user);
+        return _res;
+    }
+    int rc;
+    const char *ok_status;
+    if (strcmp(m, "restore") == 0) {
+        rc = cbm_store_memory_restore(store, id, project, user);
+        ok_status = "restored";
+    } else if (strcmp(m, "soft") == 0) {
+        rc = cbm_store_memory_delete(store, id, project, m, user);
+        ok_status = "soft_deleted";
+    } else {
+        /* hard / purge */
+        rc = cbm_store_memory_delete(store, id, project, m, user);
+        ok_status = "deleted";
+    }
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_str(doc, root, "project", project);
+    yyjson_mut_obj_add_str(doc, root, "id", id);
+    yyjson_mut_obj_add_str(doc, root, "mode", m);
+    yyjson_mut_obj_add_str(doc, root, "status",
+        rc == CBM_STORE_NOT_FOUND ? "not_found" : (rc == CBM_STORE_OK ? ok_status : "error"));
+    char *json = yy_doc_to_str(doc);
+    yyjson_mut_doc_free(doc);
+    char *result = cbm_mcp_text_result(json, rc != CBM_STORE_OK && rc != CBM_STORE_NOT_FOUND);
+    free(json); free(project); free(id); free(mode); free(user);
+    return result;
+}
+
 static char *handle_admin_consolidate(cbm_mcp_server_t *srv, const char *args) {
     char *project = cbm_mcp_get_string_arg(args, "project");
     if (!project) return cbm_mcp_text_result("project is required", true);
@@ -4583,6 +4634,7 @@ static char *handle_memory_health(cbm_mcp_server_t *srv, const char *args) {
     yyjson_mut_obj_add_int(doc, root, "deprecated", h.deprecated_count);
     yyjson_mut_obj_add_int(doc, root, "archived", h.archived_count);
     yyjson_mut_obj_add_int(doc, root, "retracted", h.retracted_count);
+    yyjson_mut_obj_add_int(doc, root, "deleted", h.deleted_count);
     yyjson_mut_obj_add_int(doc, root, "total_hits", h.total_hits);
     yyjson_mut_obj_add_int(doc, root, "conflicts", h.conflict_count);
     yyjson_mut_obj_add_int(doc, root, "scopes", h.scope_count);
@@ -4653,6 +4705,9 @@ char *cbm_mcp_handle_tool(cbm_mcp_server_t *srv, const char *tool_name, const ch
     }
     if (strcmp(tool_name, "memory_feedback") == 0) {
         return handle_memory_feedback(srv, args_json);
+    }
+    if (strcmp(tool_name, "memory_delete") == 0) {
+        return handle_memory_delete(srv, args_json);
     }
     if (strcmp(tool_name, "admin_consolidate") == 0 || strcmp(tool_name, "memory_consolidate") == 0) {
         return handle_admin_consolidate(srv, args_json);
