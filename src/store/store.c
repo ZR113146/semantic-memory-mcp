@@ -2225,13 +2225,23 @@ static int memory_scope_score(const cbm_memory_item_t *item, const cbm_memory_qu
 
 static int memory_compare_for_conflict(const cbm_memory_item_t *a, const cbm_memory_item_t *b,
                                        const cbm_memory_query_t *query) {
-    /* This runs over query results, so the item that actually matched the query
-     * should represent its conflict cluster — otherwise a low-relevance vector
-     * candidate can hide the FTS hit the user was searching for. Retrieval score
-     * (fts=1.0, vector=cosine) is therefore the primary key; storage-quality
-     * signals (scope/confidence/recency) only break ties at equal relevance. */
-    if (a->retrieval_score != b->retrieval_score) {
-        return a->retrieval_score > b->retrieval_score ? 1 : -1;
+    /* The meaning of retrieval_score depends on the path that produced the item:
+     *   - fts/vector: it is real query relevance (fts=1.0, vector=cosine). There it
+     *     must stay the primary key, so a low-relevance vector candidate can't hide
+     *     the high-relevance hit the user searched for.
+     *   - structured (entity_key/filter): it is a storage-quality composite
+     *     (importance+confidence+reusability+specificity+hit_count-decay) — NOT query
+     *     relevance. Leading with it there would bake confidence into the primary key
+     *     and make an explicit query scope (task/user) unable to win, which contradicts
+     *     scope-aware retrieval. So on the structured path scope is primary instead,
+     *     keeping this order consistent with memory_conflict_resolution_reason(). */
+    bool a_structured = a->retrieval_source && strcmp(a->retrieval_source, "structured") == 0;
+    bool b_structured = b->retrieval_source && strcmp(b->retrieval_source, "structured") == 0;
+    if (!(a_structured && b_structured)) {
+        /* fts/vector involved: relevance leads. */
+        if (a->retrieval_score != b->retrieval_score) {
+            return a->retrieval_score > b->retrieval_score ? 1 : -1;
+        }
     }
     int as = memory_scope_score(a, query);
     int bs = memory_scope_score(b, query);
