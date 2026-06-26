@@ -2,7 +2,9 @@
 #include "foundation/platform.h"
 #include <sqlite3.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define TEST(name) static int test_##name(void)
 #define ASSERT(cond) do { if (!(cond)) { fprintf(stderr, "FAIL: %s:%d\n", __FILE__, __LINE__); return 1; } } while(0)
@@ -732,7 +734,7 @@ TEST(migration_fresh_db_sets_version) {
     cbm_store_t *s = cbm_store_open_memory();
     ASSERT(s != NULL);
     /* A freshly opened DB must be stamped at the current schema version. */
-    ASSERT(scalar_int(s, "PRAGMA user_version") == 1);
+    ASSERT(scalar_int(s, "PRAGMA user_version") == 2);
     /* Baseline tables must exist (migration 0->1 ran init_schema). */
     ASSERT(scalar_int(s, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_item'") == 1);
     ASSERT(scalar_int(s, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_event'") == 1);
@@ -751,7 +753,7 @@ TEST(migration_idempotent_reopen) {
     /* First open: fresh DB, runs baseline migration, writes an item. */
     cbm_store_t *s = cbm_store_open_path(path);
     ASSERT(s != NULL);
-    ASSERT(scalar_int(s, "PRAGMA user_version") == 1);
+    ASSERT(scalar_int(s, "PRAGMA user_version") == 2);
     cbm_memory_item_t item = {0};
     item.kind = "fact"; item.layer = "semantic"; item.title = "persisted";
     item.content = "survives reopen"; item.scope_project = "test-proj";
@@ -761,11 +763,11 @@ TEST(migration_idempotent_reopen) {
     free(id);
     cbm_store_close(s);
 
-    /* Reopen the same on-disk DB: migration must be a no-op (already at v1),
+    /* Reopen the same on-disk DB: migration must be a no-op (already current),
      * version unchanged, data intact. */
     cbm_store_t *s2 = cbm_store_open_path(path);
     ASSERT(s2 != NULL);
-    ASSERT(scalar_int(s2, "PRAGMA user_version") == 1);
+    ASSERT(scalar_int(s2, "PRAGMA user_version") == 2);
     ASSERT(scalar_int(s2, "SELECT COUNT(*) FROM memory_item") == 1);
     cbm_store_close(s2);
     remove(path);
@@ -845,6 +847,121 @@ TEST(consolidate_active_item_fully_indexed) {
     return 0;
 }
 
+/* ── Step-1: lazy auto-maintenance trigger ──────────────────────── */
+
+TEST(migration_v2_adds_meta_table) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    ASSERT(scalar_int(s, "PRAGMA user_version") == 2);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_meta'") == 1);
+    cbm_store_close(s);
+    return 0;
+}
+
+TEST(maintain_triggers_consolidate_on_threshold) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    /* Append the trigger threshold (8) of candidates. */
+    for (int i = 0; i < 8; i++) {
+        cbm_memory_item_t item = {0};
+        char content[64];
+        snprintf(content, sizeof(content), "auto maintain candidate number %d", i);
+        item.kind = "fact"; item.layer = "semantic"; item.title = "auto";
+        item.content = content; item.scope_project = "test-proj";
+        item.status = "candidate"; item.confidence = 0.9;
+        char *id = NULL;
+        ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+        free(id);
+    }
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_item WHERE status='candidate'") == 8);
+
+    /* Fresh DB: last_consolidate_ms=0, so the elapsed-time gate is satisfied;
+     * 8 >= threshold triggers consolidation. */
+    cbm_memory_maintain_report_t rep = {0};
+    ASSERT(cbm_store_memory_maintain_if_due(s, "test-proj", &rep) == CBM_STORE_OK);
+    ASSERT(rep.consolidated == true);
+    ASSERT(rep.consolidate_count == 8);
+    /* Candidates are now active and fully indexed. */
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_item WHERE status='candidate'") == 0);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_item WHERE status='active'") == 8);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_vec") == 8);
+    /* Timestamp was recorded. */
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_meta WHERE key='last_consolidate_ms'") == 1);
+    cbm_store_close(s);
+    return 0;
+}
+
+TEST(maintain_below_threshold_does_not_consolidate) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    /* Only a few candidates (below threshold 8). Fresh DB means the backstop
+     * (MAX_INTERVAL) gate would fire on since=now-0 — but that is the documented
+     * behavior: a backstop ensures stray candidates eventually consolidate.
+     * To test the threshold path specifically we pre-seed last_consolidate_ms to
+     * "now" so neither the threshold (count<8) nor the backstop (just ran) fires. */
+    {
+        cbm_memory_item_t item = {0};
+        item.kind = "fact"; item.layer = "semantic"; item.title = "few";
+        item.content = "only one candidate, below threshold";
+        item.scope_project = "test-proj"; item.status = "candidate"; item.confidence = 0.9;
+        char *id = NULL;
+        ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+        free(id);
+    }
+    /* Mark maintenance as just-run so debounce + backstop both block. */
+    {
+        char sql[160];
+        snprintf(sql, sizeof(sql),
+                 "INSERT OR REPLACE INTO memory_meta (key,value) VALUES "
+                 "('last_consolidate_ms','%lld'),('last_decay_ms','%lld');",
+                 (long long)((int64_t)time(NULL) * 1000LL),
+                 (long long)((int64_t)time(NULL) * 1000LL));
+        ASSERT(sqlite3_exec(cbm_store_get_db(s), sql, NULL, NULL, NULL) == SQLITE_OK);
+    }
+    cbm_memory_maintain_report_t rep = {0};
+    ASSERT(cbm_store_memory_maintain_if_due(s, "test-proj", &rep) == CBM_STORE_OK);
+    ASSERT(rep.consolidated == false);
+    ASSERT(rep.decayed == false);
+    /* Candidate untouched. */
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_item WHERE status='candidate'") == 1);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_vec") == 0);
+    cbm_store_close(s);
+    return 0;
+}
+
+TEST(maintain_disabled_by_env) {
+    /* With the kill switch set, even an over-threshold batch must not trigger. */
+#ifdef _WIN32
+    _putenv("CBM_MEMORY_AUTO_MAINTAIN=0");
+#else
+    setenv("CBM_MEMORY_AUTO_MAINTAIN", "0", 1);
+#endif
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    for (int i = 0; i < 8; i++) {
+        cbm_memory_item_t item = {0};
+        char content[64];
+        snprintf(content, sizeof(content), "disabled env candidate %d", i);
+        item.kind = "fact"; item.layer = "semantic"; item.title = "off";
+        item.content = content; item.scope_project = "test-proj";
+        item.status = "candidate"; item.confidence = 0.9;
+        char *id = NULL;
+        ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+        free(id);
+    }
+    cbm_memory_maintain_report_t rep = {0};
+    ASSERT(cbm_store_memory_maintain_if_due(s, "test-proj", &rep) == CBM_STORE_OK);
+    ASSERT(rep.consolidated == false);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_item WHERE status='candidate'") == 8);
+    cbm_store_close(s);
+#ifdef _WIN32
+    _putenv("CBM_MEMORY_AUTO_MAINTAIN=");
+#else
+    unsetenv("CBM_MEMORY_AUTO_MAINTAIN");
+#endif
+    return 0;
+}
+
 int main(void) {
     fprintf(stderr, "START\n");
     fflush(stderr);
@@ -875,6 +992,10 @@ int main(void) {
     RUN(migration_idempotent_reopen);
     RUN(feedback_atomic_rolls_back_item_on_event_failure);
     RUN(consolidate_active_item_fully_indexed);
+    RUN(migration_v2_adds_meta_table);
+    RUN(maintain_triggers_consolidate_on_threshold);
+    RUN(maintain_below_threshold_does_not_consolidate);
+    RUN(maintain_disabled_by_env);
     fprintf(stderr, "\n%d/%d passed\n", pass, total);
     return fail ? 1 : 0;
 }

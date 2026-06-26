@@ -335,7 +335,7 @@ static void iso_now(char *buf, size_t sz) {
  * on-disk schema changes (new table, ALTER TABLE ADD COLUMN, etc.).
  * NOTE: distinct from CBM_ARTIFACT_SCHEMA_VERSION (pipeline/artifact.h),
  * which versions the compressed .zst export format, not the live DB. */
-#define CBM_SCHEMA_VERSION 1
+#define CBM_SCHEMA_VERSION 2
 
 static int init_schema(cbm_store_t *s) {
     const char *ddl =
@@ -530,9 +530,34 @@ static int run_migrations(cbm_store_t *s) {
         }
     }
 
-    /* Future migrations:
-     *   if (ver < 2) { begin; ALTER TABLE ...; PRAGMA user_version = 2; commit; }
-     */
+    /* ver 1→2: memory_meta — a small key/value table for memory-subsystem
+     * bookkeeping (e.g. last auto-maintenance timestamps). The DB is one file
+     * per project, so meta is naturally project-scoped; no scope column needed. */
+    if (ver < 2) {
+        int rc = cbm_store_begin(s);
+        if (rc != CBM_STORE_OK) {
+            return rc;
+        }
+        rc = exec_sql(s,
+            "CREATE TABLE IF NOT EXISTS memory_meta ("
+            "  key TEXT PRIMARY KEY,"
+            "  value TEXT"
+            ");");
+        if (rc != CBM_STORE_OK) {
+            cbm_store_rollback(s);
+            return rc;
+        }
+        rc = exec_sql(s, "PRAGMA user_version = 2;");
+        if (rc != CBM_STORE_OK) {
+            cbm_store_rollback(s);
+            return rc;
+        }
+        rc = cbm_store_commit(s);
+        if (rc != CBM_STORE_OK) {
+            cbm_store_rollback(s);
+            return rc;
+        }
+    }
 
     return CBM_STORE_OK;
 }
@@ -1939,6 +1964,45 @@ int cbm_store_delete_file_hashes(cbm_store_t *s, const char *project) {
 
 static int64_t memory_now_ms(void) {
     return (int64_t)time(NULL) * 1000LL;
+}
+
+/* memory_meta key/value helpers (schema v2). Single-statement reads/writes;
+ * callers that need atomicity with other writes wrap them in their own txn. */
+static int64_t memory_meta_get_i64(cbm_store_t *s, const char *key, int64_t fallback) {
+    if (!s || !s->db || !key) {
+        return fallback;
+    }
+    sqlite3_stmt *stmt = NULL;
+    int64_t out = fallback;
+    if (sqlite3_prepare_v2(s->db, "SELECT value FROM memory_meta WHERE key=?1;", CBM_NOT_FOUND,
+                           &stmt, NULL) == SQLITE_OK) {
+        bind_text(stmt, 1, key);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            const char *v = (const char *)sqlite3_column_text(stmt, 0);
+            if (v && v[0]) {
+                out = (int64_t)strtoll(v, NULL, 10);
+            }
+        }
+    }
+    sqlite3_finalize(stmt);
+    return out;
+}
+
+static void memory_meta_set_i64(cbm_store_t *s, const char *key, int64_t value) {
+    if (!s || !s->db || !key) {
+        return;
+    }
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(s->db,
+                           "INSERT OR REPLACE INTO memory_meta (key,value) VALUES (?1,?2);",
+                           CBM_NOT_FOUND, &stmt, NULL) == SQLITE_OK) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%lld", (long long)value);
+        bind_text(stmt, 1, key);
+        bind_text(stmt, 2, buf);
+        (void)sqlite3_step(stmt);
+    }
+    sqlite3_finalize(stmt);
 }
 
 static void memory_make_id(char *buf, size_t sz, const char *prefix) {
@@ -3421,6 +3485,87 @@ int cbm_store_memory_decay(cbm_store_t *s, const char *project, int limit, int *
     if (processed) *processed = n;
     return CBM_STORE_OK;
 }
+
+/* Lazy auto-maintenance gate. Thresholds are overridable via env for testing
+ * and benchmarking; defaults suit a single-user agent. */
+int cbm_store_memory_maintain_if_due(cbm_store_t *s, const char *project,
+                                     cbm_memory_maintain_report_t *out) {
+    if (out) {
+        memset(out, 0, sizeof(*out));
+    }
+    if (!s || !s->db) {
+        return CBM_STORE_OK; /* never fail the caller */
+    }
+
+    /* Global off-switch (set CBM_MEMORY_AUTO_MAINTAIN=0 to disable). */
+    char envbuf[8];
+    cbm_safe_getenv("CBM_MEMORY_AUTO_MAINTAIN", envbuf, sizeof(envbuf), NULL);
+    if (envbuf[0] == '0') {
+        return CBM_STORE_OK;
+    }
+
+    enum {
+        CONSOLIDATE_THRESHOLD = 8,         /* candidates needed to trigger early */
+        MIN_INTERVAL_MS = 60 * 1000,       /* debounce: don't consolidate more often */
+        MAX_INTERVAL_MS = 5 * 60 * 1000,   /* backstop: any pending candidate eventually */
+        DECAY_INTERVAL_MS = 60 * 60 * 1000 /* decay is time-driven only */
+    };
+
+    int64_t now = memory_now_ms();
+
+    /* Count pending candidates (cheap: idx_memory_item_status covers status). */
+    int candidates = 0;
+    {
+        sqlite3_stmt *st = NULL;
+        if (sqlite3_prepare_v2(s->db,
+                "SELECT COUNT(*) FROM memory_item WHERE status='candidate' "
+                "AND (?1 IS NULL OR scope_project=?1);",
+                CBM_NOT_FOUND, &st, NULL) == SQLITE_OK) {
+            memory_bind_nullable(st, 1, project);
+            if (sqlite3_step(st) == SQLITE_ROW) {
+                candidates = sqlite3_column_int(st, 0);
+            }
+        }
+        sqlite3_finalize(st);
+    }
+
+    /* Consolidate when: enough candidates AND past the debounce window, OR any
+     * candidate has been waiting past the backstop window. */
+    if (candidates > 0) {
+        int64_t last = memory_meta_get_i64(s, "last_consolidate_ms", 0);
+        int64_t since = now - last;
+        bool due = (candidates >= CONSOLIDATE_THRESHOLD && since >= MIN_INTERVAL_MS) ||
+                   (since >= MAX_INTERVAL_MS);
+        if (due) {
+            int processed = 0;
+            if (cbm_store_memory_consolidate(s, project, 0, &processed) == CBM_STORE_OK) {
+                memory_meta_set_i64(s, "last_consolidate_ms", now);
+                if (out) {
+                    out->consolidated = true;
+                    out->consolidate_count = processed;
+                }
+            }
+        }
+    }
+
+    /* Decay on a fixed time cadence. */
+    {
+        int64_t last = memory_meta_get_i64(s, "last_decay_ms", 0);
+        if (now - last >= DECAY_INTERVAL_MS) {
+            int processed = 0;
+            if (cbm_store_memory_decay(s, project, 0, &processed) == CBM_STORE_OK) {
+                memory_meta_set_i64(s, "last_decay_ms", now);
+                if (out) {
+                    out->decayed = true;
+                    out->decay_count = processed;
+                }
+            }
+        }
+    }
+
+    return CBM_STORE_OK;
+}
+
 int cbm_store_memory_health(cbm_store_t *s, const char *project, cbm_memory_health_t *out) {
     memset(out, 0, sizeof(*out));
     if (!s || !s->db) {

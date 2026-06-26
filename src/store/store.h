@@ -138,6 +138,15 @@ typedef struct {
     int64_t total_hits;
 } cbm_memory_health_t;
 
+/* Report from cbm_store_memory_maintain_if_due: what (if anything) the lazy
+ * auto-maintenance pass actually did this call. */
+typedef struct {
+    bool consolidated;       /* consolidate pass ran */
+    int consolidate_count;   /* candidates processed by it */
+    bool decayed;            /* decay pass ran */
+    int decay_count;         /* items decayed/archived by it */
+} cbm_memory_maintain_report_t;
+
 
 /* Find nodes overlapping a line range in a file (excludes Module/Package). */
 int cbm_store_find_nodes_by_file_overlap(cbm_store_t *s, const char *project, const char *file_path,
@@ -466,6 +475,14 @@ int cbm_store_memory_feedback(cbm_store_t *s, const char *id, const char *projec
                               const char *note, const char *user, char **out_event_id);
 int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit, int *processed);
 int cbm_store_memory_decay(cbm_store_t *s, const char *project, int limit, int *processed);
+/* Lazy auto-maintenance: runs consolidate and/or decay only when "due" (by a
+ * cheap candidate-count + elapsed-time gate), so a single-user agent never has
+ * to call admin endpoints by hand. Safe to call on the memory hot path: it must
+ * NOT be invoked inside an open transaction (consolidate opens its own). Honors
+ * env CBM_MEMORY_AUTO_MAINTAIN=0 to disable. out may be NULL. Maintenance
+ * failures are swallowed (return CBM_STORE_OK) so they never fail the caller. */
+int cbm_store_memory_maintain_if_due(cbm_store_t *s, const char *project,
+                                     cbm_memory_maintain_report_t *out);
 /* Rebuild the FTS index for a project from memory_item using the current
  * segmentation (heals rows indexed before CJK bigram segmentation existed).
  * Returns number of items reindexed in *processed. */

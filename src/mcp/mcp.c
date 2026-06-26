@@ -4268,6 +4268,13 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         return cbm_mcp_text_result("failed to commit memory transaction", true);
     }
 
+    /* Lazy auto-maintenance: a single-user agent has no operator to call
+     * admin_consolidate/admin_decay, so the write hot path opportunistically
+     * triggers them when due. Runs AFTER commit (new candidate is visible and
+     * no transaction is open). Best-effort — never fails the write. */
+    cbm_memory_maintain_report_t maint = {0};
+    (void)cbm_store_memory_maintain_if_due(store, project, &maint);
+
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
@@ -4277,6 +4284,13 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     yyjson_mut_obj_add_str(doc, root, "event_id", event_id ? event_id : "");
     yyjson_mut_obj_add_str(doc, root, "item_id", item_id ? item_id : "");
     yyjson_mut_obj_add_str(doc, root, "item_status", "candidate");
+    yyjson_mut_obj_add_bool(doc, root, "maintained", maint.consolidated || maint.decayed);
+    if (maint.consolidated) {
+        yyjson_mut_obj_add_int(doc, root, "consolidated", maint.consolidate_count);
+    }
+    if (maint.decayed) {
+        yyjson_mut_obj_add_int(doc, root, "decayed", maint.decay_count);
+    }
     yyjson_mut_obj_add_str(doc, root, "hot_path", "event+structured candidate only; consolidation builds dedup, vectors, and evidence edges");
     char *json = yy_doc_to_str(doc);
     yyjson_mut_doc_free(doc);
@@ -4297,6 +4311,10 @@ static char *handle_memories_retrieve(cbm_mcp_server_t *srv, const char *args) {
         free(_err); free(project);
         return _res;
     }
+    /* Lazy auto-maintenance before reading, so a single-user agent sees freshly
+     * consolidated/decayed state without ever calling admin endpoints. At the
+     * entry point no transaction is open. Best-effort — never fails the read. */
+    (void)cbm_store_memory_maintain_if_due(store, project, NULL);
     cbm_memory_query_t query = {0};
     query.project = project;
     query.user = cbm_mcp_get_string_arg(args, "user");
