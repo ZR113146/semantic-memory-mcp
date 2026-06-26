@@ -1383,6 +1383,85 @@ TEST(memory_delete_scope_guard) {
     return 0;
 }
 
+/* ── P0-4: audit-event coverage for lifecycle mutations ─────────────── */
+
+TEST(memory_update_status_writes_audit_event) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_memory_item_t item = {0};
+    item.kind = "fact"; item.content = "status change leaves an audit trail";
+    item.scope_project = "test-proj"; item.status = "candidate";
+    char *id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+    ASSERT(cbm_store_memory_update_status(s, id, "test-proj", "archived") == CBM_STORE_OK);
+    /* A status_change audit event was recorded with the new status. */
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_event WHERE type='status_change'") == 1);
+    /* A no-op (wrong scope) writes NO event. */
+    ASSERT(cbm_store_memory_update_status(s, id, "other-proj", "active") == CBM_STORE_NOT_FOUND);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_event WHERE type='status_change'") == 1);
+    free(id);
+    cbm_store_close(s);
+    return 0;
+}
+
+TEST(memory_consolidate_writes_audit_event) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    for (int i = 0; i < 3; i++) {
+        cbm_memory_item_t item = {0};
+        char content[64];
+        snprintf(content, sizeof(content), "consolidate audit candidate %d", i);
+        item.kind = "fact"; item.content = content;
+        item.scope_project = "test-proj"; item.status = "candidate";
+        char *id = NULL;
+        ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+        free(id);
+    }
+    int processed = 0;
+    ASSERT(cbm_store_memory_consolidate(s, "test-proj", 100, &processed) == CBM_STORE_OK);
+    ASSERT(processed == 3);
+    /* One summary consolidate event for the batch (not one per item). */
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_event WHERE type='consolidate'") == 1);
+    /* A consolidate run that processes nothing writes no event. */
+    int processed2 = 0;
+    ASSERT(cbm_store_memory_consolidate(s, "test-proj", 100, &processed2) == CBM_STORE_OK);
+    ASSERT(processed2 == 0);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_event WHERE type='consolidate'") == 1);
+    cbm_store_close(s);
+    return 0;
+}
+
+TEST(memory_decay_writes_audit_event_when_archiving) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    /* An active item that is stale and low-value will cross the archive
+     * threshold on decay. Force the conditions: old last_hit, low conf/reuse. */
+    cbm_memory_item_t item = {0};
+    item.kind = "fact"; item.content = "stale low-value item gets archived by decay";
+    item.scope_project = "test-proj"; item.status = "candidate";
+    item.confidence = 0.0; item.reusability = 0.0;
+    char *id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+    int processed = 0;
+    ASSERT(cbm_store_memory_consolidate(s, "test-proj", 100, &processed) == CBM_STORE_OK);
+    /* Backdate last_hit_at far into the past and zero the value signals so the
+     * decay formula pushes it past 1.0 in one pass. */
+    sqlite3_stmt *st = NULL;
+    ASSERT(sqlite3_prepare_v2(cbm_store_get_db(s),
+        "UPDATE memory_item SET last_hit_at=1, confidence=0.0, reusability=0.0, decay=0.95;",
+        -1, &st, NULL) == SQLITE_OK);
+    ASSERT(sqlite3_step(st) == SQLITE_DONE);
+    sqlite3_finalize(st);
+    int decayed = 0;
+    ASSERT(cbm_store_memory_decay(s, "test-proj", 100, &decayed) == CBM_STORE_OK);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_item WHERE status='archived'") == 1);
+    /* A decay summary event was recorded because something was archived. */
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_event WHERE type='decay'") == 1);
+    free(id);
+    cbm_store_close(s);
+    return 0;
+}
+
 int main(void) {
     fprintf(stderr, "START\n");
     fflush(stderr);
@@ -1430,6 +1509,9 @@ int main(void) {
     RUN(memory_purge_mode_deletes_source_events);
     RUN(memory_hard_delete_keeps_source_events);
     RUN(memory_delete_scope_guard);
+    RUN(memory_update_status_writes_audit_event);
+    RUN(memory_consolidate_writes_audit_event);
+    RUN(memory_decay_writes_audit_event_when_archiving);
     fprintf(stderr, "\n%d/%d passed\n", pass, total);
     return fail ? 1 : 0;
 }

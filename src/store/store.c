@@ -506,6 +506,11 @@ static int read_user_version(cbm_store_t *s) {  sqlite3_stmt *st = NULL;
  * formatted into the statement; it is an internal compile-time constant, never
  * user input. */
 static int memory_vec_upsert(cbm_store_t *s, const char *item_id, const char *content);
+/* Audit-event helper (P0-2/P0-4): writes a memory_event row inside the caller's
+ * open transaction. Defined below near the delete path; forward-declared here so
+ * the lifecycle mutators (update_status, consolidate, decay) can record events. */
+static int memory_delete_audit(cbm_store_t *s, const char *type, const char *mode,
+                               const char *id, const char *project, const char *user);
 
 static int run_migrations(cbm_store_t *s) {
     int ver = read_user_version(s);
@@ -3258,6 +3263,13 @@ int cbm_store_memory_update_status(cbm_store_t *s, const char *id, const char *p
         store_set_error_sqlite(s, "memory_update_status_prepare");
         return CBM_STORE_ERR;
     }
+    /* The status UPDATE and its audit event commit together (P0-4): a crash
+     * between them would otherwise leave a lifecycle change with no trace. */
+    if (cbm_store_begin(s) != CBM_STORE_OK) {
+        sqlite3_finalize(stmt);
+        store_set_error_sqlite(s, "memory_update_status_begin");
+        return CBM_STORE_ERR;
+    }
     bind_text(stmt, 1, status);
     sqlite3_bind_int64(stmt, 2, memory_now_ms());
     bind_text(stmt, 3, id);
@@ -3266,10 +3278,21 @@ int cbm_store_memory_update_status(cbm_store_t *s, const char *id, const char *p
     int changed = sqlite3_changes(s->db);
     sqlite3_finalize(stmt);
     if (rc != SQLITE_DONE) {
+        cbm_store_rollback(s);
         store_set_error_sqlite(s, "memory_update_status");
         return CBM_STORE_ERR;
     }
-    return changed > 0 ? CBM_STORE_OK : CBM_STORE_NOT_FOUND;
+    if (changed <= 0) {
+        /* No matching item: nothing changed, so don't record an audit event. */
+        cbm_store_rollback(s);
+        return CBM_STORE_NOT_FOUND;
+    }
+    if (memory_delete_audit(s, "status_change", status, id, project, NULL) != CBM_STORE_OK) {
+        cbm_store_rollback(s);
+        store_set_error_sqlite(s, "memory_update_status_audit");
+        return CBM_STORE_ERR;
+    }
+    return cbm_store_commit(s);
 }
 static bool memory_feedback_allowed(const char *feedback) {
     return feedback && (strcmp(feedback, "useful") == 0 || strcmp(feedback, "not_useful") == 0 ||
@@ -3965,6 +3988,13 @@ int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit,
         n++;
     }
     sqlite3_finalize(stmt);
+    /* P0-4: one summary audit event per batch (per-merge events would be noise).
+     * Written inside the open transaction so it commits atomically with the run. */
+    if (n > 0) {
+        char count_buf[32];
+        snprintf(count_buf, sizeof(count_buf), "%d", n);
+        (void)memory_delete_audit(s, "consolidate", count_buf, "", project, NULL);
+    }
     if (cbm_store_commit(s) != CBM_STORE_OK) {
         cbm_store_rollback(s);
         store_set_error_sqlite(s, "memory_consolidate_commit");
@@ -4019,9 +4049,18 @@ int cbm_store_memory_decay(cbm_store_t *s, const char *project, int limit, int *
     const char *sql = "SELECT id,last_hit_at,confidence,reusability,decay FROM memory_item WHERE status='active' AND deleted_at IS NULL AND (?1 IS NULL OR scope_project=?1) LIMIT ?2;";
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) return CBM_STORE_ERR;
+    /* P0-4: the per-item decay UPDATEs and the summary audit event commit
+     * together — collect the rows first (the read cursor is finalized before
+     * COMMIT to avoid a cursor-vs-write SQLITE_BUSY). */
+    if (cbm_store_begin(s) != CBM_STORE_OK) {
+        sqlite3_finalize(stmt);
+        store_set_error_sqlite(s, "memory_decay_begin");
+        return CBM_STORE_ERR;
+    }
     memory_bind_nullable(stmt, 1, project);
     sqlite3_bind_int(stmt, 2, lim);
     int n = 0;
+    int archived = 0;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         const char *id = (const char *)sqlite3_column_text(stmt, 0);
         int64_t last_hit = sqlite3_column_int64(stmt, 1);
@@ -4042,9 +4081,21 @@ int cbm_store_memory_decay(cbm_store_t *s, const char *project, int limit, int *
             (void)sqlite3_step(up);
             sqlite3_finalize(up);
             n++;
+            if (next_decay >= 1.0) archived++;
         }
     }
     sqlite3_finalize(stmt);
+    /* One summary audit event per pass when anything was archived. */
+    if (archived > 0) {
+        char count_buf[32];
+        snprintf(count_buf, sizeof(count_buf), "%d", archived);
+        (void)memory_delete_audit(s, "decay", count_buf, "", project, NULL);
+    }
+    if (cbm_store_commit(s) != CBM_STORE_OK) {
+        cbm_store_rollback(s);
+        store_set_error_sqlite(s, "memory_decay_commit");
+        return CBM_STORE_ERR;
+    }
     if (processed) *processed = n;
     return CBM_STORE_OK;
 }
