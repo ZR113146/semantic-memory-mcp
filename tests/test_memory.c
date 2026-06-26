@@ -728,13 +728,85 @@ TEST(memory_mark_hits_relaxes_decay) {
     return 0;
 }
 
+/* ── Step-1: real 768-d semantic embeddings ─────────────────────── */
+
+/* The whole point of the 256→768 nomic switch: vector recall ranks a memory
+ * by *meaning*, not shared spelling. Store two memories — one topically related
+ * to the query but sharing few exact words, one unrelated — and assert the
+ * related one gets the higher vector score. Under the old bag-of-words hashing
+ * the related pair (different words, same topic) would have been near-orthogonal
+ * and this ranking would not hold. */
+TEST(memory_embedding_ranks_semantic_neighbor_higher) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+
+    cbm_memory_item_t related = {0};
+    related.kind = "fact"; related.layer = "semantic";
+    related.content = "the function returns an integer value";
+    related.scope_project = "test-proj"; related.status = "candidate";
+    char *rid = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &related, &rid) == CBM_STORE_OK);
+
+    cbm_memory_item_t unrelated = {0};
+    unrelated.kind = "fact"; unrelated.layer = "semantic";
+    unrelated.content = "the weather today is sunny and warm";
+    unrelated.scope_project = "test-proj"; unrelated.status = "candidate";
+    char *uid = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &unrelated, &uid) == CBM_STORE_OK);
+
+    int processed = -1;
+    ASSERT(cbm_store_memory_consolidate(s, "test-proj", 100, &processed) == CBM_STORE_OK);
+
+    /* Query shares almost no exact tokens with the related item ("method"≠"function",
+     * "int"≠"integer", "result"≠"value") but is the same topic; embeddings should
+     * still rank it above the weather item. */
+    cbm_memory_query_t q = {0};
+    q.project = "test-proj";
+    q.query = "the method yields an int result";
+    q.limit = 5;
+    cbm_memory_result_t res = {0};
+    ASSERT(cbm_store_memory_retrieve(s, &q, &res) == CBM_STORE_OK);
+
+    double related_score = -1.0, unrelated_score = -1.0;
+    for (int i = 0; i < res.count; i++) {
+        if (res.items[i].id && strcmp(res.items[i].id, rid) == 0) related_score = res.items[i].retrieval_score;
+        if (res.items[i].id && strcmp(res.items[i].id, uid) == 0) unrelated_score = res.items[i].retrieval_score;
+    }
+    ASSERT(related_score >= 0.0);              /* related item retrieved */
+    ASSERT(related_score > unrelated_score);   /* and ranked above the unrelated one */
+
+    cbm_store_memory_result_free(&res);
+    free(rid); free(uid);
+    cbm_store_close(s);
+    return 0;
+}
+
+/* The stored memory vector must be the full 768-d nomic dimension, not the old
+ * 256. Guards against a silent regression in MEMORY_VEC_DIM wiring. */
+TEST(memory_embedding_dim_is_768) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_memory_item_t item = {0};
+    item.kind = "fact"; item.layer = "semantic";
+    item.content = "dimension probe"; item.scope_project = "test-proj"; item.status = "candidate";
+    char *id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+    int processed = -1;
+    ASSERT(cbm_store_memory_consolidate(s, "test-proj", 100, &processed) == CBM_STORE_OK);
+    ASSERT(scalar_int(s, "SELECT dim FROM memory_vec LIMIT 1") == 768);
+    ASSERT(scalar_int(s, "SELECT length(embedding) FROM memory_vec LIMIT 1") == 768);
+    free(id);
+    cbm_store_close(s);
+    return 0;
+}
+
 /* ── A1: schema migration framework ─────────────────────────────── */
 
 TEST(migration_fresh_db_sets_version) {
     cbm_store_t *s = cbm_store_open_memory();
     ASSERT(s != NULL);
     /* A freshly opened DB must be stamped at the current schema version. */
-    ASSERT(scalar_int(s, "PRAGMA user_version") == 2);
+    ASSERT(scalar_int(s, "PRAGMA user_version") == 3);
     /* Baseline tables must exist (migration 0->1 ran init_schema). */
     ASSERT(scalar_int(s, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_item'") == 1);
     ASSERT(scalar_int(s, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_event'") == 1);
@@ -753,7 +825,7 @@ TEST(migration_idempotent_reopen) {
     /* First open: fresh DB, runs baseline migration, writes an item. */
     cbm_store_t *s = cbm_store_open_path(path);
     ASSERT(s != NULL);
-    ASSERT(scalar_int(s, "PRAGMA user_version") == 2);
+    ASSERT(scalar_int(s, "PRAGMA user_version") == 3);
     cbm_memory_item_t item = {0};
     item.kind = "fact"; item.layer = "semantic"; item.title = "persisted";
     item.content = "survives reopen"; item.scope_project = "test-proj";
@@ -767,7 +839,7 @@ TEST(migration_idempotent_reopen) {
      * version unchanged, data intact. */
     cbm_store_t *s2 = cbm_store_open_path(path);
     ASSERT(s2 != NULL);
-    ASSERT(scalar_int(s2, "PRAGMA user_version") == 2);
+    ASSERT(scalar_int(s2, "PRAGMA user_version") == 3);
     ASSERT(scalar_int(s2, "SELECT COUNT(*) FROM memory_item") == 1);
     cbm_store_close(s2);
     remove(path);
@@ -852,7 +924,7 @@ TEST(consolidate_active_item_fully_indexed) {
 TEST(migration_v2_adds_meta_table) {
     cbm_store_t *s = cbm_store_open_memory();
     ASSERT(s != NULL);
-    ASSERT(scalar_int(s, "PRAGMA user_version") == 2);
+    ASSERT(scalar_int(s, "PRAGMA user_version") == 3);
     ASSERT(scalar_int(s, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_meta'") == 1);
     cbm_store_close(s);
     return 0;
@@ -988,6 +1060,8 @@ int main(void) {
     RUN(memory_feedback_useful_records_event_and_boosts_hit_signal);
     RUN(memory_feedback_wrong_retracts_from_default_retrieval);
     RUN(memory_decay_archives_stale);
+    RUN(memory_embedding_ranks_semantic_neighbor_higher);
+    RUN(memory_embedding_dim_is_768);
     RUN(migration_fresh_db_sets_version);
     RUN(migration_idempotent_reopen);
     RUN(feedback_atomic_rolls_back_item_on_event_failure);

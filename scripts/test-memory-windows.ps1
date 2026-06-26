@@ -95,6 +95,11 @@ $objects = @(
     @{ Source = "src/foundation/slab_alloc.c"; Object = "slab_alloc.o"; Flags = $commonFlags },
     @{ Source = "src/foundation/hash_table.c"; Object = "hash_table.o"; Flags = $commonFlags },
     @{ Source = "src/foundation/system_info.c"; Object = "system_info.o"; Flags = $commonFlags },
+    @{ Source = "src/foundation/compat_thread.c"; Object = "compat_thread.o"; Flags = $commonFlags },
+    @{ Source = "src/pipeline/worker_pool.c"; Object = "worker_pool.o"; Flags = $commonFlags },
+    @{ Source = "src/simhash/minhash.c"; Object = "minhash.o"; Flags = ($commonFlags + @("-Iinternal/cbm/vendored/ts_runtime/include")) },
+    @{ Source = "src/semantic/semantic.c"; Object = "semantic.o"; Flags = ($commonFlags + @("-Iinternal/cbm/vendored/ts_runtime/include")) },
+    @{ Source = "vendored/nomic/code_vectors_blob.S"; Object = "code_vectors_blob.o"; Flags = @() },
     @{ Source = "vendored/yyjson/yyjson.c"; Object = "yyjson.o"; Flags = $commonFlags },
     @{ Source = "vendored/mimalloc/src/static.c"; Object = "mimalloc_clean.o"; Flags = @("-std=c11", "-g", "-O0", "-w", "-Ivendored/mimalloc/include", "-Ivendored/mimalloc/src", "-DMI_OVERRIDE=0") },
     @{ Source = "internal/cbm/ts_runtime.c"; Object = "ts_runtime_clean.o"; Flags = @("-std=c11", "-D_DEFAULT_SOURCE", "-g", "-O0", "-w", "-Iinternal/cbm", "-Iinternal/cbm/vendored/ts_runtime/include", "-Iinternal/cbm/vendored/ts_runtime/src") }
@@ -119,6 +124,11 @@ $linkObjects = @(
     "slab_alloc.o",
     "hash_table.o",
     "system_info.o",
+    "compat_thread.o",
+    "worker_pool.o",
+    "minhash.o",
+    "semantic.o",
+    "code_vectors_blob.o",
     "yyjson.o",
     "mimalloc_clean.o",
     "ts_runtime_clean.o"

@@ -65,6 +65,7 @@ enum {
 
 #define XXH_INLINE_ALL
 #include "xxhash/xxhash.h"
+#include "semantic/semantic.h"
 
 #include <sqlite3.h>
 #include <stdio.h>
@@ -335,7 +336,7 @@ static void iso_now(char *buf, size_t sz) {
  * on-disk schema changes (new table, ALTER TABLE ADD COLUMN, etc.).
  * NOTE: distinct from CBM_ARTIFACT_SCHEMA_VERSION (pipeline/artifact.h),
  * which versions the compressed .zst export format, not the live DB. */
-#define CBM_SCHEMA_VERSION 2
+#define CBM_SCHEMA_VERSION 3
 
 static int init_schema(cbm_store_t *s) {
     const char *ddl =
@@ -477,8 +478,7 @@ static int init_schema(cbm_store_t *s) {
 
 /* Read PRAGMA user_version (current on-disk schema version; 0 = fresh DB or
  * a pre-migration legacy DB). */
-static int read_user_version(cbm_store_t *s) {
-    sqlite3_stmt *st = NULL;
+static int read_user_version(cbm_store_t *s) {  sqlite3_stmt *st = NULL;
     int ver = 0;
     if (sqlite3_prepare_v2(s->db, "PRAGMA user_version;", -1, &st, NULL) == SQLITE_OK) {
         if (sqlite3_step(st) == SQLITE_ROW) {
@@ -505,6 +505,8 @@ static int read_user_version(cbm_store_t *s) {
  * NOTE: PRAGMA user_version cannot be parameterized, so the version number is
  * formatted into the statement; it is an internal compile-time constant, never
  * user input. */
+static int memory_vec_upsert(cbm_store_t *s, const char *item_id, const char *content);
+
 static int run_migrations(cbm_store_t *s) {
     int ver = read_user_version(s);
 
@@ -548,6 +550,69 @@ static int run_migrations(cbm_store_t *s) {
             return rc;
         }
         rc = exec_sql(s, "PRAGMA user_version = 2;");
+        if (rc != CBM_STORE_OK) {
+            cbm_store_rollback(s);
+            return rc;
+        }
+        rc = cbm_store_commit(s);
+        if (rc != CBM_STORE_OK) {
+            cbm_store_rollback(s);
+            return rc;
+        }
+    }
+
+    /* ver 2→3: memory vectors moved from 256-d signed feature-hashing to the
+     * shared 768-d nomic space (MEMORY_VEC_DIM = CBM_SEM_DIM). Old BLOBs are a
+     * different dimension and geometry, so they're incomparable — drop them and
+     * re-embed every existing item from its stored content. Single-user DBs hold
+     * few items, so a full re-embed is cheap. Collect ids+content first (finalize
+     * the read cursor) before writing memory_vec, to avoid cursor-vs-write races. */
+    if (ver < 3) {
+        int rc = cbm_store_begin(s);
+        if (rc != CBM_STORE_OK) {
+            return rc;
+        }
+        rc = exec_sql(s, "DELETE FROM memory_vec;");
+        if (rc != CBM_STORE_OK) {
+            cbm_store_rollback(s);
+            return rc;
+        }
+        /* Gather (id, content) for all items into arrays, then re-embed. */
+        char **ids = NULL;
+        char **contents = NULL;
+        int count = 0, cap = 0;
+        sqlite3_stmt *sel = NULL;
+        if (sqlite3_prepare_v2(s->db, "SELECT id, content FROM memory_item;", -1, &sel, NULL) == SQLITE_OK) {
+            while (sqlite3_step(sel) == SQLITE_ROW) {
+                const char *id = (const char *)sqlite3_column_text(sel, 0);
+                const char *content = (const char *)sqlite3_column_text(sel, 1);
+                if (!id) continue;
+                if (count == cap) {
+                    int ncap = cap ? cap * 2 : 16;
+                    char **ni = realloc(ids, (size_t)ncap * sizeof(*ni));
+                    char **nc = realloc(contents, (size_t)ncap * sizeof(*nc));
+                    if (!ni || !nc) { free(ni ? ni : ids); free(nc ? nc : contents); ids = NULL; contents = NULL; break; }
+                    ids = ni; contents = nc; cap = ncap;
+                }
+                ids[count] = heap_strdup(id);
+                contents[count] = heap_strdup(content ? content : "");
+                count++;
+            }
+        }
+        sqlite3_finalize(sel);
+        int rebuild_ok = (ids != NULL || count == 0);
+        for (int i = 0; i < count && rebuild_ok; i++) {
+            if (memory_vec_upsert(s, ids[i], contents[i]) != CBM_STORE_OK) {
+                rebuild_ok = 0;
+            }
+        }
+        for (int i = 0; i < count; i++) { free(ids[i]); free(contents[i]); }
+        free(ids); free(contents);
+        if (!rebuild_ok) {
+            cbm_store_rollback(s);
+            return CBM_STORE_ERR;
+        }
+        rc = exec_sql(s, "PRAGMA user_version = 3;");
         if (rc != CBM_STORE_OK) {
             cbm_store_rollback(s);
             return rc;
@@ -2599,38 +2664,45 @@ static void memory_resolve_conflicts(cbm_store_t *s, const cbm_memory_query_t *q
     free(hidden);
 }
 
-/* Memory embedding dimension. Signed feature-hashing produces a sparse
- * bag-of-features vector; 256 buckets keep collisions low for short memory
- * texts while staying compact as an int8 BLOB. */
-enum { MEMORY_VEC_DIM = 256 };
+/* Memory embedding dimension. Memory now reuses the same 768-d dense space as
+ * the code-graph semantic module (CBM_SEM_DIM), so a memory vector and a code
+ * token vector live in one comparable geometry. Stored quantized to int8. */
+enum { MEMORY_VEC_DIM = CBM_SEM_DIM };
 
-/* Add one feature (identified by its 64-bit hash) into the accumulator using
- * the signed feature-hashing trick: the low bits pick the bucket, the high bit
- * picks the sign. Repeated features accumulate, giving term-frequency weight. */
-static inline void memory_feat_add(int32_t *acc, uint64_t h) {
-    int bucket = (int)(h % (uint64_t)MEMORY_VEC_DIM);
-    acc[bucket] += (h & 0x8000000000000000ULL) ? 1 : -1;
-}
-
-/* Build a semantic-ish int8 vector from arbitrary natural-language content.
+/* Build a dense int8 embedding from arbitrary natural-language content by
+ * mean-pooling per-token nomic-embed-code vectors (768-d, distilled from the
+ * 7B model). This replaces the old 256-bucket signed feature-hashing: tokens
+ * that share *meaning* — not just spelling — now land close in cosine space,
+ * which is what makes "semantic" memory recall actually semantic.
  *
- * Unlike a plain hash of the whole string (where any two distinct strings are
- * orthogonal noise), this hashes shared features so that texts sharing words or
- * CJK n-grams land in overlapping buckets:
- *   - ASCII runs are lowercased and tokenized on non-alphanumeric boundaries.
- *   - CJK / multibyte codepoints contribute a unigram plus a bigram with the
- *     previous multibyte codepoint (Chinese has no spaces, so character
- *     n-grams are the unit of overlap).
- * The accumulator is L2-normalized into the int8 range; cosine similarity is
- * scale-invariant, so the normalization only affects storage, not ranking. */
+ * Tokenization mirrors the previous scheme so CJK keeps working:
+ *   - ASCII runs are lowercased and split on non-alphanumeric boundaries; each
+ *     token is looked up in the nomic vocab (real vector) or, if absent, mapped
+ *     to a deterministic sparse random vector (cbm_sem_random_index handles both).
+ *   - CJK / multibyte text has no spaces, so each codepoint is one token plus a
+ *     bigram with its predecessor; these miss the (code-oriented) nomic vocab and
+ *     fall through to sparse random vectors — i.e. the same overlap property the
+ *     old hashing gave, now in the shared 768-d space.
+ * Each token vector is unit-normalized before pooling so a single high-magnitude
+ * token can't dominate; the pooled vector is re-normalized, then quantized x127. */
 static void memory_feature_vec(const char *content, int8_t vec[MEMORY_VEC_DIM]) {
-    int32_t acc[MEMORY_VEC_DIM];
-    memset(acc, 0, sizeof(acc));
+    cbm_sem_vec_t acc;
+    memset(&acc, 0, sizeof(acc));
+    cbm_sem_vec_t tv;
+
     const unsigned char *p = (const unsigned char *)(content ? content : "");
     char tok[64];
     int tlen = 0;
-    uint64_t prev_cp = 0;
+    char prev_cp[8];
+    int prev_len = 0;
     bool have_prev = false;
+
+    /* Pool one token's unit vector into the accumulator. */
+    #define MEM_POOL_TOKEN(str) do {                       \
+        cbm_sem_random_index((str), &tv);                  \
+        cbm_sem_normalize(&tv);                            \
+        cbm_sem_vec_add_scaled(&acc, &tv, 1.0F);           \
+    } while (0)
 
     while (*p) {
         unsigned char c = *p;
@@ -2642,7 +2714,8 @@ static void memory_feature_vec(const char *content, int8_t vec[MEMORY_VEC_DIM]) 
                 p++;
             } else {
                 if (tlen > 0) {
-                    memory_feat_add(acc, XXH3_64bits(tok, (size_t)tlen));
+                    tok[tlen] = '\0';
+                    MEM_POOL_TOKEN(tok);
                     tlen = 0;
                 }
                 p++;
@@ -2652,7 +2725,8 @@ static void memory_feature_vec(const char *content, int8_t vec[MEMORY_VEC_DIM]) 
         }
         /* Multibyte (CJK etc.): flush any pending ASCII token first. */
         if (tlen > 0) {
-            memory_feat_add(acc, XXH3_64bits(tok, (size_t)tlen));
+            tok[tlen] = '\0';
+            MEM_POOL_TOKEN(tok);
             tlen = 0;
         }
         int n = 1;
@@ -2663,31 +2737,37 @@ static void memory_feature_vec(const char *content, int8_t vec[MEMORY_VEC_DIM]) 
             if (!p[k]) { n = k; break; }
         }
         if (n < 1) n = 1;
-        uint64_t cp = XXH3_64bits(p, (size_t)n);
-        memory_feat_add(acc, cp);
+        /* Unigram: the codepoint bytes as a NUL-terminated token. */
+        char cp_tok[8];
+        int cp_len = n < (int)sizeof(cp_tok) ? n : (int)sizeof(cp_tok) - 1;
+        memcpy(cp_tok, p, (size_t)cp_len);
+        cp_tok[cp_len] = '\0';
+        MEM_POOL_TOKEN(cp_tok);
+        /* Bigram with previous codepoint: prev+curr bytes as one token. */
         if (have_prev) {
-            memory_feat_add(acc, prev_cp * 1099511628211ULL ^ cp);
+            char bg[16];
+            int bl = 0;
+            for (int k = 0; k < prev_len && bl < (int)sizeof(bg) - 1; k++) bg[bl++] = prev_cp[k];
+            for (int k = 0; k < cp_len && bl < (int)sizeof(bg) - 1; k++) bg[bl++] = cp_tok[k];
+            bg[bl] = '\0';
+            MEM_POOL_TOKEN(bg);
         }
-        prev_cp = cp;
+        memcpy(prev_cp, cp_tok, (size_t)cp_len);
+        prev_len = cp_len;
         have_prev = true;
         p += n;
     }
     if (tlen > 0) {
-        memory_feat_add(acc, XXH3_64bits(tok, (size_t)tlen));
+        tok[tlen] = '\0';
+        MEM_POOL_TOKEN(tok);
     }
+    #undef MEM_POOL_TOKEN
 
-    double norm = 0.0;
+    /* Re-normalize the pooled vector, then quantize to int8 (x127). cosine is
+     * scale-invariant, so quantization only affects storage, not ranking. */
+    cbm_sem_normalize(&acc);
     for (int i = 0; i < MEMORY_VEC_DIM; i++) {
-        norm += (double)acc[i] * (double)acc[i];
-    }
-    norm = sqrt(norm);
-    if (norm < CBM_STORE_DENOM_EPS_D) {
-        memset(vec, 0, (size_t)MEMORY_VEC_DIM);
-        return;
-    }
-    double scale = 127.0 / norm;
-    for (int i = 0; i < MEMORY_VEC_DIM; i++) {
-        double v = (double)acc[i] * scale;
+        double v = (double)acc.v[i] * 127.0;
         if (v > 127.0) v = 127.0;
         if (v < -127.0) v = -127.0;
         vec[i] = (int8_t)lround(v);
@@ -3293,17 +3373,22 @@ int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit,
         char merge_buf[CBM_SZ_128] = {0};
         const char *merge_id = NULL;
 
-        /* Build a feature-hashing vector for the candidate content once, reuse for all
-         * comparisons. Shared words / CJK n-grams produce overlapping buckets, so cosine
-         * carries real lexical-semantic signal (unlike a whole-string hash). The candidate
-         * is already SQL-filtered to the same (entity, predicate, scope) bucket, so within
-         * that bucket the thresholds mean:
-         *   cosine >= 0.90  → merge   (same fact, same wording or near-identical paraphrase)
-         *   cosine <= 0.30  → contradicts edge  (same subject, divergent content)
-         *   0.30 < cosine < 0.90 → coexist (let decay + read-time adjudication decide)
-         */
+        /* Build the candidate's 768-d embedding once (mean-pooled nomic vectors),
+         * reuse for all comparisons. The candidate is already SQL-filtered to the
+         * same (entity, predicate, scope) bucket. Real embeddings cluster by *topic*,
+         * so two opposing claims about the same subject score HIGH cosine, not low —
+         * "low cosine = contradiction" (which held under the old orthogonal bag-of-
+         * words vectors) no longer does. So within the bucket:
+         *   cosine >= 0.90 → merge   (same fact, same wording or near-identical paraphrase)
+         *   cosine <  0.90 AND explicit entity_key → contradicts edge
+         *                            (two competing, non-equivalent answers for the
+         *                             same deliberately-keyed slot)
+         * Contradiction is gated on an EXPLICIT entity_key (existing_entity), never an
+         * inferred one: inferred buckets are too noisy to anchor a hard conflict signal,
+         * and read-time adjudication (scope-aware) picks the winner among coexisting items. */
         int8_t cand_vec[MEMORY_VEC_DIM];
         memory_feature_vec(content, cand_vec);
+        bool entity_is_explicit = existing_entity && existing_entity[0];
 
         if (sqlite3_prepare_v2(s->db, dup_sql, CBM_NOT_FOUND, &dup, NULL) == SQLITE_OK) {
             bind_text(dup, 1, entity);
@@ -3315,7 +3400,7 @@ int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit,
                 const char *other_id = (const char *)sqlite3_column_text(dup, 0);
                 const char *other_content = (const char *)sqlite3_column_text(dup, 1);
                 if (!other_id) continue;
-                /* Compute cosine similarity via the same int8 hash vectors used at retrieve time. */
+                /* Compute cosine similarity via the same int8 vectors used at retrieve time. */
                 int8_t other_vec[MEMORY_VEC_DIM];
                 memory_feature_vec(other_content, other_vec);
                 int32_t dot = 0, mag_a = 0, mag_b = 0;
@@ -3332,14 +3417,13 @@ int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit,
                     merge_id = merge_buf;
                     break;
                 }
-                if (cosine <= 0.30) {
-                    /* Very low similarity within same (entity, predicate, scope): likely a true
-                     * contradiction. Mark both directions; read-time adjudication picks the winner. */
+                if (entity_is_explicit) {
+                    /* Same explicit (entity, predicate, scope) slot, not equivalent →
+                     * competing answers → contradiction. Mark both directions; read-time
+                     * adjudication picks the winner. */
                     (void)memory_edge_insert(s, id, other_id, "contradicts", "rule", confidence);
                     (void)memory_edge_insert(s, other_id, id, "contradicts", "rule", confidence);
                 }
-                /* 0.30 < cosine < 0.90: coexist — different but related expressions of the same
-                 * predicate. Leave both active; decay will prune the less-used one over time. */
             }
             sqlite3_finalize(dup);
         }
