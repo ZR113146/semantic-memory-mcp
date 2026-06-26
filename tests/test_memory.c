@@ -800,6 +800,99 @@ TEST(memory_embedding_dim_is_768) {
     return 0;
 }
 
+/* ── Step-3: code anchoring (about_code) ────────────────────────── */
+
+/* A memory anchored to the code symbol the agent is viewing must rank above an
+ * equally-relevant memory that isn't anchored. Proves the about_code edge +
+ * code_context boost actually reorder retrieval. */
+TEST(memory_anchor_boost_raises_rank) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_store_upsert_project(s, "test-proj", "/tmp/test-proj");
+    cbm_node_t fn = {.project = "test-proj", .label = "Function", .name = "login",
+                     .qualified_name = "auth.Service.login", .file_path = "auth.py",
+                     .start_line = 10, .end_line = 40};
+    ASSERT(cbm_store_upsert_node(s, &fn) > 0);
+
+    /* Two memories that both match the query "认证" but are distinct topics with
+     * distinct entity_keys, so consolidation neither merges nor contradicts them
+     * — keeping the test focused purely on the anchoring boost. Only m2 is anchored. */
+    cbm_memory_item_t m1 = {0};
+    m1.kind = "decision"; m1.layer = "semantic"; m1.content = "认证服务使用 JWT 令牌对接口签名";
+    m1.entity_key = "auth.jwt"; m1.predicate = "uses";
+    m1.scope_project = "test-proj"; m1.status = "candidate";
+    char *id1 = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &m1, &id1) == CBM_STORE_OK);
+
+    cbm_memory_item_t m2 = {0};
+    m2.kind = "decision"; m2.layer = "semantic"; m2.content = "认证流程要求双因子验证才能登录";
+    m2.entity_key = "auth.mfa"; m2.predicate = "requires";
+    m2.scope_project = "test-proj"; m2.status = "candidate";
+    char *id2 = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &m2, &id2) == CBM_STORE_OK);
+    int processed = -1;
+    ASSERT(cbm_store_memory_consolidate(s, "test-proj", 100, &processed) == CBM_STORE_OK);
+
+    /* Anchor only m2 to the symbol. */
+    ASSERT(cbm_store_memory_link_code(s, id2, "auth.Service.login", "user") == CBM_STORE_OK);
+
+    /* Without code_context: both present, anchoring inert. */
+    cbm_memory_query_t q = {0};
+    q.project = "test-proj"; q.query = "认证"; q.limit = 5;
+    cbm_memory_result_t r0 = {0};
+    ASSERT(cbm_store_memory_retrieve(s, &q, &r0) == CBM_STORE_OK);
+    ASSERT(r0.count >= 2);
+    cbm_store_memory_result_free(&r0);
+
+    /* With code_context = the anchored symbol: m2 must rank #1. */
+    q.code_context = "auth.Service.login";
+    cbm_memory_result_t r1 = {0};
+    ASSERT(cbm_store_memory_retrieve(s, &q, &r1) == CBM_STORE_OK);
+    ASSERT(r1.count >= 1);
+    ASSERT(r1.items[0].id && strcmp(r1.items[0].id, id2) == 0);
+    cbm_store_memory_result_free(&r1);
+
+    free(id1); free(id2);
+    cbm_store_close(s);
+    return 0;
+}
+
+/* A stale anchor (symbol absent from the code graph) must NOT boost, but the
+ * memory itself must still be retrievable. Proves lazy stale handling: silent
+ * de-weight, no hard delete (graveyard philosophy). */
+TEST(memory_anchor_stale_no_boost_but_kept) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_store_upsert_project(s, "test-proj", "/tmp/test-proj");
+    /* Note: we deliberately do NOT create the node "gone.symbol". */
+
+    cbm_memory_item_t m = {0};
+    m.kind = "decision"; m.layer = "semantic"; m.content = "认证逻辑要点 C";
+    m.scope_project = "test-proj"; m.status = "candidate";
+    char *id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &m, &id) == CBM_STORE_OK);
+    int processed = -1;
+    ASSERT(cbm_store_memory_consolidate(s, "test-proj", 100, &processed) == CBM_STORE_OK);
+    ASSERT(cbm_store_memory_link_code(s, id, "gone.symbol", "user") == CBM_STORE_OK);
+
+    /* code_context points at the (nonexistent) anchored symbol: boost must be
+     * skipped (stale), yet the memory is still recalled by content. */
+    cbm_memory_query_t q = {0};
+    q.project = "test-proj"; q.query = "认证"; q.limit = 5;
+    q.code_context = "gone.symbol";
+    cbm_memory_result_t r = {0};
+    ASSERT(cbm_store_memory_retrieve(s, &q, &r) == CBM_STORE_OK);
+    bool found = false;
+    for (int i = 0; i < r.count; i++) {
+        if (r.items[i].id && strcmp(r.items[i].id, id) == 0) found = true;
+    }
+    ASSERT(found);
+    cbm_store_memory_result_free(&r);
+    free(id);
+    cbm_store_close(s);
+    return 0;
+}
+
 /* ── A1: schema migration framework ─────────────────────────────── */
 
 TEST(migration_fresh_db_sets_version) {
@@ -1062,6 +1155,8 @@ int main(void) {
     RUN(memory_decay_archives_stale);
     RUN(memory_embedding_ranks_semantic_neighbor_higher);
     RUN(memory_embedding_dim_is_768);
+    RUN(memory_anchor_boost_raises_rank);
+    RUN(memory_anchor_stale_no_boost_but_kept);
     RUN(migration_fresh_db_sets_version);
     RUN(migration_idempotent_reopen);
     RUN(feedback_atomic_rolls_back_item_on_event_failure);

@@ -2586,6 +2586,117 @@ static void memory_fill_result_evidence(cbm_store_t *s, cbm_memory_result_t *out
     }
 }
 
+/* Retrieval boost added to a memory anchored (via an about_code edge) to the
+ * code symbol the agent is currently looking at — or to a sibling symbol in the
+ * same file. Same-symbol scores higher than same-file. The boost is added to
+ * retrieval_score and the result is re-sorted; it never adds or removes
+ * candidates (contract: about_code is a ranking signal, not a recall path). */
+#define MEMORY_ANCHOR_BOOST_SYMBOL 0.5
+#define MEMORY_ANCHOR_BOOST_FILE   0.2
+
+/* Does code symbol `qn` still exist in this project's code graph? Used to
+ * lazily skip the boost for memories whose anchor target was renamed/deleted
+ * since indexing (stale anchor → silent de-weight, memory itself is kept). */
+static bool memory_code_symbol_exists(cbm_store_t *s, const char *project, const char *qn) {
+    if (!s || !s->db || !qn || !qn[0]) {
+        return false;
+    }
+    sqlite3_stmt *st = NULL;
+    bool exists = false;
+    const char *sql = project
+        ? "SELECT 1 FROM nodes WHERE project=?1 AND qualified_name=?2 LIMIT 1;"
+        : "SELECT 1 FROM nodes WHERE qualified_name=?2 LIMIT 1;";
+    if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &st, NULL) == SQLITE_OK) {
+        memory_bind_nullable(st, 1, project);
+        bind_text(st, 2, qn);
+        exists = sqlite3_step(st) == SQLITE_ROW;
+    }
+    sqlite3_finalize(st);
+    return exists;
+}
+
+/* Apply about_code anchoring boosts to the result set, then stable-sort by the
+ * adjusted retrieval_score (desc). No-op unless query->code_context is set, so
+ * default retrieval order is unchanged. Must run before the limit truncation in
+ * memory_resolve_conflicts so a boosted memory can actually rise into the cut. */
+static void memory_apply_anchor_boost(cbm_store_t *s, const cbm_memory_query_t *query,
+                                      cbm_memory_result_t *out) {
+    if (!query || !query->code_context || !query->code_context[0] || !out || out->count <= 0) {
+        return;
+    }
+    const char *ctx_qn = query->code_context;
+    /* Resolve the file of the current symbol once, for same-file sibling boosts. */
+    char ctx_file[CBM_SZ_512];
+    ctx_file[0] = '\0';
+    {
+        sqlite3_stmt *st = NULL;
+        const char *sql = query->project
+            ? "SELECT file_path FROM nodes WHERE project=?1 AND qualified_name=?2 LIMIT 1;"
+            : "SELECT file_path FROM nodes WHERE qualified_name=?2 LIMIT 1;";
+        if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &st, NULL) == SQLITE_OK) {
+            memory_bind_nullable(st, 1, query->project);
+            bind_text(st, 2, ctx_qn);
+            if (sqlite3_step(st) == SQLITE_ROW) {
+                const char *fp = (const char *)sqlite3_column_text(st, 0);
+                if (fp) snprintf(ctx_file, sizeof(ctx_file), "%s", fp);
+            }
+        }
+        sqlite3_finalize(st);
+    }
+
+    /* For each result, find its strongest about_code anchor relative to ctx. */
+    const char *anchor_sql =
+        "SELECT substr(dst_id, 6) AS qn FROM memory_edge "
+        "WHERE src_id=?1 AND type='about_code' AND dst_id LIKE 'code:%';";
+    for (int i = 0; i < out->count; i++) {
+        if (!out->items[i].id) continue;
+        sqlite3_stmt *st = NULL;
+        if (sqlite3_prepare_v2(s->db, anchor_sql, CBM_NOT_FOUND, &st, NULL) != SQLITE_OK) {
+            continue;
+        }
+        bind_text(st, 1, out->items[i].id);
+        double best = 0.0;
+        while (sqlite3_step(st) == SQLITE_ROW) {
+            const char *qn = (const char *)sqlite3_column_text(st, 0);
+            if (!qn || !qn[0]) continue;
+            /* Stale anchor (symbol gone since indexing) → no boost, keep memory. */
+            if (!memory_code_symbol_exists(s, query->project, qn)) continue;
+            if (strcmp(qn, ctx_qn) == 0) {
+                if (MEMORY_ANCHOR_BOOST_SYMBOL > best) best = MEMORY_ANCHOR_BOOST_SYMBOL;
+            } else if (ctx_file[0]) {
+                /* Same-file sibling: does this anchor's symbol share ctx_file? */
+                sqlite3_stmt *fst = NULL;
+                const char *fsql = query->project
+                    ? "SELECT 1 FROM nodes WHERE project=?1 AND qualified_name=?2 AND file_path=?3 LIMIT 1;"
+                    : "SELECT 1 FROM nodes WHERE qualified_name=?2 AND file_path=?3 LIMIT 1;";
+                if (sqlite3_prepare_v2(s->db, fsql, CBM_NOT_FOUND, &fst, NULL) == SQLITE_OK) {
+                    memory_bind_nullable(fst, 1, query->project);
+                    bind_text(fst, 2, qn);
+                    bind_text(fst, 3, ctx_file);
+                    if (sqlite3_step(fst) == SQLITE_ROW && MEMORY_ANCHOR_BOOST_FILE > best) {
+                        best = MEMORY_ANCHOR_BOOST_FILE;
+                    }
+                }
+                sqlite3_finalize(fst);
+            }
+        }
+        sqlite3_finalize(st);
+        out->items[i].retrieval_score += best;
+    }
+
+    /* Stable insertion sort by adjusted score (desc). Result sets are small
+     * (<= limit*4); stability preserves the prior order among equal scores. */
+    for (int i = 1; i < out->count; i++) {
+        cbm_memory_item_t key = out->items[i];
+        int j = i - 1;
+        while (j >= 0 && out->items[j].retrieval_score < key.retrieval_score) {
+            out->items[j + 1] = out->items[j];
+            j--;
+        }
+        out->items[j + 1] = key;
+    }
+}
+
 static void memory_resolve_conflicts(cbm_store_t *s, const cbm_memory_query_t *query,
                                      cbm_memory_result_t *out, int limit) {
     if (!s || !out || out->count <= 1) {
@@ -2858,6 +2969,7 @@ static int memory_retrieve_vector_only(cbm_store_t *s, const cbm_memory_query_t 
         return CBM_STORE_ERR;
     }
     (void)memory_append_vector_candidates(s, query, out, &cap, cap);
+    memory_apply_anchor_boost(s, query, out);
     memory_resolve_conflicts(s, query, out, limit);
     memory_fill_result_evidence(s, out);
     return CBM_STORE_OK;
@@ -3020,6 +3132,7 @@ int cbm_store_memory_retrieve(cbm_store_t *s, const cbm_memory_query_t *query,
         out->count = n;
         out->total = n;
         (void)memory_append_vector_candidates(s, query, out, &cap, fetch_limit);
+        memory_apply_anchor_boost(s, query, out);
         memory_resolve_conflicts(s, query, out, limit);
         memory_fill_result_evidence(s, out);
         return CBM_STORE_OK;
@@ -3058,6 +3171,7 @@ int cbm_store_memory_retrieve(cbm_store_t *s, const cbm_memory_query_t *query,
     out->items = items;
     out->count = n;
     out->total = n;
+    memory_apply_anchor_boost(s, query, out);
     memory_resolve_conflicts(s, query, out, limit);
     memory_fill_result_evidence(s, out);
     return CBM_STORE_OK;
@@ -3288,6 +3402,20 @@ static int memory_edge_insert(cbm_store_t *s, const char *src, const char *dst, 
     int rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     return rc == SQLITE_DONE ? CBM_STORE_OK : CBM_STORE_ERR;
+}
+
+/* Public: anchor a memory item to a code symbol via an about_code edge.
+ * dst is "code:<qualified_name>" — a stable address that survives re-indexing
+ * (node integer ids do not). Reuses memory_edge_insert (idempotent dedup). */
+int cbm_store_memory_link_code(cbm_store_t *s, const char *item_id, const char *qualified_name,
+                               const char *origin) {
+    if (!s || !s->db || !item_id || !qualified_name || !qualified_name[0]) {
+        return CBM_STORE_OK;
+    }
+    char dst[CBM_SZ_512];
+    snprintf(dst, sizeof(dst), "code:%s", qualified_name);
+    return memory_edge_insert(s, item_id, dst, "about_code",
+                              origin && origin[0] ? origin : "user", 1.0);
 }
 
 static void memory_first_source_id(const char *source_ids, char *out, size_t out_sz) {

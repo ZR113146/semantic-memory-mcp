@@ -115,6 +115,11 @@ typedef struct {
     const char *query;
     bool include_inactive;
     int limit;
+    /* Optional: qualified_name of the code symbol the agent is currently looking
+     * at. When set, memories anchored to it (or to a symbol in the same file) via
+     * an about_code edge get a retrieval boost. Pure ranking signal — never
+     * changes the candidate set. NULL = no code context. */
+    const char *code_context;
 } cbm_memory_query_t;
 
 typedef struct {
@@ -467,6 +472,15 @@ int cbm_store_memory_append_event(cbm_store_t *s, const cbm_memory_event_t *even
 int cbm_store_memory_append_candidate(cbm_store_t *s, const cbm_memory_item_t *item,
                                       char **out_item_id);
 int cbm_store_memory_get_item(cbm_store_t *s, const char *id, cbm_memory_item_t *out);
+/* Anchor a memory to a code symbol: creates an about_code edge from the memory
+ * item to a code node, addressed by its stable qualified_name (NOT the volatile
+ * integer node id — qn survives re-indexing). dst is stored as "code:<qn>".
+ * One-directional (memory -> code); the code graph never references memories, so
+ * re-indexing the code graph is unaffected. Idempotent (dedup on src,dst,type).
+ * origin is "user" (explicit) or "auto". about_code edges are deliberately kept
+ * out of the evidence-subgraph walk — they are a recall signal, not graph algo. */
+int cbm_store_memory_link_code(cbm_store_t *s, const char *item_id, const char *qualified_name,
+                               const char *origin);
 int cbm_store_memory_retrieve(cbm_store_t *s, const cbm_memory_query_t *query,
                               cbm_memory_result_t *out);
 int cbm_store_memory_mark_hits(cbm_store_t *s, const char **ids, int count, int64_t now_ms);

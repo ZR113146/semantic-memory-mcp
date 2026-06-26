@@ -4259,6 +4259,25 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         free(context_json);
         return cbm_mcp_text_result("failed to append memory candidate", true);
     }
+
+    /* Explicit code anchoring: an optional "about_code" array of qualified_names
+     * links this memory to code symbols (about_code edges). Written inside the
+     * same transaction as the candidate so anchoring is atomic with the write.
+     * Unknown qns are allowed — the symbol may be indexed later, and recall does
+     * a lazy existence check anyway. */
+    if (item_id) {
+        yyjson_val *ac = yyjson_obj_get(yyjson_doc_get_root(adoc), "about_code");
+        if (ac && yyjson_is_arr(ac)) {
+            size_t ai, amax;
+            yyjson_val *av;
+            yyjson_arr_foreach(ac, ai, amax, av) {
+                if (yyjson_is_str(av)) {
+                    (void)cbm_store_memory_link_code(store, item_id, yyjson_get_str(av), "user");
+                }
+            }
+        }
+    }
+
     if (cbm_store_commit(store) != CBM_STORE_OK) {
         cbm_store_rollback(store);
         free(event_id); free(item_id);
@@ -4322,6 +4341,7 @@ static char *handle_memories_retrieve(cbm_mcp_server_t *srv, const char *args) {
     query.entity_key = cbm_mcp_get_string_arg(args, "entity_key");
     query.kind = cbm_mcp_get_string_arg(args, "kind");
     query.query = cbm_mcp_get_string_arg(args, "query");
+    query.code_context = cbm_mcp_get_string_arg(args, "code_context");
     query.include_inactive = cbm_mcp_get_bool_arg(args, "include_inactive");
     query.limit = cbm_mcp_get_int_arg(args, "limit", MCP_DEFAULT_LIMIT);
     cbm_memory_result_t out = {0};
@@ -4347,7 +4367,7 @@ static char *handle_memories_retrieve(cbm_mcp_server_t *srv, const char *args) {
     yyjson_mut_doc_free(doc);
     char *result = cbm_mcp_text_result(json, rc != CBM_STORE_OK);
     free(json); cbm_store_memory_result_free(&out);
-    free(project); free((char *)query.user); free((char *)query.task); free((char *)query.entity_key); free((char *)query.kind); free((char *)query.query);
+    free(project); free((char *)query.user); free((char *)query.task); free((char *)query.entity_key); free((char *)query.kind); free((char *)query.query); free((char *)query.code_context);
     return result;
 }
 
