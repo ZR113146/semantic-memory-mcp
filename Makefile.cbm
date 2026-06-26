@@ -108,6 +108,7 @@ FOUNDATION_SRCS = \
     src/foundation/compat.c \
     src/foundation/compat_thread.c \
     src/foundation/compat_fs.c \
+    src/foundation/compat_proc.c \
     src/foundation/compat_regex.c \
     src/foundation/mem.c \
     src/foundation/diagnostics.c \
@@ -153,7 +154,7 @@ PREPROCESSOR_SRC = $(CBM_DIR)/preprocessor.cpp
 SQLITE_WRITER_SRC = $(CBM_DIR)/sqlite_writer.c
 
 # Store module (new)
-STORE_SRCS = src/store/store.c
+STORE_SRCS = src/store/store.c src/store/embed.c
 
 # Cypher module (new)
 CYPHER_SRCS = src/cypher/cypher.c

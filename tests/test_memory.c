@@ -1,4 +1,5 @@
 #include "store/store.h"
+#include "store/embed.h"
 #include "foundation/platform.h"
 #include <sqlite3.h>
 #include <stdio.h>
@@ -783,7 +784,7 @@ TEST(memory_embedding_ranks_semantic_neighbor_higher) {
 
 /* The stored memory vector must be the full 768-d nomic dimension, not the old
  * 256. Guards against a silent regression in MEMORY_VEC_DIM wiring. */
-TEST(memory_embedding_dim_is_768) {
+TEST(memory_embedding_dim_is_1024) {
     cbm_store_t *s = cbm_store_open_memory();
     ASSERT(s != NULL);
     cbm_memory_item_t item = {0};
@@ -793,8 +794,9 @@ TEST(memory_embedding_dim_is_768) {
     ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
     int processed = -1;
     ASSERT(cbm_store_memory_consolidate(s, "test-proj", 100, &processed) == CBM_STORE_OK);
-    ASSERT(scalar_int(s, "SELECT dim FROM memory_vec LIMIT 1") == 768);
-    ASSERT(scalar_int(s, "SELECT length(embedding) FROM memory_vec LIMIT 1") == 768);
+    /* Vectors are stored at bge-m3 width (1024); the static path zero-pads. */
+    ASSERT(scalar_int(s, "SELECT dim FROM memory_vec LIMIT 1") == 1024);
+    ASSERT(scalar_int(s, "SELECT length(embedding) FROM memory_vec LIMIT 1") == 1024);
     free(id);
     cbm_store_close(s);
     return 0;
@@ -899,7 +901,7 @@ TEST(migration_fresh_db_sets_version) {
     cbm_store_t *s = cbm_store_open_memory();
     ASSERT(s != NULL);
     /* A freshly opened DB must be stamped at the current schema version. */
-    ASSERT(scalar_int(s, "PRAGMA user_version") == 4);
+    ASSERT(scalar_int(s, "PRAGMA user_version") == 5);
     /* Baseline tables must exist (migration 0->1 ran init_schema). */
     ASSERT(scalar_int(s, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_item'") == 1);
     ASSERT(scalar_int(s, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_event'") == 1);
@@ -918,7 +920,7 @@ TEST(migration_idempotent_reopen) {
     /* First open: fresh DB, runs baseline migration, writes an item. */
     cbm_store_t *s = cbm_store_open_path(path);
     ASSERT(s != NULL);
-    ASSERT(scalar_int(s, "PRAGMA user_version") == 4);
+    ASSERT(scalar_int(s, "PRAGMA user_version") == 5);
     cbm_memory_item_t item = {0};
     item.kind = "fact"; item.layer = "semantic"; item.title = "persisted";
     item.content = "survives reopen"; item.scope_project = "test-proj";
@@ -932,7 +934,7 @@ TEST(migration_idempotent_reopen) {
      * version unchanged, data intact. */
     cbm_store_t *s2 = cbm_store_open_path(path);
     ASSERT(s2 != NULL);
-    ASSERT(scalar_int(s2, "PRAGMA user_version") == 4);
+    ASSERT(scalar_int(s2, "PRAGMA user_version") == 5);
     ASSERT(scalar_int(s2, "SELECT COUNT(*) FROM memory_item") == 1);
     cbm_store_close(s2);
     remove(path);
@@ -1017,7 +1019,7 @@ TEST(consolidate_active_item_fully_indexed) {
 TEST(migration_v2_adds_meta_table) {
     cbm_store_t *s = cbm_store_open_memory();
     ASSERT(s != NULL);
-    ASSERT(scalar_int(s, "PRAGMA user_version") == 4);
+    ASSERT(scalar_int(s, "PRAGMA user_version") == 5);
     ASSERT(scalar_int(s, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_meta'") == 1);
     cbm_store_close(s);
     return 0;
@@ -1132,7 +1134,7 @@ TEST(maintain_disabled_by_env) {
 TEST(memory_migration_v4_adds_deleted_at) {
     cbm_store_t *s = cbm_store_open_memory();
     ASSERT(s != NULL);
-    ASSERT(scalar_int(s, "PRAGMA user_version") == 4);
+    ASSERT(scalar_int(s, "PRAGMA user_version") == 5);
     /* deleted_at column exists on memory_item. */
     ASSERT(scalar_int(s,
         "SELECT COUNT(*) FROM pragma_table_info('memory_item') WHERE name='deleted_at'") == 1);
@@ -1462,6 +1464,110 @@ TEST(memory_decay_writes_audit_event_when_archiving) {
     return 0;
 }
 
+/* ── Embedding sidecar backend (bge-m3 integration) ────────────────── */
+
+/* Default backend is static: cbm_embed_backend() reports static when the env
+ * is unset, and embeddings are still produced (zero-padded to 1024). */
+TEST(embed_default_backend_is_static) {
+#ifdef _WIN32
+    _putenv("CBM_MEMORY_EMBED_BACKEND=");
+#else
+    unsetenv("CBM_MEMORY_EMBED_BACKEND");
+#endif
+    cbm_embed_reset_for_test();
+    ASSERT(cbm_embed_backend() == CBM_EMBED_STATIC);
+    cbm_embed_reset_for_test();
+    return 0;
+}
+
+/* With the sidecar backend + a mock sidecar, embeddings round-trip through the
+ * child process: the stored vector is 1024-d and its tail (beyond the static
+ * 768) is non-zero — proof it came from the sidecar, not the zero-padded
+ * static path. */
+TEST(embed_sidecar_roundtrip_via_mock) {
+#ifdef _WIN32
+    _putenv("CBM_MEMORY_EMBED_BACKEND=sidecar");
+    _putenv("CBM_MEMORY_EMBED_CMD=python scripts/mock_embed_sidecar.py");
+#else
+    setenv("CBM_MEMORY_EMBED_BACKEND", "sidecar", 1);
+    setenv("CBM_MEMORY_EMBED_CMD", "python scripts/mock_embed_sidecar.py", 1);
+#endif
+    cbm_embed_reset_for_test();
+    ASSERT(cbm_embed_backend() == CBM_EMBED_SIDECAR);
+
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_memory_item_t item = {0};
+    item.kind = "fact"; item.content = "sidecar embedding roundtrip probe";
+    item.scope_project = "test-proj"; item.status = "candidate";
+    char *id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+    int processed = 0;
+    ASSERT(cbm_store_memory_consolidate(s, "test-proj", 100, &processed) == CBM_STORE_OK);
+    /* Stored at 1024 width. */
+    ASSERT(scalar_int(s, "SELECT length(embedding) FROM memory_vec LIMIT 1") == 1024);
+    /* The mock fills all 1024 dims densely; the static path would leave the
+     * [768,1024) tail all-zero. Assert the tail has at least one non-zero byte,
+     * proving the vector came from the sidecar. */
+    ASSERT(scalar_int(s,
+        "SELECT (substr(embedding,769) != zeroblob(256)) FROM memory_vec LIMIT 1;") == 1);
+    free(id);
+    cbm_store_close(s);
+
+#ifdef _WIN32
+    _putenv("CBM_MEMORY_EMBED_BACKEND=");
+    _putenv("CBM_MEMORY_EMBED_CMD=");
+#else
+    unsetenv("CBM_MEMORY_EMBED_BACKEND");
+    unsetenv("CBM_MEMORY_EMBED_CMD");
+#endif
+    cbm_embed_reset_for_test();
+    return 0;
+}
+
+/* A sidecar that can't start (bad command) degrades to static: embeddings still
+ * succeed (zero-padded), retrieval still works, nothing blocks or errors. */
+TEST(embed_sidecar_spawn_failure_degrades_to_static) {
+#ifdef _WIN32
+    _putenv("CBM_MEMORY_EMBED_BACKEND=sidecar");
+    _putenv("CBM_MEMORY_EMBED_CMD=definitely-not-a-real-command-xyz");
+#else
+    setenv("CBM_MEMORY_EMBED_BACKEND", "sidecar", 1);
+    setenv("CBM_MEMORY_EMBED_CMD", "definitely-not-a-real-command-xyz", 1);
+#endif
+    cbm_embed_reset_for_test();
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_memory_item_t item = {0};
+    item.kind = "fact"; item.content = "fallback when sidecar missing";
+    item.scope_project = "test-proj"; item.status = "candidate";
+    char *id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+    int processed = 0;
+    /* Must not fail despite the dead sidecar (static fallback kicks in). */
+    ASSERT(cbm_store_memory_consolidate(s, "test-proj", 100, &processed) == CBM_STORE_OK);
+    ASSERT(processed == 1);
+    ASSERT(scalar_int(s, "SELECT length(embedding) FROM memory_vec LIMIT 1") == 1024);
+    /* Retrieval still works via the static vector + FTS. */
+    cbm_memory_query_t q = {0};
+    q.project = "test-proj"; q.query = "fallback sidecar missing"; q.limit = 5;
+    cbm_memory_result_t res = {0};
+    ASSERT(cbm_store_memory_retrieve(s, &q, &res) == CBM_STORE_OK);
+    ASSERT(res.count >= 1);
+    cbm_store_memory_result_free(&res);
+    free(id);
+    cbm_store_close(s);
+#ifdef _WIN32
+    _putenv("CBM_MEMORY_EMBED_BACKEND=");
+    _putenv("CBM_MEMORY_EMBED_CMD=");
+#else
+    unsetenv("CBM_MEMORY_EMBED_BACKEND");
+    unsetenv("CBM_MEMORY_EMBED_CMD");
+#endif
+    cbm_embed_reset_for_test();
+    return 0;
+}
+
 int main(void) {
     fprintf(stderr, "START\n");
     fflush(stderr);
@@ -1489,7 +1595,7 @@ int main(void) {
     RUN(memory_feedback_wrong_retracts_from_default_retrieval);
     RUN(memory_decay_archives_stale);
     RUN(memory_embedding_ranks_semantic_neighbor_higher);
-    RUN(memory_embedding_dim_is_768);
+    RUN(memory_embedding_dim_is_1024);
     RUN(memory_anchor_boost_raises_rank);
     RUN(memory_anchor_stale_no_boost_but_kept);
     RUN(migration_fresh_db_sets_version);
@@ -1512,6 +1618,9 @@ int main(void) {
     RUN(memory_update_status_writes_audit_event);
     RUN(memory_consolidate_writes_audit_event);
     RUN(memory_decay_writes_audit_event_when_archiving);
+    RUN(embed_default_backend_is_static);
+    RUN(embed_sidecar_roundtrip_via_mock);
+    RUN(embed_sidecar_spawn_failure_degrades_to_static);
     fprintf(stderr, "\n%d/%d passed\n", pass, total);
     return fail ? 1 : 0;
 }

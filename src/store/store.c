@@ -57,6 +57,7 @@ enum {
 
 #define SLEN(s) (sizeof(s) - 1)
 #include "store/store.h"
+#include "store/embed.h"
 #include "foundation/platform.h"
 #include "foundation/compat.h"
 #include "foundation/log.h"
@@ -336,7 +337,7 @@ static void iso_now(char *buf, size_t sz) {
  * on-disk schema changes (new table, ALTER TABLE ADD COLUMN, etc.).
  * NOTE: distinct from CBM_ARTIFACT_SCHEMA_VERSION (pipeline/artifact.h),
  * which versions the compressed .zst export format, not the live DB. */
-#define CBM_SCHEMA_VERSION 4
+#define CBM_SCHEMA_VERSION 5
 
 static int init_schema(cbm_store_t *s) {
     const char *ddl =
@@ -651,6 +652,70 @@ static int run_migrations(cbm_store_t *s) {
             return rc;
         }
         rc = exec_sql(s, "PRAGMA user_version = 4;");
+        if (rc != CBM_STORE_OK) {
+            cbm_store_rollback(s);
+            return rc;
+        }
+        rc = cbm_store_commit(s);
+        if (rc != CBM_STORE_OK) {
+            cbm_store_rollback(s);
+            return rc;
+        }
+    }
+
+    /* ver 4→5: memory vectors widened from CBM_SEM_DIM (768) to MEMORY_VEC_DIM
+     * (1024) so the optional bge-m3 sidecar can store its native sentence
+     * vectors. Old 768-d BLOBs are a different width — cbm_cosine_i8 silently
+     * scores mismatched widths as 0 — so drop and re-embed every item. The
+     * re-embed goes through the current dispatcher: if the sidecar backend is
+     * enabled it produces real vectors, else the static path zero-pads to 1024.
+     * Collect (id, content) first, finalizing the read cursor before writing
+     * (mirrors the v2→v3 rebuild). */
+    if (ver < 5) {
+        int rc = cbm_store_begin(s);
+        if (rc != CBM_STORE_OK) {
+            return rc;
+        }
+        rc = exec_sql(s, "DELETE FROM memory_vec;");
+        if (rc != CBM_STORE_OK) {
+            cbm_store_rollback(s);
+            return rc;
+        }
+        char **ids = NULL;
+        char **contents = NULL;
+        int count = 0, cap = 0;
+        sqlite3_stmt *sel = NULL;
+        if (sqlite3_prepare_v2(s->db, "SELECT id, content FROM memory_item;", -1, &sel, NULL) == SQLITE_OK) {
+            while (sqlite3_step(sel) == SQLITE_ROW) {
+                const char *id = (const char *)sqlite3_column_text(sel, 0);
+                const char *content = (const char *)sqlite3_column_text(sel, 1);
+                if (!id) continue;
+                if (count == cap) {
+                    int ncap = cap ? cap * 2 : 16;
+                    char **ni = realloc(ids, (size_t)ncap * sizeof(*ni));
+                    char **nc = realloc(contents, (size_t)ncap * sizeof(*nc));
+                    if (!ni || !nc) { free(ni ? ni : ids); free(nc ? nc : contents); ids = NULL; contents = NULL; break; }
+                    ids = ni; contents = nc; cap = ncap;
+                }
+                ids[count] = heap_strdup(id);
+                contents[count] = heap_strdup(content ? content : "");
+                count++;
+            }
+        }
+        sqlite3_finalize(sel);
+        int rebuild_ok = (ids != NULL || count == 0);
+        for (int i = 0; i < count && rebuild_ok; i++) {
+            if (memory_vec_upsert(s, ids[i], contents[i]) != CBM_STORE_OK) {
+                rebuild_ok = 0;
+            }
+        }
+        for (int i = 0; i < count; i++) { free(ids[i]); free(contents[i]); }
+        free(ids); free(contents);
+        if (!rebuild_ok) {
+            cbm_store_rollback(s);
+            return CBM_STORE_ERR;
+        }
+        rc = exec_sql(s, "PRAGMA user_version = 5;");
         if (rc != CBM_STORE_OK) {
             cbm_store_rollback(s);
             return rc;
@@ -2816,7 +2881,14 @@ static void memory_resolve_conflicts(cbm_store_t *s, const cbm_memory_query_t *q
 /* Memory embedding dimension. Memory now reuses the same 768-d dense space as
  * the code-graph semantic module (CBM_SEM_DIM), so a memory vector and a code
  * token vector live in one comparable geometry. Stored quantized to int8. */
-enum { MEMORY_VEC_DIM = CBM_SEM_DIM };
+/* Memory embeddings are stored at bge-m3's native width (1024) so the optional
+ * sidecar backend can write its real sentence vectors directly. The in-binary
+ * static fallback only produces CBM_SEM_DIM (768) meaningful dimensions and
+ * zero-pads the rest — it is a degraded path (no true semantics; see embed.h),
+ * but the storage/cosine format stays uniform so a DB can mix neither dim. The
+ * code-graph path (node_vectors, VS_VEC_DIM) is independent and unaffected. */
+enum { MEMORY_VEC_DIM = 1024 };
+enum { MEMORY_VEC_STATIC_DIM = CBM_SEM_DIM }; /* meaningful dims from static path */
 
 /* Build a dense int8 embedding from arbitrary natural-language content by
  * mean-pooling per-token nomic-embed-code vectors (768-d, distilled from the
@@ -2833,8 +2905,11 @@ enum { MEMORY_VEC_DIM = CBM_SEM_DIM };
  *     fall through to sparse random vectors — i.e. the same overlap property the
  *     old hashing gave, now in the shared 768-d space.
  * Each token vector is unit-normalized before pooling so a single high-magnitude
- * token can't dominate; the pooled vector is re-normalized, then quantized x127. */
-static void memory_feature_vec(const char *content, int8_t vec[MEMORY_VEC_DIM]) {
+ * token can't dominate; the pooled vector is re-normalized, then quantized x127.
+ *
+ * This is the STATIC backend: it fills MEMORY_VEC_STATIC_DIM (768) meaningful
+ * dimensions and the dispatcher zero-pads to MEMORY_VEC_DIM (1024). */
+static void memory_feature_vec_static(const char *content, int8_t vec[MEMORY_VEC_DIM]) {
     cbm_sem_vec_t acc;
     memset(&acc, 0, sizeof(acc));
     cbm_sem_vec_t tv;
@@ -2913,14 +2988,30 @@ static void memory_feature_vec(const char *content, int8_t vec[MEMORY_VEC_DIM]) 
     #undef MEM_POOL_TOKEN
 
     /* Re-normalize the pooled vector, then quantize to int8 (x127). cosine is
-     * scale-invariant, so quantization only affects storage, not ranking. */
+     * scale-invariant, so quantization only affects storage, not ranking. The
+     * accumulator is CBM_SEM_DIM (768) wide; zero-pad the remaining dimensions
+     * up to MEMORY_VEC_DIM (1024) so the stored width matches the sidecar's. */
     cbm_sem_normalize(&acc);
-    for (int i = 0; i < MEMORY_VEC_DIM; i++) {
+    for (int i = 0; i < MEMORY_VEC_STATIC_DIM; i++) {
         double v = (double)acc.v[i] * 127.0;
         if (v > 127.0) v = 127.0;
         if (v < -127.0) v = -127.0;
         vec[i] = (int8_t)lround(v);
     }
+    for (int i = MEMORY_VEC_STATIC_DIM; i < MEMORY_VEC_DIM; i++) {
+        vec[i] = 0;
+    }
+}
+
+/* Embedding dispatcher: prefer the sidecar (real multilingual sentence model)
+ * when enabled and healthy, else fall back to the static in-binary embedder.
+ * Both produce a MEMORY_VEC_DIM int8 unit vector. */
+static void memory_feature_vec(const char *content, int8_t vec[MEMORY_VEC_DIM]) {
+    if (cbm_embed_backend() == CBM_EMBED_SIDECAR &&
+        cbm_embed_text(content ? content : "", vec, MEMORY_VEC_DIM) == 0) {
+        return;
+    }
+    memory_feature_vec_static(content, vec);
 }
 
 static bool memory_result_has_id(const cbm_memory_result_t *out, const char *id) {
