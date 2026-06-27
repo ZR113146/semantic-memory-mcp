@@ -226,6 +226,7 @@ void cbm_proc_close(cbm_proc_t *p) {
 #include <errno.h>
 #include <signal.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 struct cbm_proc {
