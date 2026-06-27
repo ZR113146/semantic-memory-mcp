@@ -9,6 +9,7 @@ int tf_fail_count = 0;
 int tf_skip_count = 0;
 
 #include "test_framework.h"
+#include "test_helpers.h"
 #include <sqlite3.h>
 
 /* Forward declarations of suite functions */
@@ -105,6 +106,13 @@ extern void cbm_kind_in_set_free_cache(void);
 
 int main(void) {
     printf("\n  semantic-memory-mcp  C test suite\n");
+
+    /* Sweep temp dirs leaked by tests that crashed or forgot to th_cleanup().
+     * Run at startup so a previous run's leftovers are cleared even if that
+     * run died abnormally (a crash/signal skips atexit). Also register it
+     * via atexit so a clean run leaves nothing behind on the way out. */
+    th_sweep_temp_leftovers();
+    atexit(th_sweep_temp_leftovers);
 
     /* Foundation */
     RUN_SUITE(arena);
@@ -253,5 +261,6 @@ int main(void) {
     /* Release process-lifetime caches so LeakSanitizer reports no leaks. */
     cbm_kind_in_set_free_cache();
     sqlite3_shutdown();
+
     TEST_SUMMARY();
 }

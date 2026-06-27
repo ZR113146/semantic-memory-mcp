@@ -168,4 +168,42 @@ static inline void th_cleanup(const char *path) {
     }
 }
 
+/* ── End-of-run temp sweep ────────────────────────────────────── */
+
+/* Remove any leftover test temp dirs under the temp root whose name
+ * starts with one of this project's test fixture prefixes. Individual
+ * tests should th_cleanup() their own dirs, but tests that crash or
+ * forget leak a dir behind; this backstop runs once at runner exit so
+ * the temp root doesn't accumulate thousands of cbm_* dirs over time.
+ * Safe to call only after all suites have finished (it deletes by
+ * prefix, so a still-in-use dir would be at risk mid-run). */
+static inline void th_sweep_temp_leftovers(void) {
+    static const char *const prefixes[] = {
+        "cbm_", "cbm-", "recall_eval_", "probe_",
+    };
+    const char *root = cbm_tmpdir();
+    cbm_dir_t *d = cbm_opendir(root);
+    if (!d) {
+        return;
+    }
+    cbm_dirent_t *entry;
+    while ((entry = cbm_readdir(d)) != NULL) {
+        if (!entry->is_dir) {
+            continue;
+        }
+        if (strcmp(entry->name, ".") == 0 || strcmp(entry->name, "..") == 0) {
+            continue;
+        }
+        for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
+            if (strncmp(entry->name, prefixes[i], strlen(prefixes[i])) == 0) {
+                char child[1024];
+                snprintf(child, sizeof(child), "%s/%s", root, entry->name);
+                th_rmtree(child);
+                break;
+            }
+        }
+    }
+    cbm_closedir(d);
+}
+
 #endif /* TEST_HELPERS_H */

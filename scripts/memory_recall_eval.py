@@ -31,6 +31,7 @@ Exit codes:
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -276,6 +277,7 @@ def main():
 
     client = MCPClient(args.binary)
     tmpdir = None
+    project = None
     try:
         client.initialize()
         project, tmpdir = setup_project(client)
@@ -286,7 +288,17 @@ def main():
         client.close()
         return 2
     finally:
+        # Drop the throwaway index registration before closing the client,
+        # then remove the temp dir on disk — otherwise every run leaks a
+        # project in the cache plus a recall_eval_* dir.
+        if project:
+            try:
+                client.call("delete_project", {"project": project})
+            except Exception:  # noqa: BLE001
+                pass
         client.close()
+        if tmpdir and os.path.isdir(tmpdir):
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     if args.json:
         print(json.dumps({k: v for k, v in metrics.items() if k != "_details"},
