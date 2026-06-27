@@ -8,12 +8,12 @@
     "source": "github"
   },
   "websiteUrl": "https://zr113146.github.io/semantic-memory-mcp/",
-  "version": "0.8.1",
+  "version": "0.9.1",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "semantic-memory-mcp",
-      "version": "0.8.1",
+      "version": "0.9.1",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
@@ -22,7 +22,7 @@
     {
       "registryType": "pypi",
       "identifier": "semantic-memory-mcp",
-      "version": "0.8.1",
+      "version": "0.9.1",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
