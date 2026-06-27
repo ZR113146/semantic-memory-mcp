@@ -62,8 +62,8 @@ static char *strdup_safe(const char *s) {
 
 static cbm_mutex_t g_mtx;
 static _Atomic int g_mtx_init = 0;
-static cbm_proc_t *g_proc = NULL;     /* live sidecar, or NULL */
-static int g_degraded = 0;            /* set once a failure forces static */
+static cbm_proc_t *g_proc = NULL; /* live sidecar, or NULL */
+static int g_degraded = 0;        /* set once a failure forces static */
 static int64_t g_req_id = 0;
 
 static void ensure_mtx(void) {

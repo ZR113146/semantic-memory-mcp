@@ -435,7 +435,8 @@ static const tool_def_t TOOLS[] = {
 
     {"events", "Write a raw long-term memory event through the synchronous hot path",
      "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
-     "\"type\":{\"type\":\"string\"},\"source\":{\"type\":\"string\"},\"user\":{\"type\":\"string\"},"
+     "\"type\":{\"type\":\"string\"},\"source\":{\"type\":\"string\"},\"user\":{\"type\":"
+     "\"string\"},"
      "\"task\":{\"type\":\"string\"},\"payload\":{},\"content\":{\"type\":\"string\"},"
      "\"context\":{},\"kind\":{\"type\":\"string\"},\"layer\":{\"type\":\"string\"},"
      "\"title\":{\"type\":\"string\"},\"summary\":{\"type\":\"string\"},"
@@ -445,16 +446,20 @@ static const tool_def_t TOOLS[] = {
      "\"required\":[\"project\",\"payload\"]}"},
 
     {"memories_retrieve", "Retrieve task-relevant long-term memories with structured filters",
-     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},\"user\":{\"type\":\"string\"},"
-     "\"task\":{\"type\":\"string\"},\"entity_key\":{\"type\":\"string\"},\"kind\":{\"type\":\"string\"},"
+     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},\"user\":{\"type\":"
+     "\"string\"},"
+     "\"task\":{\"type\":\"string\"},\"entity_key\":{\"type\":\"string\"},\"kind\":{\"type\":"
+     "\"string\"},"
      "\"query\":{\"type\":\"string\"},\"limit\":{\"type\":\"integer\"},"
      "\"include_inactive\":{\"type\":\"boolean\"}},\"required\":[\"project\"]}"},
 
     {"memories_inspect", "List memory items with entity_key, predicate, status for manual review",
      "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
-     "\"status\":{\"type\":\"string\",\"description\":\"Filter by status: candidate,active,deprecated,archived\"},"
+     "\"status\":{\"type\":\"string\",\"description\":\"Filter by status: "
+     "candidate,active,deprecated,archived\"},"
      "\"limit\":{\"type\":\"integer\"}},\"required\":[\"project\"]}"},
-    {"memory_update_status", "Mark a long-term memory item as active, candidate, deprecated, archived, or retracted",
+    {"memory_update_status",
+     "Mark a long-term memory item as active, candidate, deprecated, archived, or retracted",
      "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
      "\"id\":{\"type\":\"string\"},\"status\":{\"type\":\"string\","
      "\"enum\":[\"candidate\",\"active\",\"deprecated\",\"archived\",\"retracted\"]}},"
@@ -465,7 +470,10 @@ static const tool_def_t TOOLS[] = {
      "\"enum\":[\"useful\",\"not_useful\",\"wrong\",\"stale\"]},"
      "\"note\":{\"type\":\"string\"},\"user\":{\"type\":\"string\"}},"
      "\"required\":[\"project\",\"id\",\"feedback\"]}"},
-    {"memory_delete", "Delete a memory item. mode=soft (default; hide + undoable until retention sweep), hard (remove now, keep source events), purge (remove now + erase source events / GDPR), restore (undo a soft delete)",
+    {"memory_delete",
+     "Delete a memory item. mode=soft (default; hide + undoable until retention sweep), hard "
+     "(remove now, keep source events), purge (remove now + erase source events / GDPR), restore "
+     "(undo a soft delete)",
      "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
      "\"id\":{\"type\":\"string\"},\"mode\":{\"type\":\"string\","
      "\"enum\":[\"soft\",\"hard\",\"purge\",\"restore\"]},"
@@ -4020,20 +4028,25 @@ static double memory_arg_positive_double(yyjson_doc *doc, const char *key, doubl
 
 static char *memory_arg_raw_dup(yyjson_doc *doc, const char *key) {
     yyjson_val *v = memory_arg(doc, key);
-    if (!v) return NULL;
-    if (yyjson_is_str(v)) return heap_strdup(yyjson_get_str(v));
+    if (!v)
+        return NULL;
+    if (yyjson_is_str(v))
+        return heap_strdup(yyjson_get_str(v));
     return yyjson_val_write(v, YYJSON_WRITE_ALLOW_INVALID_UNICODE, NULL);
 }
 
 static cbm_store_t *resolve_memory_store(cbm_mcp_server_t *srv, const char *project) {
     cbm_store_t *store = resolve_store(srv, project);
-    if (!store && srv && srv->store && (!srv->current_project || !project || strcmp(srv->current_project, project) == 0)) {
+    if (!store && srv && srv->store &&
+        (!srv->current_project || !project || strcmp(srv->current_project, project) == 0)) {
         store = srv->store;
     }
     return store;
 }
 
-static const char *memory_item_str(const char *s) { return s ? s : ""; }
+static const char *memory_item_str(const char *s) {
+    return s ? s : "";
+}
 
 static yyjson_mut_val *memory_item_to_json(yyjson_mut_doc *doc, const cbm_memory_item_t *it) {
     yyjson_mut_val *obj = yyjson_mut_obj(doc);
@@ -4063,7 +4076,8 @@ static yyjson_mut_val *memory_item_to_json(yyjson_mut_doc *doc, const cbm_memory
     yyjson_mut_obj_add_str(doc, obj, "source_event_ids", memory_item_str(it->source_event_ids));
     yyjson_mut_obj_add_int(doc, obj, "conflict_count", it->conflict_count);
     yyjson_mut_obj_add_str(doc, obj, "conflict_ids", memory_item_str(it->conflict_ids));
-    yyjson_mut_obj_add_str(doc, obj, "conflict_resolution", memory_item_str(it->conflict_resolution));
+    yyjson_mut_obj_add_str(doc, obj, "conflict_resolution",
+                           memory_item_str(it->conflict_resolution));
     yyjson_mut_obj_add_str(doc, obj, "evidence_json", memory_item_str(it->evidence_json));
     yyjson_mut_obj_add_str(doc, obj, "retrieval_source", memory_item_str(it->retrieval_source));
     yyjson_mut_obj_add_real(doc, obj, "retrieval_score", it->retrieval_score);
@@ -4071,64 +4085,72 @@ static yyjson_mut_val *memory_item_to_json(yyjson_mut_doc *doc, const cbm_memory
 }
 
 static bool memory_policy_has_signal(const char *s) {
-    if (!s) return false;
+    if (!s)
+        return false;
     for (const unsigned char *p = (const unsigned char *)s; *p; p++) {
-        if (*p > ' ') return true;
+        if (*p > ' ')
+            return true;
     }
     return false;
 }
 
 static bool memory_policy_contains_i(const char *hay, const char *needle) {
-    if (!hay || !needle || !needle[0]) return false;
+    if (!hay || !needle || !needle[0])
+        return false;
     size_t nlen = strlen(needle);
     for (const char *p = hay; *p; p++) {
         size_t i = 0;
         while (i < nlen && p[i]) {
             unsigned char a = (unsigned char)p[i], b = (unsigned char)needle[i];
-            if (a >= 'A' && a <= 'Z') a = (unsigned char)(a - 'A' + 'a');
-            if (b >= 'A' && b <= 'Z') b = (unsigned char)(b - 'A' + 'a');
-            if (a != b) break;
+            if (a >= 'A' && a <= 'Z')
+                a = (unsigned char)(a - 'A' + 'a');
+            if (b >= 'A' && b <= 'Z')
+                b = (unsigned char)(b - 'A' + 'a');
+            if (a != b)
+                break;
             i++;
         }
-        if (i == nlen) return true;
+        if (i == nlen)
+            return true;
     }
     return false;
 }
 
-static const char *memory_write_policy_decide(const char *text, const char *kind,
-                                              const char *type, const char **reason) {
+static const char *memory_write_policy_decide(const char *text, const char *kind, const char *type,
+                                              const char **reason) {
     if (!memory_policy_has_signal(text)) {
-        if (reason) *reason = "empty_payload";
+        if (reason)
+            *reason = "empty_payload";
         return "rejected";
     }
     if ((kind && (strcmp(kind, "debug") == 0 || strcmp(kind, "scratch") == 0)) ||
         (type && (strcmp(type, "debug") == 0 || strcmp(type, "scratch") == 0)) ||
         memory_policy_contains_i(text, "temporary note") ||
         memory_policy_contains_i(text, "scratch note") ||
-        memory_policy_contains_i(text, "临时记录") ||
-        memory_policy_contains_i(text, "临时笔记") ||
+        memory_policy_contains_i(text, "临时记录") || memory_policy_contains_i(text, "临时笔记") ||
         memory_policy_contains_i(text, "草稿")) {
-        if (reason) *reason = "low_value_transient";
+        if (reason)
+            *reason = "low_value_transient";
         return "rejected";
     }
     if ((kind && (strcmp(kind, "preference") == 0 || strcmp(kind, "decision") == 0 ||
                   strcmp(kind, "constraint") == 0 || strcmp(kind, "lesson") == 0)) ||
         memory_policy_contains_i(text, "remember") ||
-        memory_policy_contains_i(text, "do not forget") ||
-        memory_policy_contains_i(text, "记住") ||
-        memory_policy_contains_i(text, "牢记") ||
-        memory_policy_contains_i(text, "别忘") ||
-        memory_policy_contains_i(text, "不要忘") ||
-        memory_policy_contains_i(text, "务必")) {
-        if (reason) *reason = "explicit_or_high_value";
+        memory_policy_contains_i(text, "do not forget") || memory_policy_contains_i(text, "记住") ||
+        memory_policy_contains_i(text, "牢记") || memory_policy_contains_i(text, "别忘") ||
+        memory_policy_contains_i(text, "不要忘") || memory_policy_contains_i(text, "务必")) {
+        if (reason)
+            *reason = "explicit_or_high_value";
         return "must_write";
     }
-    if (reason) *reason = "default_candidate";
+    if (reason)
+        *reason = "default_candidate";
     return "candidate";
 }
 static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     yyjson_doc *adoc = yyjson_read(args ? args : "{}", args ? strlen(args) : 2, 0);
-    if (!adoc) return cbm_mcp_text_result("invalid JSON arguments", true);
+    if (!adoc)
+        return cbm_mcp_text_result("invalid JSON arguments", true);
     char *project = memory_arg_string_dup(adoc, "project");
     char *type = memory_arg_string_dup(adoc, "type");
     char *source = memory_arg_string_dup(adoc, "source");
@@ -4149,13 +4171,25 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     double specificity = memory_arg_positive_double(adoc, "specificity", 0.5);
     yyjson_doc_free(adoc);
     if (!project || !payload) {
-        free(project); free(type); free(source); free(user); free(task); free(kind); free(layer);
-        free(title); free(summary); free(entity_key); free(predicate); free(payload); free(content);
+        free(project);
+        free(type);
+        free(source);
+        free(user);
+        free(task);
+        free(kind);
+        free(layer);
+        free(title);
+        free(summary);
+        free(entity_key);
+        free(predicate);
+        free(payload);
+        free(content);
         free(context_json);
         return cbm_mcp_text_result("project and payload are required", true);
     }
     const char *policy_reason = NULL;
-    const char *policy_decision = memory_write_policy_decide(content ? content : payload, kind, type, &policy_reason);
+    const char *policy_decision =
+        memory_write_policy_decide(content ? content : payload, kind, type, &policy_reason);
 
     /* Resolve the store early so we can write the audit event even for rejected writes. */
     cbm_store_t *store = resolve_memory_store(srv, project);
@@ -4175,9 +4209,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
             char audit_ctx[256];
             snprintf(audit_ctx, sizeof(audit_ctx),
                      "{\"policy_reason\":\"%s\",\"kind\":\"%s\",\"type\":\"%s\"}",
-                     policy_reason ? policy_reason : "",
-                     kind ? kind : "",
-                     type ? type : "");
+                     policy_reason ? policy_reason : "", kind ? kind : "", type ? type : "");
             audit_ev.context_json = audit_ctx;
             (void)cbm_store_memory_append_event(store, &audit_ev, NULL);
         }
@@ -4187,21 +4219,45 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         yyjson_mut_obj_add_str(doc, root, "status", "rejected");
         yyjson_mut_obj_add_str(doc, root, "policy_decision", policy_decision);
         yyjson_mut_obj_add_str(doc, root, "policy_reason", policy_reason ? policy_reason : "");
-        yyjson_mut_obj_add_str(doc, root, "hot_path", "write policy rejected; audit event written to memory_event");
+        yyjson_mut_obj_add_str(doc, root, "hot_path",
+                               "write policy rejected; audit event written to memory_event");
         char *json = yy_doc_to_str(doc);
         yyjson_mut_doc_free(doc);
         char *result = cbm_mcp_text_result(json, false);
         free(json);
-        free(project); free(type); free(source); free(user); free(task); free(kind); free(layer);
-        free(title); free(summary); free(entity_key); free(predicate); free(payload); free(content);
+        free(project);
+        free(type);
+        free(source);
+        free(user);
+        free(task);
+        free(kind);
+        free(layer);
+        free(title);
+        free(summary);
+        free(entity_key);
+        free(predicate);
+        free(payload);
+        free(content);
         free(context_json);
         return result;
     }
     if (!store) {
         char *_err = build_project_list_error("project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
-        free(_err); free(project); free(type); free(source); free(user); free(task); free(kind); free(layer);
-        free(title); free(summary); free(entity_key); free(predicate); free(payload); free(content);
+        free(_err);
+        free(project);
+        free(type);
+        free(source);
+        free(user);
+        free(task);
+        free(kind);
+        free(layer);
+        free(title);
+        free(summary);
+        free(entity_key);
+        free(predicate);
+        free(payload);
+        free(content);
         free(context_json);
         return _res;
     }
@@ -4220,15 +4276,37 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
      * layer (not inside the store append fns) because those fns are also called
      * standalone elsewhere — nesting a BEGIN inside them would fail. */
     if (cbm_store_begin(store) != CBM_STORE_OK) {
-        free(project); free(type); free(source); free(user); free(task); free(kind); free(layer);
-        free(title); free(summary); free(entity_key); free(predicate); free(payload); free(content);
+        free(project);
+        free(type);
+        free(source);
+        free(user);
+        free(task);
+        free(kind);
+        free(layer);
+        free(title);
+        free(summary);
+        free(entity_key);
+        free(predicate);
+        free(payload);
+        free(content);
         free(context_json);
         return cbm_mcp_text_result("failed to begin memory transaction", true);
     }
     if (cbm_store_memory_append_event(store, &event, &event_id) != CBM_STORE_OK) {
         cbm_store_rollback(store);
-        free(project); free(type); free(source); free(user); free(task); free(kind); free(layer);
-        free(title); free(summary); free(entity_key); free(predicate); free(payload); free(content);
+        free(project);
+        free(type);
+        free(source);
+        free(user);
+        free(task);
+        free(kind);
+        free(layer);
+        free(title);
+        free(summary);
+        free(entity_key);
+        free(predicate);
+        free(payload);
+        free(content);
         free(context_json);
         return cbm_mcp_text_result("failed to append memory event", true);
     }
@@ -4259,9 +4337,21 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
      * persist an orphan event. Otherwise commit both together. */
     if (item_rc != CBM_STORE_OK) {
         cbm_store_rollback(store);
-        free(event_id); free(item_id);
-        free(project); free(type); free(source); free(user); free(task); free(kind); free(layer);
-        free(title); free(summary); free(entity_key); free(predicate); free(payload); free(content);
+        free(event_id);
+        free(item_id);
+        free(project);
+        free(type);
+        free(source);
+        free(user);
+        free(task);
+        free(kind);
+        free(layer);
+        free(title);
+        free(summary);
+        free(entity_key);
+        free(predicate);
+        free(payload);
+        free(content);
         free(context_json);
         return cbm_mcp_text_result("failed to append memory candidate", true);
     }
@@ -4286,9 +4376,21 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
 
     if (cbm_store_commit(store) != CBM_STORE_OK) {
         cbm_store_rollback(store);
-        free(event_id); free(item_id);
-        free(project); free(type); free(source); free(user); free(task); free(kind); free(layer);
-        free(title); free(summary); free(entity_key); free(predicate); free(payload); free(content);
+        free(event_id);
+        free(item_id);
+        free(project);
+        free(type);
+        free(source);
+        free(user);
+        free(task);
+        free(kind);
+        free(layer);
+        free(title);
+        free(summary);
+        free(entity_key);
+        free(predicate);
+        free(payload);
+        free(content);
         free(context_json);
         return cbm_mcp_text_result("failed to commit memory transaction", true);
     }
@@ -4316,24 +4418,41 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     if (maint.decayed) {
         yyjson_mut_obj_add_int(doc, root, "decayed", maint.decay_count);
     }
-    yyjson_mut_obj_add_str(doc, root, "hot_path", "event+structured candidate only; consolidation builds dedup, vectors, and evidence edges");
+    yyjson_mut_obj_add_str(
+        doc, root, "hot_path",
+        "event+structured candidate only; consolidation builds dedup, vectors, and evidence edges");
     char *json = yy_doc_to_str(doc);
     yyjson_mut_doc_free(doc);
     char *result = cbm_mcp_text_result(json, false);
-    free(json); free(event_id); free(item_id);
-    free(project); free(type); free(source); free(user); free(task); free(kind); free(layer);
-    free(title); free(summary); free(entity_key); free(predicate); free(payload); free(content);
+    free(json);
+    free(event_id);
+    free(item_id);
+    free(project);
+    free(type);
+    free(source);
+    free(user);
+    free(task);
+    free(kind);
+    free(layer);
+    free(title);
+    free(summary);
+    free(entity_key);
+    free(predicate);
+    free(payload);
+    free(content);
     free(context_json);
     return result;
 }
 static char *handle_memories_retrieve(cbm_mcp_server_t *srv, const char *args) {
     char *project = cbm_mcp_get_string_arg(args, "project");
-    if (!project) return cbm_mcp_text_result("project is required", true);
+    if (!project)
+        return cbm_mcp_text_result("project is required", true);
     cbm_store_t *store = resolve_memory_store(srv, project);
     if (!store) {
         char *_err = build_project_list_error("project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
-        free(_err); free(project);
+        free(_err);
+        free(project);
         return _res;
     }
     /* Lazy auto-maintenance before reading, so a single-user agent sees freshly
@@ -4355,7 +4474,8 @@ static char *handle_memories_retrieve(cbm_mcp_server_t *srv, const char *args) {
     if (rc == CBM_STORE_OK && out.count > 0) {
         const char **ids = calloc((size_t)out.count, sizeof(char *));
         if (ids) {
-            for (int i = 0; i < out.count; i++) ids[i] = out.items[i].id;
+            for (int i = 0; i < out.count; i++)
+                ids[i] = out.items[i].id;
             (void)cbm_store_memory_mark_hits(store, ids, out.count, 0);
             free(ids);
         }
@@ -4367,24 +4487,34 @@ static char *handle_memories_retrieve(cbm_mcp_server_t *srv, const char *args) {
     yyjson_mut_obj_add_int(doc, root, "total", out.total);
     yyjson_mut_obj_add_int(doc, root, "count", out.count);
     yyjson_mut_val *arr = yyjson_mut_arr(doc);
-    for (int i = 0; i < out.count; i++) yyjson_mut_arr_add_val(arr, memory_item_to_json(doc, &out.items[i]));
+    for (int i = 0; i < out.count; i++)
+        yyjson_mut_arr_add_val(arr, memory_item_to_json(doc, &out.items[i]));
     yyjson_mut_obj_add_val(doc, root, "memories", arr);
     char *json = yy_doc_to_str(doc);
     yyjson_mut_doc_free(doc);
     char *result = cbm_mcp_text_result(json, rc != CBM_STORE_OK);
-    free(json); cbm_store_memory_result_free(&out);
-    free(project); free((char *)query.user); free((char *)query.task); free((char *)query.entity_key); free((char *)query.kind); free((char *)query.query); free((char *)query.code_context);
+    free(json);
+    cbm_store_memory_result_free(&out);
+    free(project);
+    free((char *)query.user);
+    free((char *)query.task);
+    free((char *)query.entity_key);
+    free((char *)query.kind);
+    free((char *)query.query);
+    free((char *)query.code_context);
     return result;
 }
 
 static char *handle_memories_inspect(cbm_mcp_server_t *srv, const char *args) {
     char *project = cbm_mcp_get_string_arg(args, "project");
-    if (!project) return cbm_mcp_text_result("project is required", true);
+    if (!project)
+        return cbm_mcp_text_result("project is required", true);
     cbm_store_t *store = resolve_memory_store(srv, project);
     if (!store) {
         char *_err = build_project_list_error("project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
-        free(_err); free(project);
+        free(_err);
+        free(project);
         return _res;
     }
     char *status = cbm_mcp_get_string_arg(args, "status");
@@ -4396,11 +4526,13 @@ static char *handle_memories_inspect(cbm_mcp_server_t *srv, const char *args) {
     snprintf(sql, sizeof(sql),
              "SELECT %s FROM memory_item m WHERE m.scope_project=?1 "
              "AND (?2 IS NULL OR m.status=?2) "
-             "ORDER BY m.updated_at DESC LIMIT ?3;", cols);
+             "ORDER BY m.updated_at DESC LIMIT ?3;",
+             cols);
     sqlite3 *db = cbm_store_get_db(store);
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
-        free(project); free(status);
+        free(project);
+        free(status);
         return cbm_mcp_text_result("inspect query failed", true);
     }
     sqlite3_bind_text(stmt, 1, project, -1, SQLITE_TRANSIENT);
@@ -4420,8 +4552,10 @@ static char *handle_memories_inspect(cbm_mcp_server_t *srv, const char *args) {
     while (sqlite3_step(stmt) == SQLITE_ROW && n < limit) {
         yyjson_mut_val *obj = yyjson_mut_obj(doc);
         yyjson_mut_obj_add_strcpy(doc, obj, "id", (const char *)sqlite3_column_text(stmt, 0));
-        yyjson_mut_obj_add_strcpy(doc, obj, "entity_key", (const char *)sqlite3_column_text(stmt, 1));
-        yyjson_mut_obj_add_strcpy(doc, obj, "predicate", (const char *)sqlite3_column_text(stmt, 2));
+        yyjson_mut_obj_add_strcpy(doc, obj, "entity_key",
+                                  (const char *)sqlite3_column_text(stmt, 1));
+        yyjson_mut_obj_add_strcpy(doc, obj, "predicate",
+                                  (const char *)sqlite3_column_text(stmt, 2));
         yyjson_mut_obj_add_strcpy(doc, obj, "status", (const char *)sqlite3_column_text(stmt, 3));
         yyjson_mut_obj_add_strcpy(doc, obj, "kind", (const char *)sqlite3_column_text(stmt, 4));
         yyjson_mut_obj_add_strcpy(doc, obj, "layer", (const char *)sqlite3_column_text(stmt, 5));
@@ -4440,7 +4574,9 @@ static char *handle_memories_inspect(cbm_mcp_server_t *srv, const char *args) {
     char *json = yy_doc_to_str(doc);
     yyjson_mut_doc_free(doc);
     char *result = cbm_mcp_text_result(json, false);
-    free(json); free(project); free(status);
+    free(json);
+    free(project);
+    free(status);
     return result;
 }
 
@@ -4449,14 +4585,19 @@ static char *handle_memory_update_status(cbm_mcp_server_t *srv, const char *args
     char *id = cbm_mcp_get_string_arg(args, "id");
     char *status = cbm_mcp_get_string_arg(args, "status");
     if (!project || !id || !status) {
-        free(project); free(id); free(status);
+        free(project);
+        free(id);
+        free(status);
         return cbm_mcp_text_result("project, id, and status are required", true);
     }
     cbm_store_t *store = resolve_memory_store(srv, project);
     if (!store) {
         char *_err = build_project_list_error("project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
-        free(_err); free(project); free(id); free(status);
+        free(_err);
+        free(project);
+        free(id);
+        free(status);
         return _res;
     }
     int rc = cbm_store_memory_update_status(store, id, project, status);
@@ -4465,12 +4606,17 @@ static char *handle_memory_update_status(cbm_mcp_server_t *srv, const char *args
     yyjson_mut_doc_set_root(doc, root);
     yyjson_mut_obj_add_str(doc, root, "project", project);
     yyjson_mut_obj_add_str(doc, root, "id", id);
-    yyjson_mut_obj_add_str(doc, root, "status", rc == CBM_STORE_NOT_FOUND ? "not_found" : (rc == CBM_STORE_OK ? "updated" : "error"));
+    yyjson_mut_obj_add_str(doc, root, "status",
+                           rc == CBM_STORE_NOT_FOUND ? "not_found"
+                                                     : (rc == CBM_STORE_OK ? "updated" : "error"));
     yyjson_mut_obj_add_str(doc, root, "item_status", status);
     char *json = yy_doc_to_str(doc);
     yyjson_mut_doc_free(doc);
     char *result = cbm_mcp_text_result(json, rc != CBM_STORE_OK);
-    free(json); free(project); free(id); free(status);
+    free(json);
+    free(project);
+    free(id);
+    free(status);
     return result;
 }
 
@@ -4481,14 +4627,23 @@ static char *handle_memory_feedback(cbm_mcp_server_t *srv, const char *args) {
     char *note = cbm_mcp_get_string_arg(args, "note");
     char *user = cbm_mcp_get_string_arg(args, "user");
     if (!project || !id || !feedback) {
-        free(project); free(id); free(feedback); free(note); free(user);
+        free(project);
+        free(id);
+        free(feedback);
+        free(note);
+        free(user);
         return cbm_mcp_text_result("project, id, and feedback are required", true);
     }
     cbm_store_t *store = resolve_memory_store(srv, project);
     if (!store) {
         char *_err = build_project_list_error("project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
-        free(_err); free(project); free(id); free(feedback); free(note); free(user);
+        free(_err);
+        free(project);
+        free(id);
+        free(feedback);
+        free(note);
+        free(user);
         return _res;
     }
     char *event_id = NULL;
@@ -4499,22 +4654,33 @@ static char *handle_memory_feedback(cbm_mcp_server_t *srv, const char *args) {
     yyjson_mut_obj_add_str(doc, root, "project", project);
     yyjson_mut_obj_add_str(doc, root, "id", id);
     yyjson_mut_obj_add_str(doc, root, "feedback", feedback);
-    yyjson_mut_obj_add_str(doc, root, "status", rc == CBM_STORE_NOT_FOUND ? "not_found" : (rc == CBM_STORE_OK ? "recorded" : "error"));
+    yyjson_mut_obj_add_str(doc, root, "status",
+                           rc == CBM_STORE_NOT_FOUND ? "not_found"
+                                                     : (rc == CBM_STORE_OK ? "recorded" : "error"));
     yyjson_mut_obj_add_str(doc, root, "event_id", event_id ? event_id : "");
     char *json = yy_doc_to_str(doc);
     yyjson_mut_doc_free(doc);
     char *result = cbm_mcp_text_result(json, rc != CBM_STORE_OK);
-    free(json); free(event_id); free(project); free(id); free(feedback); free(note); free(user);
+    free(json);
+    free(event_id);
+    free(project);
+    free(id);
+    free(feedback);
+    free(note);
+    free(user);
     return result;
 }
 
 static char *handle_memory_delete(cbm_mcp_server_t *srv, const char *args) {
     char *project = cbm_mcp_get_string_arg(args, "project");
-    char *id      = cbm_mcp_get_string_arg(args, "id");
-    char *mode    = cbm_mcp_get_string_arg(args, "mode");
-    char *user    = cbm_mcp_get_string_arg(args, "user");
+    char *id = cbm_mcp_get_string_arg(args, "id");
+    char *mode = cbm_mcp_get_string_arg(args, "mode");
+    char *user = cbm_mcp_get_string_arg(args, "user");
     if (!project || !id) {
-        free(project); free(id); free(mode); free(user);
+        free(project);
+        free(id);
+        free(mode);
+        free(user);
         return cbm_mcp_text_result("project and id are required", true);
     }
     const char *m = (mode && mode[0]) ? mode : "soft";
@@ -4522,7 +4688,11 @@ static char *handle_memory_delete(cbm_mcp_server_t *srv, const char *args) {
     if (!store) {
         char *_err = build_project_list_error("project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
-        free(_err); free(project); free(id); free(mode); free(user);
+        free(_err);
+        free(project);
+        free(id);
+        free(mode);
+        free(user);
         return _res;
     }
     int rc;
@@ -4545,26 +4715,34 @@ static char *handle_memory_delete(cbm_mcp_server_t *srv, const char *args) {
     yyjson_mut_obj_add_str(doc, root, "id", id);
     yyjson_mut_obj_add_str(doc, root, "mode", m);
     yyjson_mut_obj_add_str(doc, root, "status",
-        rc == CBM_STORE_NOT_FOUND ? "not_found" : (rc == CBM_STORE_OK ? ok_status : "error"));
+                           rc == CBM_STORE_NOT_FOUND ? "not_found"
+                                                     : (rc == CBM_STORE_OK ? ok_status : "error"));
     char *json = yy_doc_to_str(doc);
     yyjson_mut_doc_free(doc);
     char *result = cbm_mcp_text_result(json, rc != CBM_STORE_OK && rc != CBM_STORE_NOT_FOUND);
-    free(json); free(project); free(id); free(mode); free(user);
+    free(json);
+    free(project);
+    free(id);
+    free(mode);
+    free(user);
     return result;
 }
 
 static char *handle_admin_consolidate(cbm_mcp_server_t *srv, const char *args) {
     char *project = cbm_mcp_get_string_arg(args, "project");
-    if (!project) return cbm_mcp_text_result("project is required", true);
+    if (!project)
+        return cbm_mcp_text_result("project is required", true);
     cbm_store_t *store = resolve_memory_store(srv, project);
     if (!store) {
         char *_err = build_project_list_error("project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
-        free(_err); free(project);
+        free(_err);
+        free(project);
         return _res;
     }
     int processed = 0;
-    int rc = cbm_store_memory_consolidate(store, project, cbm_mcp_get_int_arg(args, "limit", 100), &processed);
+    int rc = cbm_store_memory_consolidate(store, project, cbm_mcp_get_int_arg(args, "limit", 100),
+                                          &processed);
     /* Rebuild the FTS index with current CJK segmentation so memories indexed
      * before bigram segmentation existed become searchable in Chinese. Pass
      * skip_reindex_fts=true to skip on large stores where the rebuild is costly. */
@@ -4582,22 +4760,26 @@ static char *handle_admin_consolidate(cbm_mcp_server_t *srv, const char *args) {
     char *json = yy_doc_to_str(doc);
     yyjson_mut_doc_free(doc);
     char *result = cbm_mcp_text_result(json, rc != CBM_STORE_OK);
-    free(json); free(project);
+    free(json);
+    free(project);
     return result;
 }
 
 static char *handle_admin_decay(cbm_mcp_server_t *srv, const char *args) {
     char *project = cbm_mcp_get_string_arg(args, "project");
-    if (!project) return cbm_mcp_text_result("project is required", true);
+    if (!project)
+        return cbm_mcp_text_result("project is required", true);
     cbm_store_t *store = resolve_memory_store(srv, project);
     if (!store) {
         char *_err = build_project_list_error("project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
-        free(_err); free(project);
+        free(_err);
+        free(project);
         return _res;
     }
     int processed = 0;
-    int rc = cbm_store_memory_decay(store, project, cbm_mcp_get_int_arg(args, "limit", 100), &processed);
+    int rc =
+        cbm_store_memory_decay(store, project, cbm_mcp_get_int_arg(args, "limit", 100), &processed);
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
@@ -4607,17 +4789,20 @@ static char *handle_admin_decay(cbm_mcp_server_t *srv, const char *args) {
     char *json = yy_doc_to_str(doc);
     yyjson_mut_doc_free(doc);
     char *result = cbm_mcp_text_result(json, rc != CBM_STORE_OK);
-    free(json); free(project);
+    free(json);
+    free(project);
     return result;
 }
 static char *handle_memory_health(cbm_mcp_server_t *srv, const char *args) {
     char *project = cbm_mcp_get_string_arg(args, "project");
-    if (!project) return cbm_mcp_text_result("project is required", true);
+    if (!project)
+        return cbm_mcp_text_result("project is required", true);
     cbm_store_t *store = resolve_memory_store(srv, project);
     if (!store) {
         char *_err = build_project_list_error("project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
-        free(_err); free(project);
+        free(_err);
+        free(project);
         return _res;
     }
     cbm_memory_health_t h = {0};
@@ -4642,7 +4827,8 @@ static char *handle_memory_health(cbm_mcp_server_t *srv, const char *args) {
     char *json = yy_doc_to_str(doc);
     yyjson_mut_doc_free(doc);
     char *result = cbm_mcp_text_result(json, rc != CBM_STORE_OK);
-    free(json); free(project);
+    free(json);
+    free(project);
     return result;
 }
 
@@ -4709,7 +4895,8 @@ char *cbm_mcp_handle_tool(cbm_mcp_server_t *srv, const char *tool_name, const ch
     if (strcmp(tool_name, "memory_delete") == 0) {
         return handle_memory_delete(srv, args_json);
     }
-    if (strcmp(tool_name, "admin_consolidate") == 0 || strcmp(tool_name, "memory_consolidate") == 0) {
+    if (strcmp(tool_name, "admin_consolidate") == 0 ||
+        strcmp(tool_name, "memory_consolidate") == 0) {
         return handle_admin_consolidate(srv, args_json);
     }
     if (strcmp(tool_name, "admin_decay") == 0 || strcmp(tool_name, "memory_decay") == 0) {

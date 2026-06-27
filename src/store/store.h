@@ -137,7 +137,7 @@ typedef struct {
     int deprecated_count;
     int archived_count;
     int retracted_count;
-    int deleted_count;     /* soft-deleted, awaiting retention-sweep physical purge */
+    int deleted_count; /* soft-deleted, awaiting retention-sweep physical purge */
     int conflict_count;
     int scope_count;
     double hit_rate;
@@ -147,14 +147,13 @@ typedef struct {
 /* Report from cbm_store_memory_maintain_if_due: what (if anything) the lazy
  * auto-maintenance pass actually did this call. */
 typedef struct {
-    bool consolidated;       /* consolidate pass ran */
-    int consolidate_count;   /* candidates processed by it */
-    bool decayed;            /* decay pass ran */
-    int decay_count;         /* items decayed/archived by it */
-    bool swept;              /* retention sweep ran */
-    int sweep_count;         /* expired soft-deletes physically purged by it */
+    bool consolidated;     /* consolidate pass ran */
+    int consolidate_count; /* candidates processed by it */
+    bool decayed;          /* decay pass ran */
+    int decay_count;       /* items decayed/archived by it */
+    bool swept;            /* retention sweep ran */
+    int sweep_count;       /* expired soft-deletes physically purged by it */
 } cbm_memory_maintain_report_t;
-
 
 /* Find nodes overlapping a line range in a file (excludes Module/Package). */
 int cbm_store_find_nodes_by_file_overlap(cbm_store_t *s, const char *project, const char *file_path,
@@ -487,9 +486,11 @@ int cbm_store_memory_link_code(cbm_store_t *s, const char *item_id, const char *
 int cbm_store_memory_retrieve(cbm_store_t *s, const cbm_memory_query_t *query,
                               cbm_memory_result_t *out);
 int cbm_store_memory_mark_hits(cbm_store_t *s, const char **ids, int count, int64_t now_ms);
-int cbm_store_memory_update_status(cbm_store_t *s, const char *id, const char *project, const char *status);
-int cbm_store_memory_feedback(cbm_store_t *s, const char *id, const char *project, const char *feedback,
-                              const char *note, const char *user, char **out_event_id);
+int cbm_store_memory_update_status(cbm_store_t *s, const char *id, const char *project,
+                                   const char *status);
+int cbm_store_memory_feedback(cbm_store_t *s, const char *id, const char *project,
+                              const char *feedback, const char *note, const char *user,
+                              char **out_event_id);
 /* Delete a memory item (P0-2). mode (default "soft" when NULL/empty):
  *   "soft"  — mark deleted_at; hidden from retrieval, undoable via restore until
  *             the retention sweep physically purges it past the grace window.
@@ -501,18 +502,17 @@ int cbm_store_memory_feedback(cbm_store_t *s, const char *id, const char *projec
  * scope_project returns CBM_STORE_NOT_FOUND. Returns CBM_STORE_OK,
  * CBM_STORE_NOT_FOUND (no such item / already soft-deleted / out of scope), or
  * CBM_STORE_ERR. */
-int cbm_store_memory_delete(cbm_store_t *s, const char *id, const char *project,
-                            const char *mode, const char *user);
+int cbm_store_memory_delete(cbm_store_t *s, const char *id, const char *project, const char *mode,
+                            const char *user);
 /* Undo a soft delete: clear deleted_at, scope-guarded, writes a restore audit
  * event. Returns CBM_STORE_NOT_FOUND if the item isn't soft-deleted. */
-int cbm_store_memory_restore(cbm_store_t *s, const char *id, const char *project,
-                             const char *user);
+int cbm_store_memory_restore(cbm_store_t *s, const char *id, const char *project, const char *user);
 /* Retention sweep: physically purge every item soft-deleted more than grace_ms
  * ago (full purge, source events included — the grace window was the undo
  * chance). Collects ids first then deletes in one batch transaction. *purged
  * receives the count removed. */
-int cbm_store_memory_purge_expired(cbm_store_t *s, const char *project,
-                                   int64_t grace_ms, int *purged);
+int cbm_store_memory_purge_expired(cbm_store_t *s, const char *project, int64_t grace_ms,
+                                   int *purged);
 int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit, int *processed);
 int cbm_store_memory_decay(cbm_store_t *s, const char *project, int limit, int *processed);
 /* Lazy auto-maintenance: runs consolidate and/or decay only when "due" (by a
@@ -530,7 +530,6 @@ int cbm_store_memory_reindex_fts(cbm_store_t *s, const char *project, int *proce
 int cbm_store_memory_health(cbm_store_t *s, const char *project, cbm_memory_health_t *out);
 void cbm_store_memory_item_free(cbm_memory_item_t *item);
 void cbm_store_memory_result_free(cbm_memory_result_t *out);
-
 
 /* ── Search ─────────────────────────────────────────────────────── */
 

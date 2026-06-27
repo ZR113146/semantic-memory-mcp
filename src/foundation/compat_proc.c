@@ -24,12 +24,12 @@
 #include "foundation/win_utf8.h"
 
 struct cbm_proc {
-    HANDLE child;       /* process handle */
-    HANDLE in_w;        /* write end -> child's stdin */
-    HANDLE out_r;       /* read end  <- child's stdout */
-    char *rbuf;         /* read buffer for line assembly */
-    size_t rlen;        /* bytes currently in rbuf */
-    size_t rcap;        /* capacity of rbuf */
+    HANDLE child; /* process handle */
+    HANDLE in_w;  /* write end -> child's stdin */
+    HANDLE out_r; /* read end  <- child's stdout */
+    char *rbuf;   /* read buffer for line assembly */
+    size_t rlen;  /* bytes currently in rbuf */
+    size_t rcap;  /* capacity of rbuf */
 };
 
 /* Build a CreateProcess command line from argv with minimal quoting: each arg
@@ -39,25 +39,34 @@ static wchar_t *build_cmdline(const char *const *argv) {
     /* Compose a UTF-8 command line first, then widen. */
     size_t cap = 256, len = 0;
     char *cmd = (char *)malloc(cap);
-    if (!cmd) return NULL;
+    if (!cmd)
+        return NULL;
     cmd[0] = '\0';
     for (int i = 0; argv[i]; i++) {
         const char *a = argv[i];
         bool need_q = (a[0] == '\0') || strpbrk(a, " \t\"") != NULL;
         size_t need = strlen(a) * 2 + 4;
         if (len + need + 2 >= cap) {
-            while (len + need + 2 >= cap) cap *= 2;
+            while (len + need + 2 >= cap)
+                cap *= 2;
             char *n = (char *)realloc(cmd, cap);
-            if (!n) { free(cmd); return NULL; }
+            if (!n) {
+                free(cmd);
+                return NULL;
+            }
             cmd = n;
         }
-        if (i > 0) cmd[len++] = ' ';
-        if (need_q) cmd[len++] = '"';
+        if (i > 0)
+            cmd[len++] = ' ';
+        if (need_q)
+            cmd[len++] = '"';
         for (const char *p = a; *p; p++) {
-            if (*p == '"') cmd[len++] = '"'; /* double embedded quotes */
+            if (*p == '"')
+                cmd[len++] = '"'; /* double embedded quotes */
             cmd[len++] = *p;
         }
-        if (need_q) cmd[len++] = '"';
+        if (need_q)
+            cmd[len++] = '"';
         cmd[len] = '\0';
     }
     wchar_t *w = cbm_utf8_to_wide(cmd);
@@ -66,16 +75,19 @@ static wchar_t *build_cmdline(const char *const *argv) {
 }
 
 cbm_proc_t *cbm_proc_spawn(const char *const *argv) {
-    if (!argv || !argv[0]) return NULL;
+    if (!argv || !argv[0])
+        return NULL;
 
     SECURITY_ATTRIBUTES sa = {0};
     sa.nLength = sizeof(sa);
     sa.bInheritHandle = TRUE;
 
     HANDLE in_r = NULL, in_w = NULL, out_r = NULL, out_w = NULL;
-    if (!CreatePipe(&in_r, &in_w, &sa, 0)) return NULL;
+    if (!CreatePipe(&in_r, &in_w, &sa, 0))
+        return NULL;
     if (!CreatePipe(&out_r, &out_w, &sa, 0)) {
-        CloseHandle(in_r); CloseHandle(in_w);
+        CloseHandle(in_r);
+        CloseHandle(in_w);
         return NULL;
     }
     /* The parent's own ends must NOT be inherited by the child. */
@@ -84,7 +96,10 @@ cbm_proc_t *cbm_proc_spawn(const char *const *argv) {
 
     wchar_t *cmdline = build_cmdline(argv);
     if (!cmdline) {
-        CloseHandle(in_r); CloseHandle(in_w); CloseHandle(out_r); CloseHandle(out_w);
+        CloseHandle(in_r);
+        CloseHandle(in_w);
+        CloseHandle(out_r);
+        CloseHandle(out_w);
         return NULL;
     }
 
@@ -102,14 +117,16 @@ cbm_proc_t *cbm_proc_spawn(const char *const *argv) {
     CloseHandle(in_r);
     CloseHandle(out_w);
     if (!ok) {
-        CloseHandle(in_w); CloseHandle(out_r);
+        CloseHandle(in_w);
+        CloseHandle(out_r);
         return NULL;
     }
     CloseHandle(pi.hThread);
 
     cbm_proc_t *p = (cbm_proc_t *)calloc(1, sizeof(*p));
     if (!p) {
-        CloseHandle(in_w); CloseHandle(out_r);
+        CloseHandle(in_w);
+        CloseHandle(out_r);
         TerminateProcess(pi.hProcess, 1);
         CloseHandle(pi.hProcess);
         return NULL;
@@ -119,24 +136,31 @@ cbm_proc_t *cbm_proc_spawn(const char *const *argv) {
     p->out_r = out_r;
     p->rcap = 8192;
     p->rbuf = (char *)malloc(p->rcap);
-    if (!p->rbuf) { cbm_proc_close(p); return NULL; }
+    if (!p->rbuf) {
+        cbm_proc_close(p);
+        return NULL;
+    }
     return p;
 }
 
 int cbm_proc_write_line(cbm_proc_t *p, const char *line) {
-    if (!p || !p->in_w || !line) return 1;
+    if (!p || !p->in_w || !line)
+        return 1;
     size_t n = strlen(line);
     DWORD wrote = 0;
-    if (n > 0 && !WriteFile(p->in_w, line, (DWORD)n, &wrote, NULL)) return 1;
+    if (n > 0 && !WriteFile(p->in_w, line, (DWORD)n, &wrote, NULL))
+        return 1;
     if (n == 0 || line[n - 1] != '\n') {
         char nl = '\n';
-        if (!WriteFile(p->in_w, &nl, 1, &wrote, NULL)) return 1;
+        if (!WriteFile(p->in_w, &nl, 1, &wrote, NULL))
+            return 1;
     }
     return 0;
 }
 
 long cbm_proc_read_line(cbm_proc_t *p, char *buf, size_t buf_sz) {
-    if (!p || !p->out_r || !buf || buf_sz == 0) return -1;
+    if (!p || !p->out_r || !buf || buf_sz == 0)
+        return -1;
     for (;;) {
         /* Is there a newline already buffered? */
         for (size_t i = 0; i < p->rlen; i++) {
@@ -156,11 +180,14 @@ long cbm_proc_read_line(cbm_proc_t *p, char *buf, size_t buf_sz) {
         if (p->rlen == p->rcap) {
             size_t ncap = p->rcap * 2;
             char *nb = (char *)realloc(p->rbuf, ncap);
-            if (!nb) return -1;
-            p->rbuf = nb; p->rcap = ncap;
+            if (!nb)
+                return -1;
+            p->rbuf = nb;
+            p->rcap = ncap;
         }
         DWORD got = 0;
-        if (!ReadFile(p->out_r, p->rbuf + p->rlen, (DWORD)(p->rcap - p->rlen), &got, NULL) || got == 0) {
+        if (!ReadFile(p->out_r, p->rbuf + p->rlen, (DWORD)(p->rcap - p->rlen), &got, NULL) ||
+            got == 0) {
             /* EOF or error: flush any trailing partial line. */
             if (p->rlen > 0) {
                 size_t copy = p->rlen < buf_sz - 1 ? p->rlen : buf_sz - 1;
@@ -176,9 +203,12 @@ long cbm_proc_read_line(cbm_proc_t *p, char *buf, size_t buf_sz) {
 }
 
 void cbm_proc_close(cbm_proc_t *p) {
-    if (!p) return;
-    if (p->in_w) CloseHandle(p->in_w);
-    if (p->out_r) CloseHandle(p->out_r);
+    if (!p)
+        return;
+    if (p->in_w)
+        CloseHandle(p->in_w);
+    if (p->out_r)
+        CloseHandle(p->out_r);
     if (p->child) {
         /* Closing stdin should let a well-behaved child exit; give it a beat,
          * then terminate. */
@@ -200,25 +230,30 @@ void cbm_proc_close(cbm_proc_t *p) {
 
 struct cbm_proc {
     pid_t child;
-    int in_w;   /* write -> child stdin */
-    int out_r;  /* read  <- child stdout */
+    int in_w;  /* write -> child stdin */
+    int out_r; /* read  <- child stdout */
     char *rbuf;
     size_t rlen;
     size_t rcap;
 };
 
 cbm_proc_t *cbm_proc_spawn(const char *const *argv) {
-    if (!argv || !argv[0]) return NULL;
+    if (!argv || !argv[0])
+        return NULL;
     int in_pipe[2], out_pipe[2];
-    if (pipe(in_pipe) != 0) return NULL;
+    if (pipe(in_pipe) != 0)
+        return NULL;
     if (pipe(out_pipe) != 0) {
-        close(in_pipe[0]); close(in_pipe[1]);
+        close(in_pipe[0]);
+        close(in_pipe[1]);
         return NULL;
     }
     pid_t pid = fork();
     if (pid < 0) {
-        close(in_pipe[0]); close(in_pipe[1]);
-        close(out_pipe[0]); close(out_pipe[1]);
+        close(in_pipe[0]);
+        close(in_pipe[1]);
+        close(out_pipe[0]);
+        close(out_pipe[1]);
         return NULL;
     }
     if (pid == 0) {
@@ -226,8 +261,10 @@ cbm_proc_t *cbm_proc_spawn(const char *const *argv) {
         dup2(in_pipe[0], STDIN_FILENO);
         dup2(out_pipe[1], STDOUT_FILENO);
         /* Close all pipe fds (originals + dups beyond the std ones). */
-        close(in_pipe[0]); close(in_pipe[1]);
-        close(out_pipe[0]); close(out_pipe[1]);
+        close(in_pipe[0]);
+        close(in_pipe[1]);
+        close(out_pipe[0]);
+        close(out_pipe[1]);
         execvp(argv[0], (char *const *)argv);
         _exit(127); /* exec failed */
     }
@@ -237,7 +274,8 @@ cbm_proc_t *cbm_proc_spawn(const char *const *argv) {
 
     cbm_proc_t *p = (cbm_proc_t *)calloc(1, sizeof(*p));
     if (!p) {
-        close(in_pipe[1]); close(out_pipe[0]);
+        close(in_pipe[1]);
+        close(out_pipe[0]);
         kill(pid, SIGKILL);
         waitpid(pid, NULL, 0);
         return NULL;
@@ -247,18 +285,23 @@ cbm_proc_t *cbm_proc_spawn(const char *const *argv) {
     p->out_r = out_pipe[0];
     p->rcap = 8192;
     p->rbuf = (char *)malloc(p->rcap);
-    if (!p->rbuf) { cbm_proc_close(p); return NULL; }
+    if (!p->rbuf) {
+        cbm_proc_close(p);
+        return NULL;
+    }
     return p;
 }
 
 int cbm_proc_write_line(cbm_proc_t *p, const char *line) {
-    if (!p || p->in_w < 0 || !line) return 1;
+    if (!p || p->in_w < 0 || !line)
+        return 1;
     size_t n = strlen(line);
     size_t off = 0;
     while (off < n) {
         ssize_t w = write(p->in_w, line + off, n - off);
         if (w < 0) {
-            if (errno == EINTR) continue;
+            if (errno == EINTR)
+                continue;
             return 1;
         }
         off += (size_t)w;
@@ -266,14 +309,18 @@ int cbm_proc_write_line(cbm_proc_t *p, const char *line) {
     if (n == 0 || line[n - 1] != '\n') {
         char nl = '\n';
         ssize_t w;
-        do { w = write(p->in_w, &nl, 1); } while (w < 0 && errno == EINTR);
-        if (w < 0) return 1;
+        do {
+            w = write(p->in_w, &nl, 1);
+        } while (w < 0 && errno == EINTR);
+        if (w < 0)
+            return 1;
     }
     return 0;
 }
 
 long cbm_proc_read_line(cbm_proc_t *p, char *buf, size_t buf_sz) {
-    if (!p || p->out_r < 0 || !buf || buf_sz == 0) return -1;
+    if (!p || p->out_r < 0 || !buf || buf_sz == 0)
+        return -1;
     for (;;) {
         for (size_t i = 0; i < p->rlen; i++) {
             if (p->rbuf[i] == '\n') {
@@ -289,12 +336,15 @@ long cbm_proc_read_line(cbm_proc_t *p, char *buf, size_t buf_sz) {
         if (p->rlen == p->rcap) {
             size_t ncap = p->rcap * 2;
             char *nb = (char *)realloc(p->rbuf, ncap);
-            if (!nb) return -1;
-            p->rbuf = nb; p->rcap = ncap;
+            if (!nb)
+                return -1;
+            p->rbuf = nb;
+            p->rcap = ncap;
         }
         ssize_t got = read(p->out_r, p->rbuf + p->rlen, p->rcap - p->rlen);
         if (got < 0) {
-            if (errno == EINTR) continue;
+            if (errno == EINTR)
+                continue;
             return -1;
         }
         if (got == 0) {
@@ -312,15 +362,21 @@ long cbm_proc_read_line(cbm_proc_t *p, char *buf, size_t buf_sz) {
 }
 
 void cbm_proc_close(cbm_proc_t *p) {
-    if (!p) return;
-    if (p->in_w >= 0) close(p->in_w);   /* EOF on child's stdin */
-    if (p->out_r >= 0) close(p->out_r);
+    if (!p)
+        return;
+    if (p->in_w >= 0)
+        close(p->in_w); /* EOF on child's stdin */
+    if (p->out_r >= 0)
+        close(p->out_r);
     if (p->child > 0) {
         /* Reap; if it lingers, SIGKILL. */
         for (int i = 0; i < 20; i++) {
             int st;
             pid_t r = waitpid(p->child, &st, WNOHANG);
-            if (r == p->child || r < 0) { p->child = 0; break; }
+            if (r == p->child || r < 0) {
+                p->child = 0;
+                break;
+            }
             struct timespec ts = {0, 10 * 1000 * 1000}; /* 10ms */
             nanosleep(&ts, NULL);
         }

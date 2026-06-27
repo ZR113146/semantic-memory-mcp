@@ -188,18 +188,26 @@ static char *heap_strdup(const char *s) {
  * Returns the codepoint, or the raw byte on malformed input (adv=1). */
 static uint32_t mem_utf8_decode(const unsigned char *p, int *adv) {
     unsigned char c = p[0];
-    if (c < 0x80) { *adv = 1; return c; }
+    if (c < 0x80) {
+        *adv = 1;
+        return c;
+    }
     if ((c & 0xE0) == 0xC0 && (p[1] & 0xC0) == 0x80) {
-        *adv = 2; return ((uint32_t)(c & 0x1F) << 6) | (p[1] & 0x3F);
+        *adv = 2;
+        return ((uint32_t)(c & 0x1F) << 6) | (p[1] & 0x3F);
     }
     if ((c & 0xF0) == 0xE0 && (p[1] & 0xC0) == 0x80 && (p[2] & 0xC0) == 0x80) {
-        *adv = 3; return ((uint32_t)(c & 0x0F) << 12) | ((uint32_t)(p[1] & 0x3F) << 6) | (p[2] & 0x3F);
+        *adv = 3;
+        return ((uint32_t)(c & 0x0F) << 12) | ((uint32_t)(p[1] & 0x3F) << 6) | (p[2] & 0x3F);
     }
-    if ((c & 0xF8) == 0xF0 && (p[1] & 0xC0) == 0x80 && (p[2] & 0xC0) == 0x80 && (p[3] & 0xC0) == 0x80) {
-        *adv = 4; return ((uint32_t)(c & 0x07) << 18) | ((uint32_t)(p[1] & 0x3F) << 12) |
-                          ((uint32_t)(p[2] & 0x3F) << 6) | (p[3] & 0x3F);
+    if ((c & 0xF8) == 0xF0 && (p[1] & 0xC0) == 0x80 && (p[2] & 0xC0) == 0x80 &&
+        (p[3] & 0xC0) == 0x80) {
+        *adv = 4;
+        return ((uint32_t)(c & 0x07) << 18) | ((uint32_t)(p[1] & 0x3F) << 12) |
+               ((uint32_t)(p[2] & 0x3F) << 6) | (p[3] & 0x3F);
     }
-    *adv = 1; return c;
+    *adv = 1;
+    return c;
 }
 
 /* True for CJK codepoints we want to segment into character bigrams:
@@ -207,9 +215,9 @@ static uint32_t mem_utf8_decode(const unsigned char *p, int *adv) {
  * These scripts have no word spaces, so unicode61 indexes a whole run as one
  * token and substring MATCH fails — bigram splitting restores recall. */
 static int mem_is_cjk(uint32_t cp) {
-    return (cp >= 0x3400 && cp <= 0x9FFF)   /* CJK Unified + Ext-A */
-        || (cp >= 0xF900 && cp <= 0xFAFF)   /* CJK compatibility ideographs */
-        || (cp >= 0x3040 && cp <= 0x30FF);  /* Hiragana + Katakana */
+    return (cp >= 0x3400 && cp <= 0x9FFF)     /* CJK Unified + Ext-A */
+           || (cp >= 0xF900 && cp <= 0xFAFF)  /* CJK compatibility ideographs */
+           || (cp >= 0x3040 && cp <= 0x30FF); /* Hiragana + Katakana */
 }
 
 /* Segment UTF-8 text for FTS indexing/query (zhiwei-kb lattice approach, lite):
@@ -233,11 +241,13 @@ static char *memory_segment_cjk(const char *text) {
     size_t w = 0;
     int need_space = 0; /* a separator is needed before the next token */
 
-#define MEM_SEG_PUT(src, n) do {                          \
-        if (need_space && w < cap) out[w++] = ' ';        \
-        for (int _i = 0; _i < (n) && w < cap; _i++)       \
-            out[w++] = (src)[_i];                         \
-        need_space = 1;                                   \
+#define MEM_SEG_PUT(src, n)                         \
+    do {                                            \
+        if (need_space && w < cap)                  \
+            out[w++] = ' ';                         \
+        for (int _i = 0; _i < (n) && w < cap; _i++) \
+            out[w++] = (src)[_i];                   \
+        need_space = 1;                             \
     } while (0)
 
     const unsigned char *p = (const unsigned char *)text;
@@ -255,7 +265,8 @@ static char *memory_segment_cjk(const char *text) {
             while (q < end && nchar < (int)(sizeof(offs) / sizeof(offs[0]))) {
                 int a = 1;
                 uint32_t c = mem_utf8_decode(q, &a);
-                if (!mem_is_cjk(c)) break;
+                if (!mem_is_cjk(c))
+                    break;
                 offs[nchar++] = (size_t)(q - run_start);
                 q += a;
             }
@@ -273,8 +284,8 @@ static char *memory_segment_cjk(const char *text) {
             continue;
         }
 
-        int is_ascii_word = (cp < 0x80) &&
-            ((cp >= 'a' && cp <= 'z') || (cp >= 'A' && cp <= 'Z') || (cp >= '0' && cp <= '9') || cp == '_');
+        int is_ascii_word = (cp < 0x80) && ((cp >= 'a' && cp <= 'z') || (cp >= 'A' && cp <= 'Z') ||
+                                            (cp >= '0' && cp <= '9') || cp == '_');
         if (is_ascii_word) {
             /* Consume the whole ASCII word run, lowercasing. */
             char word[256];
@@ -282,8 +293,10 @@ static char *memory_segment_cjk(const char *text) {
             const unsigned char *q = p;
             while (q < end && wn < (int)sizeof(word)) {
                 unsigned char c = *q;
-                int aw = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
-                if (!aw) break;
+                int aw = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                         (c >= '0' && c <= '9') || c == '_';
+                if (!aw)
+                    break;
                 word[wn++] = (char)((c >= 'A' && c <= 'Z') ? c + 32 : c);
                 q++;
             }
@@ -293,10 +306,12 @@ static char *memory_segment_cjk(const char *text) {
         }
 
         /* Whitespace / punctuation / other: token separator. */
-        if (w > 0) need_space = 1;
+        if (w > 0)
+            need_space = 1;
         p += adv;
     }
-    if (w >= cap) w = cap - 1;
+    if (w >= cap)
+        w = cap - 1;
     out[w] = '\0';
 #undef MEM_SEG_PUT
     return out;
@@ -479,7 +494,8 @@ static int init_schema(cbm_store_t *s) {
 
 /* Read PRAGMA user_version (current on-disk schema version; 0 = fresh DB or
  * a pre-migration legacy DB). */
-static int read_user_version(cbm_store_t *s) {  sqlite3_stmt *st = NULL;
+static int read_user_version(cbm_store_t *s) {
+    sqlite3_stmt *st = NULL;
     int ver = 0;
     if (sqlite3_prepare_v2(s->db, "PRAGMA user_version;", -1, &st, NULL) == SQLITE_OK) {
         if (sqlite3_step(st) == SQLITE_ROW) {
@@ -510,8 +526,8 @@ static int memory_vec_upsert(cbm_store_t *s, const char *item_id, const char *co
 /* Audit-event helper (P0-2/P0-4): writes a memory_event row inside the caller's
  * open transaction. Defined below near the delete path; forward-declared here so
  * the lifecycle mutators (update_status, consolidate, decay) can record events. */
-static int memory_delete_audit(cbm_store_t *s, const char *type, const char *mode,
-                               const char *id, const char *project, const char *user);
+static int memory_delete_audit(cbm_store_t *s, const char *type, const char *mode, const char *id,
+                               const char *project, const char *user);
 
 static int run_migrations(cbm_store_t *s) {
     int ver = read_user_version(s);
@@ -546,11 +562,10 @@ static int run_migrations(cbm_store_t *s) {
         if (rc != CBM_STORE_OK) {
             return rc;
         }
-        rc = exec_sql(s,
-            "CREATE TABLE IF NOT EXISTS memory_meta ("
-            "  key TEXT PRIMARY KEY,"
-            "  value TEXT"
-            ");");
+        rc = exec_sql(s, "CREATE TABLE IF NOT EXISTS memory_meta ("
+                         "  key TEXT PRIMARY KEY,"
+                         "  value TEXT"
+                         ");");
         if (rc != CBM_STORE_OK) {
             cbm_store_rollback(s);
             return rc;
@@ -586,19 +601,30 @@ static int run_migrations(cbm_store_t *s) {
         /* Gather (id, content) for all items into arrays, then re-embed. */
         char **ids = NULL;
         char **contents = NULL;
-        int count = 0, cap = 0;
+        int count = 0;
         sqlite3_stmt *sel = NULL;
-        if (sqlite3_prepare_v2(s->db, "SELECT id, content FROM memory_item;", -1, &sel, NULL) == SQLITE_OK) {
+        if (sqlite3_prepare_v2(s->db, "SELECT id, content FROM memory_item;", -1, &sel, NULL) ==
+            SQLITE_OK) {
+            int cap = 0;
             while (sqlite3_step(sel) == SQLITE_ROW) {
                 const char *id = (const char *)sqlite3_column_text(sel, 0);
                 const char *content = (const char *)sqlite3_column_text(sel, 1);
-                if (!id) continue;
+                if (!id)
+                    continue;
                 if (count == cap) {
                     int ncap = cap ? cap * 2 : 16;
                     char **ni = realloc(ids, (size_t)ncap * sizeof(*ni));
                     char **nc = realloc(contents, (size_t)ncap * sizeof(*nc));
-                    if (!ni || !nc) { free(ni ? ni : ids); free(nc ? nc : contents); ids = NULL; contents = NULL; break; }
-                    ids = ni; contents = nc; cap = ncap;
+                    if (!ni || !nc) {
+                        free(ni ? ni : ids);
+                        free(nc ? nc : contents);
+                        ids = NULL;
+                        contents = NULL;
+                        break;
+                    }
+                    ids = ni;
+                    contents = nc;
+                    cap = ncap;
                 }
                 ids[count] = heap_strdup(id);
                 contents[count] = heap_strdup(content ? content : "");
@@ -612,8 +638,12 @@ static int run_migrations(cbm_store_t *s) {
                 rebuild_ok = 0;
             }
         }
-        for (int i = 0; i < count; i++) { free(ids[i]); free(contents[i]); }
-        free(ids); free(contents);
+        for (int i = 0; i < count; i++) {
+            free(ids[i]);
+            free(contents[i]);
+        }
+        free(ids);
+        free(contents);
         if (!rebuild_ok) {
             cbm_store_rollback(s);
             return CBM_STORE_ERR;
@@ -646,7 +676,8 @@ static int run_migrations(cbm_store_t *s) {
             cbm_store_rollback(s);
             return rc;
         }
-        rc = exec_sql(s, "CREATE INDEX IF NOT EXISTS idx_memory_item_deleted ON memory_item(deleted_at);");
+        rc = exec_sql(
+            s, "CREATE INDEX IF NOT EXISTS idx_memory_item_deleted ON memory_item(deleted_at);");
         if (rc != CBM_STORE_OK) {
             cbm_store_rollback(s);
             return rc;
@@ -683,19 +714,30 @@ static int run_migrations(cbm_store_t *s) {
         }
         char **ids = NULL;
         char **contents = NULL;
-        int count = 0, cap = 0;
+        int count = 0;
         sqlite3_stmt *sel = NULL;
-        if (sqlite3_prepare_v2(s->db, "SELECT id, content FROM memory_item;", -1, &sel, NULL) == SQLITE_OK) {
+        if (sqlite3_prepare_v2(s->db, "SELECT id, content FROM memory_item;", -1, &sel, NULL) ==
+            SQLITE_OK) {
+            int cap = 0;
             while (sqlite3_step(sel) == SQLITE_ROW) {
                 const char *id = (const char *)sqlite3_column_text(sel, 0);
                 const char *content = (const char *)sqlite3_column_text(sel, 1);
-                if (!id) continue;
+                if (!id)
+                    continue;
                 if (count == cap) {
                     int ncap = cap ? cap * 2 : 16;
                     char **ni = realloc(ids, (size_t)ncap * sizeof(*ni));
                     char **nc = realloc(contents, (size_t)ncap * sizeof(*nc));
-                    if (!ni || !nc) { free(ni ? ni : ids); free(nc ? nc : contents); ids = NULL; contents = NULL; break; }
-                    ids = ni; contents = nc; cap = ncap;
+                    if (!ni || !nc) {
+                        free(ni ? ni : ids);
+                        free(nc ? nc : contents);
+                        ids = NULL;
+                        contents = NULL;
+                        break;
+                    }
+                    ids = ni;
+                    contents = nc;
+                    cap = ncap;
                 }
                 ids[count] = heap_strdup(id);
                 contents[count] = heap_strdup(content ? content : "");
@@ -709,8 +751,12 @@ static int run_migrations(cbm_store_t *s) {
                 rebuild_ok = 0;
             }
         }
-        for (int i = 0; i < count; i++) { free(ids[i]); free(contents[i]); }
-        free(ids); free(contents);
+        for (int i = 0; i < count; i++) {
+            free(ids[i]);
+            free(contents[i]);
+        }
+        free(ids);
+        free(contents);
         if (!rebuild_ok) {
             cbm_store_rollback(s);
             return CBM_STORE_ERR;
@@ -739,8 +785,10 @@ static int create_user_indexes(cbm_store_t *s) {
         "CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id, type);"
         "CREATE INDEX IF NOT EXISTS idx_edges_type ON edges(project, type);"
         "CREATE INDEX IF NOT EXISTS idx_edges_target_type ON edges(project, target_id, type);"
-        "CREATE INDEX IF NOT EXISTS idx_memory_item_scope ON memory_item(scope_user, scope_project, scope_task);"
-        "CREATE INDEX IF NOT EXISTS idx_memory_item_dedup ON memory_item(entity_key, predicate, scope_project);"
+        "CREATE INDEX IF NOT EXISTS idx_memory_item_scope ON memory_item(scope_user, "
+        "scope_project, scope_task);"
+        "CREATE INDEX IF NOT EXISTS idx_memory_item_dedup ON memory_item(entity_key, predicate, "
+        "scope_project);"
         "CREATE INDEX IF NOT EXISTS idx_memory_item_status ON memory_item(status);"
         "CREATE INDEX IF NOT EXISTS idx_memory_edge_src ON memory_edge(src_id, type);"
         "CREATE INDEX IF NOT EXISTS idx_memory_edge_dst ON memory_edge(dst_id, type);"
@@ -2127,7 +2175,6 @@ int cbm_store_delete_file_hashes(cbm_store_t *s, const char *project) {
     return CBM_STORE_OK;
 }
 
-
 /* -- Long-term memory MVP --------------------------------------- */
 
 static int64_t memory_now_ms(void) {
@@ -2161,8 +2208,7 @@ static void memory_meta_set_i64(cbm_store_t *s, const char *key, int64_t value) 
         return;
     }
     sqlite3_stmt *stmt = NULL;
-    if (sqlite3_prepare_v2(s->db,
-                           "INSERT OR REPLACE INTO memory_meta (key,value) VALUES (?1,?2);",
+    if (sqlite3_prepare_v2(s->db, "INSERT OR REPLACE INTO memory_meta (key,value) VALUES (?1,?2);",
                            CBM_NOT_FOUND, &stmt, NULL) == SQLITE_OK) {
         char buf[32];
         snprintf(buf, sizeof(buf), "%lld", (long long)value);
@@ -2313,7 +2359,8 @@ static int memory_fts_upsert(cbm_store_t *s, const cbm_memory_item_t *item, cons
         (void)sqlite3_step(stmt);
         sqlite3_finalize(stmt);
     }
-    const char *ins_sql = "INSERT INTO memory_fts (item_id,title,summary,content) VALUES (?1,?2,?3,?4);";
+    const char *ins_sql =
+        "INSERT INTO memory_fts (item_id,title,summary,content) VALUES (?1,?2,?3,?4);";
     if (sqlite3_prepare_v2(s->db, ins_sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
         return CBM_STORE_OK;
     }
@@ -2352,11 +2399,13 @@ int cbm_store_memory_append_candidate(cbm_store_t *s, const cbm_memory_item_t *i
     int64_t now = memory_now_ms();
     int64_t created = item->created_at > 0 ? item->created_at : now;
     int64_t updated = item->updated_at > 0 ? item->updated_at : now;
-    const char *sql = "INSERT INTO memory_item "
-                      "(id,kind,layer,title,summary,content,scope_user,scope_project,scope_task,"
-                      "entity_key,predicate,importance,confidence,reusability,specificity,hit_count,"
-                      "last_hit_at,decay,status,version,supersedes,created_at,updated_at,source_event_ids) "
-                      "VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24);";
+    const char *sql =
+        "INSERT INTO memory_item "
+        "(id,kind,layer,title,summary,content,scope_user,scope_project,scope_task,"
+        "entity_key,predicate,importance,confidence,reusability,specificity,hit_count,"
+        "last_hit_at,decay,status,version,supersedes,created_at,updated_at,source_event_ids) "
+        "VALUES "
+        "(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24);";
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
         store_set_error_sqlite(s, "memory_item_prepare");
@@ -2406,9 +2455,11 @@ int cbm_store_memory_append_candidate(cbm_store_t *s, const cbm_memory_item_t *i
 }
 
 /* MEMORY_SELECT_RAW: same columns prefixed with "m." for JOIN-qualified queries */
-#define MEMORY_SELECT_RAW \
-    "m.id,m.kind,m.layer,m.title,m.summary,m.content,m.scope_user,m.scope_project,m.scope_task,m.entity_key,m.predicate," \
-    "m.importance,m.confidence,m.reusability,m.specificity,m.hit_count,m.last_hit_at,m.decay,m.status,m.version," \
+#define MEMORY_SELECT_RAW                                                                          \
+    "m.id,m.kind,m.layer,m.title,m.summary,m.content,m.scope_user,m.scope_project,m.scope_task,m." \
+    "entity_key,m.predicate,"                                                                      \
+    "m.importance,m.confidence,m.reusability,m.specificity,m.hit_count,m.last_hit_at,m.decay,m."   \
+    "status,m.version,"                                                                            \
     "m.supersedes,m.created_at,m.updated_at,m.source_event_ids"
 
 static const char *memory_select_cols =
@@ -2496,9 +2547,8 @@ static bool memory_items_contradict(cbm_store_t *s, const char *a, const char *b
     if (!s || !s->db || !a || !b) {
         return false;
     }
-    const char *sql =
-        "SELECT 1 FROM memory_edge WHERE type='contradicts' AND "
-        "((src_id=?1 AND dst_id=?2) OR (src_id=?2 AND dst_id=?1)) LIMIT 1;";
+    const char *sql = "SELECT 1 FROM memory_edge WHERE type='contradicts' AND "
+                      "((src_id=?1 AND dst_id=?2) OR (src_id=?2 AND dst_id=?1)) LIMIT 1;";
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
         return false;
@@ -2539,10 +2589,14 @@ static const char *memory_conflict_resolution_reason(const cbm_memory_item_t *wi
                                                      const cbm_memory_query_t *query) {
     int ws = memory_scope_score(winner, query);
     int ls = memory_scope_score(loser, query);
-    if (ws != ls) return "winner_by_scope";
-    if (winner && loser && winner->confidence != loser->confidence) return "winner_by_confidence";
-    if (winner && loser && winner->updated_at != loser->updated_at) return "winner_by_recency";
-    if (winner && loser && winner->hit_count != loser->hit_count) return "winner_by_hits";
+    if (ws != ls)
+        return "winner_by_scope";
+    if (winner && loser && winner->confidence != loser->confidence)
+        return "winner_by_confidence";
+    if (winner && loser && winner->updated_at != loser->updated_at)
+        return "winner_by_recency";
+    if (winner && loser && winner->hit_count != loser->hit_count)
+        return "winner_by_hits";
     return "winner_by_stable_id";
 }
 
@@ -2583,15 +2637,18 @@ static void memory_json_append_escaped(char *buf, size_t sz, size_t *pos, const 
     }
     for (const unsigned char *p = (const unsigned char *)(s ? s : ""); *p && *pos + 2 < sz; p++) {
         if (*p == '\\' || *p == '"') {
-            if (*pos + 2 >= sz) break;
+            if (*pos + 2 >= sz)
+                break;
             buf[(*pos)++] = '\\';
             buf[(*pos)++] = (char)*p;
         } else if (*p == '\n') {
-            if (*pos + 2 >= sz) break;
+            if (*pos + 2 >= sz)
+                break;
             buf[(*pos)++] = '\\';
             buf[(*pos)++] = 'n';
         } else if (*p == '\r') {
-            if (*pos + 2 >= sz) break;
+            if (*pos + 2 >= sz)
+                break;
             buf[(*pos)++] = '\\';
             buf[(*pos)++] = 'r';
         } else if (*p >= 0x20) {
@@ -2601,32 +2658,35 @@ static void memory_json_append_escaped(char *buf, size_t sz, size_t *pos, const 
     buf[*pos < sz ? *pos : sz - 1] = '\0';
 }
 
-static void memory_evidence_add_json_edge(char *buf, size_t sz, size_t *pos, bool *first,
-                                          int hop, const char *src, const char *dst,
-                                          const char *type, const char *origin, double confidence) {
+static void memory_evidence_add_json_edge(char *buf, size_t sz, size_t *pos, bool *first, int hop,
+                                          const char *src, const char *dst, const char *type,
+                                          const char *origin, double confidence) {
     if (!buf || !pos || *pos >= sz || !memory_evidence_edge_type(type)) {
         return;
     }
-    int n = snprintf(buf + *pos, sz - *pos,
-                     "%s{\"hop\":%d,\"src_id\":\"",
-                     *first ? "" : ",", hop);
-    if (n < 0 || (size_t)n >= sz - *pos) return;
+    int n = snprintf(buf + *pos, sz - *pos, "%s{\"hop\":%d,\"src_id\":\"", *first ? "" : ",", hop);
+    if (n < 0 || (size_t)n >= sz - *pos)
+        return;
     *pos += (size_t)n;
     memory_json_append_escaped(buf, sz, pos, src);
     n = snprintf(buf + *pos, sz - *pos, "\",\"dst_id\":\"");
-    if (n < 0 || (size_t)n >= sz - *pos) return;
+    if (n < 0 || (size_t)n >= sz - *pos)
+        return;
     *pos += (size_t)n;
     memory_json_append_escaped(buf, sz, pos, dst);
     n = snprintf(buf + *pos, sz - *pos, "\",\"type\":\"");
-    if (n < 0 || (size_t)n >= sz - *pos) return;
+    if (n < 0 || (size_t)n >= sz - *pos)
+        return;
     *pos += (size_t)n;
     memory_json_append_escaped(buf, sz, pos, type);
     n = snprintf(buf + *pos, sz - *pos, "\",\"origin\":\"");
-    if (n < 0 || (size_t)n >= sz - *pos) return;
+    if (n < 0 || (size_t)n >= sz - *pos)
+        return;
     *pos += (size_t)n;
     memory_json_append_escaped(buf, sz, pos, origin);
     n = snprintf(buf + *pos, sz - *pos, "\",\"confidence\":%.3f}", confidence);
-    if (n < 0 || (size_t)n >= sz - *pos) return;
+    if (n < 0 || (size_t)n >= sz - *pos)
+        return;
     *pos += (size_t)n;
     *first = false;
 }
@@ -2648,13 +2708,15 @@ static void memory_fill_evidence(cbm_store_t *s, cbm_memory_item_t *item) {
         "  SELECT ?1, 0 UNION "
         "  SELECT CASE WHEN e.src_id = walk.id THEN e.dst_id ELSE e.src_id END, walk.depth + 1 "
         "  FROM memory_edge e JOIN walk ON (e.src_id = walk.id OR e.dst_id = walk.id) "
-        "  WHERE walk.depth < 2 AND e.type IN ('supports','derived_from','used_in','belongs_to','contradicts')"
+        "  WHERE walk.depth < 2 AND e.type IN "
+        "('supports','derived_from','used_in','belongs_to','contradicts')"
         ") "
         "SELECT DISTINCT e.src_id,e.dst_id,e.type,e.origin,e.confidence,MIN(w.depth)+1 AS hop "
         "FROM memory_edge e JOIN walk w ON (e.src_id = w.id OR e.dst_id = w.id) "
         "WHERE e.type IN ('supports','derived_from','used_in','belongs_to','contradicts') "
         "GROUP BY e.src_id,e.dst_id,e.type,e.origin,e.confidence "
-        "ORDER BY hop, CASE e.type WHEN 'derived_from' THEN 0 WHEN 'supports' THEN 1 WHEN 'used_in' THEN 2 WHEN 'belongs_to' THEN 3 ELSE 4 END "
+        "ORDER BY hop, CASE e.type WHEN 'derived_from' THEN 0 WHEN 'supports' THEN 1 WHEN "
+        "'used_in' THEN 2 WHEN 'belongs_to' THEN 3 ELSE 4 END "
         "LIMIT 24;";
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
@@ -2668,7 +2730,8 @@ static void memory_fill_evidence(cbm_store_t *s, cbm_memory_item_t *item) {
         const char *origin = (const char *)sqlite3_column_text(stmt, 3);
         double confidence = sqlite3_column_double(stmt, 4);
         int hop = sqlite3_column_int(stmt, 5);
-        memory_evidence_add_json_edge(buf, sizeof(buf), &pos, &first, hop, src, dst, type, origin, confidence);
+        memory_evidence_add_json_edge(buf, sizeof(buf), &pos, &first, hop, src, dst, type, origin,
+                                      confidence);
     }
     sqlite3_finalize(stmt);
     if (pos + 2 < sizeof(buf)) {
@@ -2695,7 +2758,7 @@ static void memory_fill_result_evidence(cbm_store_t *s, cbm_memory_result_t *out
  * retrieval_score and the result is re-sorted; it never adds or removes
  * candidates (contract: about_code is a ranking signal, not a recall path). */
 #define MEMORY_ANCHOR_BOOST_SYMBOL 0.5
-#define MEMORY_ANCHOR_BOOST_FILE   0.2
+#define MEMORY_ANCHOR_BOOST_FILE 0.2
 
 /* Does code symbol `qn` still exist in this project's code graph? Used to
  * lazily skip the boost for memories whose anchor target was renamed/deleted
@@ -2707,8 +2770,8 @@ static bool memory_code_symbol_exists(cbm_store_t *s, const char *project, const
     sqlite3_stmt *st = NULL;
     bool exists = false;
     const char *sql = project
-        ? "SELECT 1 FROM nodes WHERE project=?1 AND qualified_name=?2 LIMIT 1;"
-        : "SELECT 1 FROM nodes WHERE qualified_name=?2 LIMIT 1;";
+                          ? "SELECT 1 FROM nodes WHERE project=?1 AND qualified_name=?2 LIMIT 1;"
+                          : "SELECT 1 FROM nodes WHERE qualified_name=?2 LIMIT 1;";
     if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &st, NULL) == SQLITE_OK) {
         memory_bind_nullable(st, 1, project);
         bind_text(st, 2, qn);
@@ -2733,26 +2796,28 @@ static void memory_apply_anchor_boost(cbm_store_t *s, const cbm_memory_query_t *
     ctx_file[0] = '\0';
     {
         sqlite3_stmt *st = NULL;
-        const char *sql = query->project
-            ? "SELECT file_path FROM nodes WHERE project=?1 AND qualified_name=?2 LIMIT 1;"
-            : "SELECT file_path FROM nodes WHERE qualified_name=?2 LIMIT 1;";
+        const char *sql =
+            query->project
+                ? "SELECT file_path FROM nodes WHERE project=?1 AND qualified_name=?2 LIMIT 1;"
+                : "SELECT file_path FROM nodes WHERE qualified_name=?2 LIMIT 1;";
         if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &st, NULL) == SQLITE_OK) {
             memory_bind_nullable(st, 1, query->project);
             bind_text(st, 2, ctx_qn);
             if (sqlite3_step(st) == SQLITE_ROW) {
                 const char *fp = (const char *)sqlite3_column_text(st, 0);
-                if (fp) snprintf(ctx_file, sizeof(ctx_file), "%s", fp);
+                if (fp)
+                    snprintf(ctx_file, sizeof(ctx_file), "%s", fp);
             }
         }
         sqlite3_finalize(st);
     }
 
     /* For each result, find its strongest about_code anchor relative to ctx. */
-    const char *anchor_sql =
-        "SELECT substr(dst_id, 6) AS qn FROM memory_edge "
-        "WHERE src_id=?1 AND type='about_code' AND dst_id LIKE 'code:%';";
+    const char *anchor_sql = "SELECT substr(dst_id, 6) AS qn FROM memory_edge "
+                             "WHERE src_id=?1 AND type='about_code' AND dst_id LIKE 'code:%';";
     for (int i = 0; i < out->count; i++) {
-        if (!out->items[i].id) continue;
+        if (!out->items[i].id)
+            continue;
         sqlite3_stmt *st = NULL;
         if (sqlite3_prepare_v2(s->db, anchor_sql, CBM_NOT_FOUND, &st, NULL) != SQLITE_OK) {
             continue;
@@ -2761,17 +2826,22 @@ static void memory_apply_anchor_boost(cbm_store_t *s, const cbm_memory_query_t *
         double best = 0.0;
         while (sqlite3_step(st) == SQLITE_ROW) {
             const char *qn = (const char *)sqlite3_column_text(st, 0);
-            if (!qn || !qn[0]) continue;
+            if (!qn || !qn[0])
+                continue;
             /* Stale anchor (symbol gone since indexing) → no boost, keep memory. */
-            if (!memory_code_symbol_exists(s, query->project, qn)) continue;
+            if (!memory_code_symbol_exists(s, query->project, qn))
+                continue;
             if (strcmp(qn, ctx_qn) == 0) {
-                if (MEMORY_ANCHOR_BOOST_SYMBOL > best) best = MEMORY_ANCHOR_BOOST_SYMBOL;
+                if (MEMORY_ANCHOR_BOOST_SYMBOL > best)
+                    best = MEMORY_ANCHOR_BOOST_SYMBOL;
             } else if (ctx_file[0]) {
                 /* Same-file sibling: does this anchor's symbol share ctx_file? */
                 sqlite3_stmt *fst = NULL;
-                const char *fsql = query->project
-                    ? "SELECT 1 FROM nodes WHERE project=?1 AND qualified_name=?2 AND file_path=?3 LIMIT 1;"
-                    : "SELECT 1 FROM nodes WHERE qualified_name=?2 AND file_path=?3 LIMIT 1;";
+                const char *fsql =
+                    query->project
+                        ? "SELECT 1 FROM nodes WHERE project=?1 AND qualified_name=?2 AND "
+                          "file_path=?3 LIMIT 1;"
+                        : "SELECT 1 FROM nodes WHERE qualified_name=?2 AND file_path=?3 LIMIT 1;";
                 if (sqlite3_prepare_v2(s->db, fsql, CBM_NOT_FOUND, &fst, NULL) == SQLITE_OK) {
                     memory_bind_nullable(fst, 1, query->project);
                     bind_text(fst, 2, qn);
@@ -2822,9 +2892,11 @@ static void memory_resolve_conflicts(cbm_store_t *s, const cbm_memory_query_t *q
                 continue;
             }
             int ri = i;
-            while (parent[ri] != ri) ri = parent[ri];
+            while (parent[ri] != ri)
+                ri = parent[ri];
             int rj = j;
-            while (parent[rj] != rj) rj = parent[rj];
+            while (parent[rj] != rj)
+                rj = parent[rj];
             if (ri != rj) {
                 parent[rj] = ri;
             }
@@ -2832,7 +2904,8 @@ static void memory_resolve_conflicts(cbm_store_t *s, const cbm_memory_query_t *q
     }
     for (int i = 0; i < n; i++) {
         int r = i;
-        while (parent[r] != r) r = parent[r];
+        while (parent[r] != r)
+            r = parent[r];
         parent[i] = r;
     }
     for (int r = 0; r < n; r++) {
@@ -2855,8 +2928,9 @@ static void memory_resolve_conflicts(cbm_store_t *s, const cbm_memory_query_t *q
             }
             hidden[i] = true;
             memory_append_conflict_id(&out->items[winner], out->items[i].id);
-            memory_append_conflict_resolution(&out->items[winner],
-                                              memory_conflict_resolution_reason(&out->items[winner], &out->items[i], query));
+            memory_append_conflict_resolution(
+                &out->items[winner],
+                memory_conflict_resolution_reason(&out->items[winner], &out->items[i], query));
         }
     }
     int write = 0;
@@ -2921,11 +2995,12 @@ static void memory_feature_vec_static(const char *content, int8_t vec[MEMORY_VEC
     int prev_len = 0;
     bool have_prev = false;
 
-    /* Pool one token's unit vector into the accumulator. */
-    #define MEM_POOL_TOKEN(str) do {                       \
-        cbm_sem_random_index((str), &tv);                  \
-        cbm_sem_normalize(&tv);                            \
-        cbm_sem_vec_add_scaled(&acc, &tv, 1.0F);           \
+/* Pool one token's unit vector into the accumulator. */
+#define MEM_POOL_TOKEN(str)                      \
+    do {                                         \
+        cbm_sem_random_index((str), &tv);        \
+        cbm_sem_normalize(&tv);                  \
+        cbm_sem_vec_add_scaled(&acc, &tv, 1.0F); \
     } while (0)
 
     while (*p) {
@@ -2954,13 +3029,20 @@ static void memory_feature_vec_static(const char *content, int8_t vec[MEMORY_VEC
             tlen = 0;
         }
         int n = 1;
-        if ((c & 0xE0) == 0xC0) n = 2;
-        else if ((c & 0xF0) == 0xE0) n = 3;
-        else if ((c & 0xF8) == 0xF0) n = 4;
+        if ((c & 0xE0) == 0xC0)
+            n = 2;
+        else if ((c & 0xF0) == 0xE0)
+            n = 3;
+        else if ((c & 0xF8) == 0xF0)
+            n = 4;
         for (int k = 1; k < n; k++) {
-            if (!p[k]) { n = k; break; }
+            if (!p[k]) {
+                n = k;
+                break;
+            }
         }
-        if (n < 1) n = 1;
+        if (n < 1)
+            n = 1;
         /* Unigram: the codepoint bytes as a NUL-terminated token. */
         char cp_tok[8];
         int cp_len = n < (int)sizeof(cp_tok) ? n : (int)sizeof(cp_tok) - 1;
@@ -2971,8 +3053,10 @@ static void memory_feature_vec_static(const char *content, int8_t vec[MEMORY_VEC
         if (have_prev) {
             char bg[16];
             int bl = 0;
-            for (int k = 0; k < prev_len && bl < (int)sizeof(bg) - 1; k++) bg[bl++] = prev_cp[k];
-            for (int k = 0; k < cp_len && bl < (int)sizeof(bg) - 1; k++) bg[bl++] = cp_tok[k];
+            for (int k = 0; k < prev_len && bl < (int)sizeof(bg) - 1; k++)
+                bg[bl++] = prev_cp[k];
+            for (int k = 0; k < cp_len && bl < (int)sizeof(bg) - 1; k++)
+                bg[bl++] = cp_tok[k];
             bg[bl] = '\0';
             MEM_POOL_TOKEN(bg);
         }
@@ -2985,7 +3069,7 @@ static void memory_feature_vec_static(const char *content, int8_t vec[MEMORY_VEC
         tok[tlen] = '\0';
         MEM_POOL_TOKEN(tok);
     }
-    #undef MEM_POOL_TOKEN
+#undef MEM_POOL_TOKEN
 
     /* Re-normalize the pooled vector, then quantize to int8 (x127). cosine is
      * scale-invariant, so quantization only affects storage, not ranking. The
@@ -2994,8 +3078,10 @@ static void memory_feature_vec_static(const char *content, int8_t vec[MEMORY_VEC
     cbm_sem_normalize(&acc);
     for (int i = 0; i < MEMORY_VEC_STATIC_DIM; i++) {
         double v = (double)acc.v[i] * 127.0;
-        if (v > 127.0) v = 127.0;
-        if (v < -127.0) v = -127.0;
+        if (v > 127.0)
+            v = 127.0;
+        if (v < -127.0)
+            v = -127.0;
         vec[i] = (int8_t)lround(v);
     }
     for (int i = MEMORY_VEC_STATIC_DIM; i < MEMORY_VEC_DIM; i++) {
@@ -3026,8 +3112,9 @@ static bool memory_result_has_id(const cbm_memory_result_t *out, const char *id)
     return false;
 }
 
-static bool memory_result_append_item(cbm_memory_result_t *out, int *cap, const cbm_memory_item_t *src,
-                                      const char *source, double score) {
+static bool memory_result_append_item(cbm_memory_result_t *out, int *cap,
+                                      const cbm_memory_item_t *src, const char *source,
+                                      double score) {
     if (!out || !cap || !src || !src->id || memory_result_has_id(out, src->id)) {
         return false;
     }
@@ -3059,11 +3146,14 @@ static int memory_append_vector_candidates(cbm_store_t *s, const cbm_memory_quer
     const char *sql =
         "SELECT " MEMORY_SELECT_RAW ", cbm_cosine_i8(v.embedding, ?1) AS vscore "
         "FROM memory_vec v JOIN memory_item m ON m.id = v.item_id "
-        "WHERE (?2 IS NULL OR m.scope_project=?2) AND (?3 IS NULL OR m.scope_user=?3 OR m.scope_user IS NULL) AND "
-        "(?4 IS NULL OR m.scope_task=?4 OR m.scope_task IS NULL) AND (?5 IS NULL OR m.entity_key=?5) AND "
+        "WHERE (?2 IS NULL OR m.scope_project=?2) AND (?3 IS NULL OR m.scope_user=?3 OR "
+        "m.scope_user IS NULL) AND "
+        "(?4 IS NULL OR m.scope_task=?4 OR m.scope_task IS NULL) AND (?5 IS NULL OR "
+        "m.entity_key=?5) AND "
         "(?6 IS NULL OR m.kind=?6) AND (?7 != 0 OR m.status IN ('active','candidate')) "
         "AND m.deleted_at IS NULL "
-        "ORDER BY vscore DESC, (m.importance + m.confidence + m.reusability + m.specificity + m.hit_count - m.decay) DESC "
+        "ORDER BY vscore DESC, (m.importance + m.confidence + m.reusability + m.specificity + "
+        "m.hit_count - m.decay) DESC "
         "LIMIT ?8;";
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
@@ -3115,14 +3205,20 @@ static int memory_retrieve_vector_only(cbm_store_t *s, const cbm_memory_query_t 
  * OR-joined FTS hits: a query that shares only one common bigram (e.g. "用户")
  * with a document is noise, not a match. Returns matched/total in *ratio. */
 static int memory_token_overlap(const char *seg_query, const char *content, double *ratio) {
-    if (ratio) *ratio = 0.0;
-    if (!seg_query || !seg_query[0] || !content) return 0;
+    if (ratio)
+        *ratio = 0.0;
+    if (!seg_query || !seg_query[0] || !content)
+        return 0;
     char *seg_c = memory_segment_cjk(content);
-    if (!seg_c) return 0;
+    if (!seg_c)
+        return 0;
     /* Wrap content tokens in spaces so " tok " substring search is boundary-safe. */
     size_t cl = strlen(seg_c);
     char *padded = malloc(cl + 3);
-    if (!padded) { free(seg_c); return 0; }
+    if (!padded) {
+        free(seg_c);
+        return 0;
+    }
     padded[0] = ' ';
     memcpy(padded + 1, seg_c, cl);
     padded[cl + 1] = ' ';
@@ -3131,23 +3227,30 @@ static int memory_token_overlap(const char *seg_query, const char *content, doub
     const char *p = seg_query;
     char tok[64];
     while (*p) {
-        while (*p == ' ') p++;
-        if (!*p) break;
+        while (*p == ' ')
+            p++;
+        if (!*p)
+            break;
         int tl = 0;
-        while (*p && *p != ' ' && tl < (int)sizeof(tok) - 3) tok[tl++] = *p++;
-        while (*p && *p != ' ') p++; /* skip overflow tail */
-        if (tl == 0) continue;
+        while (*p && *p != ' ' && tl < (int)sizeof(tok) - 3)
+            tok[tl++] = *p++;
+        while (*p && *p != ' ')
+            p++; /* skip overflow tail */
+        if (tl == 0)
+            continue;
         char needle[68];
         needle[0] = ' ';
         memcpy(needle + 1, tok, (size_t)tl);
         needle[tl + 1] = ' ';
         needle[tl + 2] = '\0';
         total++;
-        if (strstr(padded, needle)) matched++;
+        if (strstr(padded, needle))
+            matched++;
     }
     free(seg_c);
     free(padded);
-    if (ratio && total > 0) *ratio = (double)matched / (double)total;
+    if (ratio && total > 0)
+        *ratio = (double)matched / (double)total;
     return matched;
 }
 
@@ -3170,8 +3273,10 @@ int cbm_store_memory_retrieve(cbm_store_t *s, const cbm_memory_query_t *query,
             "  ORDER BY rank LIMIT ?8"
             ") fts "
             "JOIN memory_item m ON m.id = fts.item_id "
-            "WHERE (?2 IS NULL OR m.scope_project=?2) AND (?3 IS NULL OR m.scope_user=?3 OR m.scope_user IS NULL) AND "
-            "  (?4 IS NULL OR m.scope_task=?4 OR m.scope_task IS NULL) AND (?5 IS NULL OR m.entity_key=?5) AND "
+            "WHERE (?2 IS NULL OR m.scope_project=?2) AND (?3 IS NULL OR m.scope_user=?3 OR "
+            "m.scope_user IS NULL) AND "
+            "  (?4 IS NULL OR m.scope_task=?4 OR m.scope_task IS NULL) AND (?5 IS NULL OR "
+            "m.entity_key=?5) AND "
             "  (?6 IS NULL OR m.kind=?6) AND (?7 != 0 OR m.status IN ('active','candidate')) "
             "  AND m.deleted_at IS NULL "
             "ORDER BY fts.rank LIMIT ?9;";
@@ -3191,20 +3296,22 @@ int cbm_store_memory_retrieve(cbm_store_t *s, const cbm_memory_query_t *query,
         char *seg_q = memory_segment_cjk(query->query);
         if (seg_q && seg_q[0]) {
             size_t pos = 0;
-            for (const char *sp = seg_q; *sp && pos < sizeof(fts_buf) - 5; ) {
+            for (const char *sp = seg_q; *sp && pos < sizeof(fts_buf) - 5;) {
                 if (*sp == ' ') {
                     /* token separator -> " OR " */
                     if (pos > 0 && pos < sizeof(fts_buf) - 5) {
                         memcpy(fts_buf + pos, " OR ", 4);
                         pos += 4;
                     }
-                    while (*sp == ' ') sp++;
+                    while (*sp == ' ')
+                        sp++;
                 } else {
                     fts_buf[pos++] = *sp++;
                 }
             }
             fts_buf[pos] = '\0';
-            if (pos == 0) snprintf(fts_buf, sizeof(fts_buf), "%s", query->query);
+            if (pos == 0)
+                snprintf(fts_buf, sizeof(fts_buf), "%s", query->query);
         } else {
             snprintf(fts_buf, sizeof(fts_buf), "%s", query->query);
         }
@@ -3219,7 +3326,8 @@ int cbm_store_memory_retrieve(cbm_store_t *s, const cbm_memory_query_t *query,
         sqlite3_bind_int(stmt, 7, query->include_inactive ? 1 : 0);
         sqlite3_bind_int(stmt, 8, 500); /* inner FTS candidate limit */
         int fetch_limit = limit > 0 ? limit * 4 : 40;
-        if (fetch_limit < limit) fetch_limit = limit;
+        if (fetch_limit < limit)
+            fetch_limit = limit;
         sqlite3_bind_int(stmt, 9, fetch_limit);
         int cap = fetch_limit > 0 ? fetch_limit : 10;
         cbm_memory_item_t *items = calloc((size_t)cap, sizeof(cbm_memory_item_t));
@@ -3228,11 +3336,14 @@ int cbm_store_memory_retrieve(cbm_store_t *s, const cbm_memory_query_t *query,
         /* Count query tokens: single-token queries (e.g. "pnpm") must always pass
          * the overlap gate, since one token at 100% overlap is a legitimate match. */
         int qtok = 0;
-        for (const char *sp = seg_q ? seg_q : ""; *sp; ) {
-            while (*sp == ' ') sp++;
-            if (!*sp) break;
+        for (const char *sp = seg_q ? seg_q : ""; *sp;) {
+            while (*sp == ' ')
+                sp++;
+            if (!*sp)
+                break;
             qtok++;
-            while (*sp && *sp != ' ') sp++;
+            while (*sp && *sp != ' ')
+                sp++;
         }
         while ((step_rc = sqlite3_step(stmt)) == SQLITE_ROW && n < cap) {
             memory_scan_item(stmt, &items[n]);
@@ -3271,14 +3382,18 @@ int cbm_store_memory_retrieve(cbm_store_t *s, const cbm_memory_query_t *query,
 
     /* --- Structured path: no text query, filter-only --- */
     char sql[CBM_SZ_4K];
-    snprintf(sql, sizeof(sql),
-             "SELECT %s FROM memory_item WHERE "
-             "(?1 IS NULL OR scope_project=?1) AND (?2 IS NULL OR scope_user=?2 OR scope_user IS NULL) AND "
-             "(?3 IS NULL OR scope_task=?3 OR scope_task IS NULL) AND (?4 IS NULL OR entity_key=?4) AND "
-             "(?5 IS NULL OR kind=?5) AND (?6 != 0 OR status IN ('active','candidate')) "
-             "AND deleted_at IS NULL "
-             "ORDER BY (importance + confidence + reusability + specificity + hit_count - decay) DESC, updated_at DESC "
-             "LIMIT %d;", memory_select_cols, limit > 0 ? limit * 4 : 40);
+    snprintf(
+        sql, sizeof(sql),
+        "SELECT %s FROM memory_item WHERE "
+        "(?1 IS NULL OR scope_project=?1) AND (?2 IS NULL OR scope_user=?2 OR scope_user IS NULL) "
+        "AND "
+        "(?3 IS NULL OR scope_task=?3 OR scope_task IS NULL) AND (?4 IS NULL OR entity_key=?4) AND "
+        "(?5 IS NULL OR kind=?5) AND (?6 != 0 OR status IN ('active','candidate')) "
+        "AND deleted_at IS NULL "
+        "ORDER BY (importance + confidence + reusability + specificity + hit_count - decay) DESC, "
+        "updated_at DESC "
+        "LIMIT %d;",
+        memory_select_cols, limit > 0 ? limit * 4 : 40);
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
         store_set_error_sqlite(s, "memory_retrieve_prepare");
@@ -3296,7 +3411,9 @@ int cbm_store_memory_retrieve(cbm_store_t *s, const cbm_memory_query_t *query,
     while (sqlite3_step(stmt) == SQLITE_ROW && n < cap) {
         memory_scan_item(stmt, &items[n]);
         items[n].retrieval_source = heap_strdup("structured");
-        items[n].retrieval_score = items[n].importance + items[n].confidence + items[n].reusability + items[n].specificity + items[n].hit_count - items[n].decay;
+        items[n].retrieval_score = items[n].importance + items[n].confidence +
+                                   items[n].reusability + items[n].specificity +
+                                   items[n].hit_count - items[n].decay;
         n++;
     }
     sqlite3_finalize(stmt);
@@ -3344,11 +3461,13 @@ static bool memory_status_allowed(const char *status) {
                       strcmp(status, "retracted") == 0);
 }
 
-int cbm_store_memory_update_status(cbm_store_t *s, const char *id, const char *project, const char *status) {
+int cbm_store_memory_update_status(cbm_store_t *s, const char *id, const char *project,
+                                   const char *status) {
     if (!s || !s->db || !id || !id[0] || !memory_status_allowed(status)) {
         return CBM_STORE_ERR;
     }
-    const char *sql = "UPDATE memory_item SET status=?1,updated_at=?2 WHERE id=?3 AND (?4 IS NULL OR scope_project=?4);";
+    const char *sql = "UPDATE memory_item SET status=?1,updated_at=?2 WHERE id=?3 AND (?4 IS NULL "
+                      "OR scope_project=?4);";
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
         store_set_error_sqlite(s, "memory_update_status_prepare");
@@ -3390,9 +3509,11 @@ static bool memory_feedback_allowed(const char *feedback) {
                         strcmp(feedback, "wrong") == 0 || strcmp(feedback, "stale") == 0);
 }
 
-int cbm_store_memory_feedback(cbm_store_t *s, const char *id, const char *project, const char *feedback,
-                              const char *note, const char *user, char **out_event_id) {
-    if (out_event_id) *out_event_id = NULL;
+int cbm_store_memory_feedback(cbm_store_t *s, const char *id, const char *project,
+                              const char *feedback, const char *note, const char *user,
+                              char **out_event_id) {
+    if (out_event_id)
+        *out_event_id = NULL;
     if (!s || !s->db || !id || !id[0] || !memory_feedback_allowed(feedback)) {
         return CBM_STORE_ERR;
     }
@@ -3401,13 +3522,17 @@ int cbm_store_memory_feedback(cbm_store_t *s, const char *id, const char *projec
     if (strcmp(feedback, "useful") == 0) {
         sql = "UPDATE memory_item SET hit_count=hit_count+1,last_hit_at=?1,"
               "confidence=MIN(1.0,confidence+0.05),reusability=MIN(1.0,reusability+0.05),"
-              "decay=MAX(0.0,decay-0.10),updated_at=?1 WHERE id=?2 AND (?3 IS NULL OR scope_project=?3);";
+              "decay=MAX(0.0,decay-0.10),updated_at=?1 WHERE id=?2 AND (?3 IS NULL OR "
+              "scope_project=?3);";
     } else if (strcmp(feedback, "not_useful") == 0) {
-        sql = "UPDATE memory_item SET confidence=MAX(0.0,confidence-0.05),decay=decay+0.20,updated_at=?1 "
+        sql = "UPDATE memory_item SET "
+              "confidence=MAX(0.0,confidence-0.05),decay=decay+0.20,updated_at=?1 "
               "WHERE id=?2 AND (?3 IS NULL OR scope_project=?3);";
     } else if (strcmp(feedback, "wrong") == 0) {
-        sql = "UPDATE memory_item SET confidence=MAX(0.0,confidence-0.20),decay=decay+1.0,status='retracted',updated_at=?1 "
-              "WHERE id=?2 AND (?3 IS NULL OR scope_project=?3);";
+        sql =
+            "UPDATE memory_item SET "
+            "confidence=MAX(0.0,confidence-0.20),decay=decay+1.0,status='retracted',updated_at=?1 "
+            "WHERE id=?2 AND (?3 IS NULL OR scope_project=?3);";
     } else {
         sql = "UPDATE memory_item SET decay=MAX(decay,1.0),status='archived',updated_at=?1 "
               "WHERE id=?2 AND (?3 IS NULL OR scope_project=?3);";
@@ -3446,7 +3571,8 @@ int cbm_store_memory_feedback(cbm_store_t *s, const char *id, const char *projec
     }
 
     char payload[CBM_SZ_1K];
-    snprintf(payload, sizeof(payload), "feedback=%s item_id=%s note=%s", feedback, id, note ? note : "");
+    snprintf(payload, sizeof(payload), "feedback=%s item_id=%s note=%s", feedback, id,
+             note ? note : "");
     char context[CBM_SZ_512];
     snprintf(context, sizeof(context), "{\"item_id\":\"%s\",\"feedback\":\"%s\"}", id, feedback);
     cbm_memory_event_t ev = {0};
@@ -3484,42 +3610,62 @@ static int memory_delete_rows(cbm_store_t *s, const char *id, const char *projec
                               const char *purge_event_ids) {
     sqlite3_stmt *st = NULL;
 
-    if (sqlite3_prepare_v2(s->db, "DELETE FROM memory_fts WHERE item_id=?1;", CBM_NOT_FOUND, &st, NULL) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(s->db, "DELETE FROM memory_fts WHERE item_id=?1;", CBM_NOT_FOUND, &st,
+                           NULL) != SQLITE_OK) {
         store_set_error_sqlite(s, "memory_delete_fts");
         return CBM_STORE_ERR;
     }
     bind_text(st, 1, id);
-    if (sqlite3_step(st) != SQLITE_DONE) { sqlite3_finalize(st); store_set_error_sqlite(s, "memory_delete_fts_step"); return CBM_STORE_ERR; }
-    sqlite3_finalize(st); st = NULL;
+    if (sqlite3_step(st) != SQLITE_DONE) {
+        sqlite3_finalize(st);
+        store_set_error_sqlite(s, "memory_delete_fts_step");
+        return CBM_STORE_ERR;
+    }
+    sqlite3_finalize(st);
+    st = NULL;
 
-    if (sqlite3_prepare_v2(s->db, "DELETE FROM memory_vec WHERE item_id=?1;", CBM_NOT_FOUND, &st, NULL) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(s->db, "DELETE FROM memory_vec WHERE item_id=?1;", CBM_NOT_FOUND, &st,
+                           NULL) != SQLITE_OK) {
         store_set_error_sqlite(s, "memory_delete_vec");
         return CBM_STORE_ERR;
     }
     bind_text(st, 1, id);
-    if (sqlite3_step(st) != SQLITE_DONE) { sqlite3_finalize(st); store_set_error_sqlite(s, "memory_delete_vec_step"); return CBM_STORE_ERR; }
-    sqlite3_finalize(st); st = NULL;
+    if (sqlite3_step(st) != SQLITE_DONE) {
+        sqlite3_finalize(st);
+        store_set_error_sqlite(s, "memory_delete_vec_step");
+        return CBM_STORE_ERR;
+    }
+    sqlite3_finalize(st);
+    st = NULL;
 
     /* Cascade every edge touching this item, in either direction — covers
      * about_code anchors, contradicts/supersedes links, evidence edges. */
-    if (sqlite3_prepare_v2(s->db, "DELETE FROM memory_edge WHERE src_id=?1 OR dst_id=?1;", CBM_NOT_FOUND, &st, NULL) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(s->db, "DELETE FROM memory_edge WHERE src_id=?1 OR dst_id=?1;",
+                           CBM_NOT_FOUND, &st, NULL) != SQLITE_OK) {
         store_set_error_sqlite(s, "memory_delete_edge");
         return CBM_STORE_ERR;
     }
     bind_text(st, 1, id);
-    if (sqlite3_step(st) != SQLITE_DONE) { sqlite3_finalize(st); store_set_error_sqlite(s, "memory_delete_edge_step"); return CBM_STORE_ERR; }
-    sqlite3_finalize(st); st = NULL;
+    if (sqlite3_step(st) != SQLITE_DONE) {
+        sqlite3_finalize(st);
+        store_set_error_sqlite(s, "memory_delete_edge_step");
+        return CBM_STORE_ERR;
+    }
+    sqlite3_finalize(st);
+    st = NULL;
 
     /* GDPR erasure: delete the item's own source events. source_event_ids is a
      * JSON array of quoted ids; walk every "..."-quoted token and delete it. */
     if (purge_event_ids && purge_event_ids[0]) {
         sqlite3_stmt *del = NULL;
-        if (sqlite3_prepare_v2(s->db, "DELETE FROM memory_event WHERE id=?1;", CBM_NOT_FOUND, &del, NULL) == SQLITE_OK) {
+        if (sqlite3_prepare_v2(s->db, "DELETE FROM memory_event WHERE id=?1;", CBM_NOT_FOUND, &del,
+                               NULL) == SQLITE_OK) {
             const char *p = purge_event_ids;
             while ((p = strchr(p, '"')) != NULL) {
                 p++;
                 const char *e = strchr(p, '"');
-                if (!e) break;
+                if (!e)
+                    break;
                 size_t n = (size_t)(e - p);
                 if (n > 0 && n < CBM_SZ_128) {
                     char evid[CBM_SZ_128];
@@ -3537,25 +3683,32 @@ static int memory_delete_rows(cbm_store_t *s, const char *id, const char *projec
     }
 
     /* The item row last, scope-guarded so a delete can't cross project bounds. */
-    if (sqlite3_prepare_v2(s->db, "DELETE FROM memory_item WHERE id=?1 AND (?2 IS NULL OR scope_project=?2);", CBM_NOT_FOUND, &st, NULL) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(
+            s->db, "DELETE FROM memory_item WHERE id=?1 AND (?2 IS NULL OR scope_project=?2);",
+            CBM_NOT_FOUND, &st, NULL) != SQLITE_OK) {
         store_set_error_sqlite(s, "memory_delete_item");
         return CBM_STORE_ERR;
     }
     bind_text(st, 1, id);
     memory_bind_nullable(st, 2, project);
-    if (sqlite3_step(st) != SQLITE_DONE) { sqlite3_finalize(st); store_set_error_sqlite(s, "memory_delete_item_step"); return CBM_STORE_ERR; }
+    if (sqlite3_step(st) != SQLITE_DONE) {
+        sqlite3_finalize(st);
+        store_set_error_sqlite(s, "memory_delete_item_step");
+        return CBM_STORE_ERR;
+    }
     sqlite3_finalize(st);
     return CBM_STORE_OK;
 }
 
 /* Write a tombstone audit event for a delete/soft-delete/restore. Caller holds
  * an open transaction. Best-effort id capture; returns the append result. */
-static int memory_delete_audit(cbm_store_t *s, const char *type, const char *mode,
-                               const char *id, const char *project, const char *user) {
+static int memory_delete_audit(cbm_store_t *s, const char *type, const char *mode, const char *id,
+                               const char *project, const char *user) {
     char payload[CBM_SZ_512];
     snprintf(payload, sizeof(payload), "mode=%s item_id=%s", mode ? mode : "", id ? id : "");
     char context[CBM_SZ_512];
-    snprintf(context, sizeof(context), "{\"item_id\":\"%s\",\"mode\":\"%s\"}", id ? id : "", mode ? mode : "");
+    snprintf(context, sizeof(context), "{\"item_id\":\"%s\",\"mode\":\"%s\"}", id ? id : "",
+             mode ? mode : "");
     cbm_memory_event_t ev = {0};
     ev.type = type;
     ev.source = "mcp.memory_delete";
@@ -3567,16 +3720,16 @@ static int memory_delete_audit(cbm_store_t *s, const char *type, const char *mod
     return cbm_store_memory_append_event(s, &ev, NULL);
 }
 
-int cbm_store_memory_delete(cbm_store_t *s, const char *id, const char *project,
-                            const char *mode, const char *user) {
+int cbm_store_memory_delete(cbm_store_t *s, const char *id, const char *project, const char *mode,
+                            const char *user) {
     if (!s || !s->db || !id || !id[0]) {
         return CBM_STORE_ERR;
     }
     if (!mode || !mode[0]) {
         mode = "soft";
     }
-    bool is_soft  = strcmp(mode, "soft") == 0;
-    bool is_hard  = strcmp(mode, "hard") == 0;
+    bool is_soft = strcmp(mode, "soft") == 0;
+    bool is_hard = strcmp(mode, "hard") == 0;
     bool is_purge = strcmp(mode, "purge") == 0;
     if (!is_soft && !is_hard && !is_purge) {
         return CBM_STORE_ERR;
@@ -3599,7 +3752,8 @@ int cbm_store_memory_delete(cbm_store_t *s, const char *id, const char *project,
         cbm_store_memory_item_free(&item);
         return CBM_STORE_NOT_FOUND;
     }
-    char *source_ids = (is_purge && item.source_event_ids) ? heap_strdup(item.source_event_ids) : NULL;
+    char *source_ids =
+        (is_purge && item.source_event_ids) ? heap_strdup(item.source_event_ids) : NULL;
     cbm_store_memory_item_free(&item);
 
     if (cbm_store_begin(s) != CBM_STORE_OK) {
@@ -3611,10 +3765,12 @@ int cbm_store_memory_delete(cbm_store_t *s, const char *id, const char *project,
     int rc;
     if (is_soft) {
         sqlite3_stmt *st = NULL;
-        const char *sql = "UPDATE memory_item SET deleted_at=?1,updated_at=?1 "
-                          "WHERE id=?2 AND deleted_at IS NULL AND (?3 IS NULL OR scope_project=?3);";
+        const char *sql =
+            "UPDATE memory_item SET deleted_at=?1,updated_at=?1 "
+            "WHERE id=?2 AND deleted_at IS NULL AND (?3 IS NULL OR scope_project=?3);";
         if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &st, NULL) != SQLITE_OK) {
-            cbm_store_rollback(s); free(source_ids);
+            cbm_store_rollback(s);
+            free(source_ids);
             store_set_error_sqlite(s, "memory_soft_delete_prepare");
             return CBM_STORE_ERR;
         }
@@ -3625,29 +3781,34 @@ int cbm_store_memory_delete(cbm_store_t *s, const char *id, const char *project,
         int changed = sqlite3_changes(s->db);
         sqlite3_finalize(st);
         if (rc != SQLITE_DONE) {
-            cbm_store_rollback(s); free(source_ids);
+            cbm_store_rollback(s);
+            free(source_ids);
             store_set_error_sqlite(s, "memory_soft_delete_step");
             return CBM_STORE_ERR;
         }
         if (changed <= 0) {
             /* Already soft-deleted (deleted_at not NULL): idempotent no-op. */
-            cbm_store_rollback(s); free(source_ids);
+            cbm_store_rollback(s);
+            free(source_ids);
             return CBM_STORE_NOT_FOUND;
         }
         if (memory_delete_audit(s, "soft_delete", mode, id, project, user) != CBM_STORE_OK) {
-            cbm_store_rollback(s); free(source_ids);
+            cbm_store_rollback(s);
+            free(source_ids);
             store_set_error_sqlite(s, "memory_soft_delete_audit");
             return CBM_STORE_ERR;
         }
     } else {
         rc = memory_delete_rows(s, id, project, source_ids);
         if (rc != CBM_STORE_OK) {
-            cbm_store_rollback(s); free(source_ids);
+            cbm_store_rollback(s);
+            free(source_ids);
             return CBM_STORE_ERR;
         }
         /* The tombstone audit event must outlive the erased content. */
         if (memory_delete_audit(s, "delete", mode, id, project, user) != CBM_STORE_OK) {
-            cbm_store_rollback(s); free(source_ids);
+            cbm_store_rollback(s);
+            free(source_ids);
             store_set_error_sqlite(s, "memory_delete_audit");
             return CBM_STORE_ERR;
         }
@@ -3667,8 +3828,9 @@ int cbm_store_memory_restore(cbm_store_t *s, const char *id, const char *project
         return CBM_STORE_ERR;
     }
     sqlite3_stmt *st = NULL;
-    const char *sql = "UPDATE memory_item SET deleted_at=NULL,updated_at=?1 "
-                      "WHERE id=?2 AND deleted_at IS NOT NULL AND (?3 IS NULL OR scope_project=?3);";
+    const char *sql =
+        "UPDATE memory_item SET deleted_at=NULL,updated_at=?1 "
+        "WHERE id=?2 AND deleted_at IS NOT NULL AND (?3 IS NULL OR scope_project=?3);";
     if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &st, NULL) != SQLITE_OK) {
         cbm_store_rollback(s);
         store_set_error_sqlite(s, "memory_restore_prepare");
@@ -3698,13 +3860,15 @@ int cbm_store_memory_restore(cbm_store_t *s, const char *id, const char *project
     return cbm_store_commit(s);
 }
 
-int cbm_store_memory_purge_expired(cbm_store_t *s, const char *project,
-                                   int64_t grace_ms, int *purged) {
-    if (purged) *purged = 0;
+int cbm_store_memory_purge_expired(cbm_store_t *s, const char *project, int64_t grace_ms,
+                                   int *purged) {
+    if (purged)
+        *purged = 0;
     if (!s || !s->db) {
         return CBM_STORE_ERR;
     }
-    if (grace_ms < 0) grace_ms = 0;
+    if (grace_ms < 0)
+        grace_ms = 0;
     int64_t cutoff = memory_now_ms() - grace_ms;
 
     /* Collect (id, source_event_ids) for every item soft-deleted before the
@@ -3728,13 +3892,23 @@ int cbm_store_memory_purge_expired(cbm_store_t *s, const char *project,
     while (sqlite3_step(sel) == SQLITE_ROW) {
         const char *iid = (const char *)sqlite3_column_text(sel, 0);
         const char *src = (const char *)sqlite3_column_text(sel, 1);
-        if (!iid) continue;
+        if (!iid)
+            continue;
         if (count == cap) {
             int ncap = cap ? cap * 2 : 16;
             char **ni = realloc(ids, (size_t)ncap * sizeof(*ni));
             char **ns = realloc(srcs, (size_t)ncap * sizeof(*ns));
-            if (!ni || !ns) { free(ni ? ni : ids); free(ns ? ns : srcs); ids = NULL; srcs = NULL; count = 0; break; }
-            ids = ni; srcs = ns; cap = ncap;
+            if (!ni || !ns) {
+                free(ni ? ni : ids);
+                free(ns ? ns : srcs);
+                ids = NULL;
+                srcs = NULL;
+                count = 0;
+                break;
+            }
+            ids = ni;
+            srcs = ns;
+            cap = ncap;
         }
         ids[count] = heap_strdup(iid);
         srcs[count] = src ? heap_strdup(src) : NULL;
@@ -3743,13 +3917,18 @@ int cbm_store_memory_purge_expired(cbm_store_t *s, const char *project,
     sqlite3_finalize(sel);
 
     if (count == 0) {
-        free(ids); free(srcs);
+        free(ids);
+        free(srcs);
         return CBM_STORE_OK;
     }
 
     if (cbm_store_begin(s) != CBM_STORE_OK) {
-        for (int i = 0; i < count; i++) { free(ids[i]); free(srcs[i]); }
-        free(ids); free(srcs);
+        for (int i = 0; i < count; i++) {
+            free(ids[i]);
+            free(srcs[i]);
+        }
+        free(ids);
+        free(srcs);
         store_set_error_sqlite(s, "memory_purge_begin");
         return CBM_STORE_ERR;
     }
@@ -3766,8 +3945,12 @@ int cbm_store_memory_purge_expired(cbm_store_t *s, const char *project,
         }
         done++;
     }
-    for (int i = 0; i < count; i++) { free(ids[i]); free(srcs[i]); }
-    free(ids); free(srcs);
+    for (int i = 0; i < count; i++) {
+        free(ids[i]);
+        free(srcs[i]);
+    }
+    free(ids);
+    free(srcs);
     if (!ok) {
         cbm_store_rollback(s);
         return CBM_STORE_ERR;
@@ -3794,74 +3977,114 @@ static char *memory_summary_from_content(const char *content) {
     return out;
 }
 static void memory_lower_token(const char *src, char *dst, size_t dst_sz) {
-    if (!dst || dst_sz == 0) return;
+    if (!dst || dst_sz == 0)
+        return;
     size_t j = 0;
     for (size_t i = 0; src && src[i] && j + 1 < dst_sz; i++) {
         unsigned char c = (unsigned char)src[i];
-        if (c >= 'A' && c <= 'Z') c = (unsigned char)(c - 'A' + 'a');
-        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c >= 0x80) dst[j++] = (char)c;
-        else if (j > 0 && dst[j - 1] != '-') dst[j++] = '-';
+        if (c >= 'A' && c <= 'Z')
+            c = (unsigned char)(c - 'A' + 'a');
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c >= 0x80)
+            dst[j++] = (char)c;
+        else if (j > 0 && dst[j - 1] != '-')
+            dst[j++] = '-';
     }
-    while (j > 0 && dst[j - 1] == '-') j--;
+    while (j > 0 && dst[j - 1] == '-')
+        j--;
     dst[j] = '\0';
 }
 
 static bool memory_contains_i(const char *hay, const char *needle) {
-    if (!hay || !needle || !needle[0]) return false;
+    if (!hay || !needle || !needle[0])
+        return false;
     size_t nlen = strlen(needle);
     for (const char *p = hay; *p; p++) {
         size_t i = 0;
         while (i < nlen && p[i]) {
             unsigned char a = (unsigned char)p[i], b = (unsigned char)needle[i];
-            if (a >= 'A' && a <= 'Z') a = (unsigned char)(a - 'A' + 'a');
-            if (b >= 'A' && b <= 'Z') b = (unsigned char)(b - 'A' + 'a');
-            if (a != b) break;
+            if (a >= 'A' && a <= 'Z')
+                a = (unsigned char)(a - 'A' + 'a');
+            if (b >= 'A' && b <= 'Z')
+                b = (unsigned char)(b - 'A' + 'a');
+            if (a != b)
+                break;
             i++;
         }
-        if (i == nlen) return true;
+        if (i == nlen)
+            return true;
     }
     return false;
 }
 
 static const char *memory_infer_predicate(const char *kind, const char *content) {
-    if (kind && strcmp(kind, "preference") == 0) return "prefers";
-    if (kind && strcmp(kind, "constraint") == 0) return "forbids";
-    if (kind && strcmp(kind, "decision") == 0) return "decides";
-    if (memory_contains_i(content, "prefer")) return "prefers";
-    if (memory_contains_i(content, "forbid")) return "forbids";
-    if (memory_contains_i(content, "decision")) return "decides";
-    if (memory_contains_i(content, "deprecated")) return "deprecates";
+    if (kind && strcmp(kind, "preference") == 0)
+        return "prefers";
+    if (kind && strcmp(kind, "constraint") == 0)
+        return "forbids";
+    if (kind && strcmp(kind, "decision") == 0)
+        return "decides";
+    if (memory_contains_i(content, "prefer"))
+        return "prefers";
+    if (memory_contains_i(content, "forbid"))
+        return "forbids";
+    if (memory_contains_i(content, "decision"))
+        return "decides";
+    if (memory_contains_i(content, "deprecated"))
+        return "deprecates";
     return "mentions";
 }
 
-static void memory_infer_entity(const char *scope_project, const char *scope_user, const char *content, char *out, size_t out_sz) {
+static void memory_infer_entity(const char *scope_project, const char *scope_user,
+                                const char *content, char *out, size_t out_sz) {
     char token[CBM_SZ_256];
-    const char *base = scope_project && scope_project[0] ? scope_project : (scope_user && scope_user[0] ? scope_user : "global");
+    const char *base = scope_project && scope_project[0]
+                           ? scope_project
+                           : (scope_user && scope_user[0] ? scope_user : "global");
     memory_lower_token(base, token, sizeof(token));
-    const char *prefix = scope_project && scope_project[0] ? "project" : (scope_user && scope_user[0] ? "user" : "memory");
-    if (memory_contains_i(content, "SQLite")) snprintf(out, out_sz, "tool:sqlite");
-    else if (memory_contains_i(content, "MCP")) snprintf(out, out_sz, "tool:mcp");
-    else if (memory_contains_i(content, "FTS5")) snprintf(out, out_sz, "tool:fts5");
-    else if (memory_contains_i(content, "embedding")) snprintf(out, out_sz, "concept:embedding");
-    else snprintf(out, out_sz, "%s:%s", prefix, token[0] ? token : "global");
+    const char *prefix = scope_project && scope_project[0]
+                             ? "project"
+                             : (scope_user && scope_user[0] ? "user" : "memory");
+    if (memory_contains_i(content, "SQLite"))
+        snprintf(out, out_sz, "tool:sqlite");
+    else if (memory_contains_i(content, "MCP"))
+        snprintf(out, out_sz, "tool:mcp");
+    else if (memory_contains_i(content, "FTS5"))
+        snprintf(out, out_sz, "tool:fts5");
+    else if (memory_contains_i(content, "embedding"))
+        snprintf(out, out_sz, "concept:embedding");
+    else
+        snprintf(out, out_sz, "%s:%s", prefix, token[0] ? token : "global");
 }
 
-static int memory_edge_insert(cbm_store_t *s, const char *src, const char *dst, const char *type, const char *origin, double confidence) {
-    if (!s || !s->db || !src || !dst || !type || !origin) return CBM_STORE_OK;
+static int memory_edge_insert(cbm_store_t *s, const char *src, const char *dst, const char *type,
+                              const char *origin, double confidence) {
+    if (!s || !s->db || !src || !dst || !type || !origin)
+        return CBM_STORE_OK;
     sqlite3_stmt *check = NULL;
-    const char *check_sql = "SELECT 1 FROM memory_edge WHERE src_id=?1 AND dst_id=?2 AND type=?3 LIMIT 1;";
+    const char *check_sql =
+        "SELECT 1 FROM memory_edge WHERE src_id=?1 AND dst_id=?2 AND type=?3 LIMIT 1;";
     if (sqlite3_prepare_v2(s->db, check_sql, CBM_NOT_FOUND, &check, NULL) == SQLITE_OK) {
-        bind_text(check, 1, src); bind_text(check, 2, dst); bind_text(check, 3, type);
+        bind_text(check, 1, src);
+        bind_text(check, 2, dst);
+        bind_text(check, 3, type);
         int exists = sqlite3_step(check) == SQLITE_ROW;
         sqlite3_finalize(check);
-        if (exists) return CBM_STORE_OK;
+        if (exists)
+            return CBM_STORE_OK;
     }
     char idbuf[CBM_SZ_128];
     memory_make_id(idbuf, sizeof(idbuf), "medge");
-    const char *sql = "INSERT INTO memory_edge (id,src_id,dst_id,type,weight,origin,confidence,created_at) VALUES (?1,?2,?3,?4,1.0,?5,?6,?7);";
+    const char *sql =
+        "INSERT INTO memory_edge (id,src_id,dst_id,type,weight,origin,confidence,created_at) "
+        "VALUES (?1,?2,?3,?4,1.0,?5,?6,?7);";
     sqlite3_stmt *stmt = NULL;
-    if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) return CBM_STORE_ERR;
-    bind_text(stmt, 1, idbuf); bind_text(stmt, 2, src); bind_text(stmt, 3, dst); bind_text(stmt, 4, type); bind_text(stmt, 5, origin);
+    if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK)
+        return CBM_STORE_ERR;
+    bind_text(stmt, 1, idbuf);
+    bind_text(stmt, 2, src);
+    bind_text(stmt, 3, dst);
+    bind_text(stmt, 4, type);
+    bind_text(stmt, 5, origin);
     sqlite3_bind_double(stmt, 6, confidence > 0.0 ? confidence : 0.5);
     sqlite3_bind_int64(stmt, 7, memory_now_ms());
     int rc = sqlite3_step(stmt);
@@ -3879,31 +4102,39 @@ int cbm_store_memory_link_code(cbm_store_t *s, const char *item_id, const char *
     }
     char dst[CBM_SZ_512];
     snprintf(dst, sizeof(dst), "code:%s", qualified_name);
-    return memory_edge_insert(s, item_id, dst, "about_code",
-                              origin && origin[0] ? origin : "user", 1.0);
+    return memory_edge_insert(s, item_id, dst, "about_code", origin && origin[0] ? origin : "user",
+                              1.0);
 }
 
 static void memory_first_source_id(const char *source_ids, char *out, size_t out_sz) {
-    if (!out || out_sz == 0) return;
+    if (!out || out_sz == 0)
+        return;
     out[0] = '\0';
     const char *p = source_ids ? strchr(source_ids, '"') : NULL;
-    if (!p) return;
+    if (!p)
+        return;
     p++;
     const char *e = strchr(p, '"');
-    if (!e || e <= p) return;
+    if (!e || e <= p)
+        return;
     size_t n = (size_t)(e - p);
-    if (n >= out_sz) n = out_sz - 1;
+    if (n >= out_sz)
+        n = out_sz - 1;
     memcpy(out, p, n);
     out[n] = '\0';
 }
 
 static int memory_vec_upsert(cbm_store_t *s, const char *item_id, const char *content) {
-    if (!s || !s->db || !item_id) return CBM_STORE_OK;
+    if (!s || !s->db || !item_id)
+        return CBM_STORE_OK;
     int8_t vec[MEMORY_VEC_DIM];
     memory_feature_vec(content, vec);
-    const char *sql = "INSERT OR REPLACE INTO memory_vec (item_id,dim,embedding,embedding_json,updated_at) VALUES (?1,?2,?3,NULL,?4);";
+    const char *sql =
+        "INSERT OR REPLACE INTO memory_vec (item_id,dim,embedding,embedding_json,updated_at) "
+        "VALUES (?1,?2,?3,NULL,?4);";
     sqlite3_stmt *stmt = NULL;
-    if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) return CBM_STORE_OK;
+    if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK)
+        return CBM_STORE_OK;
     bind_text(stmt, 1, item_id);
     sqlite3_bind_int(stmt, 2, MEMORY_VEC_DIM);
     sqlite3_bind_blob(stmt, 3, vec, (int)sizeof(vec), SQLITE_TRANSIENT);
@@ -3914,11 +4145,16 @@ static int memory_vec_upsert(cbm_store_t *s, const char *item_id, const char *co
 }
 
 int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit, int *processed) {
-    if (processed) *processed = 0;
-    if (!s || !s->db) return CBM_STORE_ERR;
+    if (processed)
+        *processed = 0;
+    if (!s || !s->db)
+        return CBM_STORE_ERR;
     int lim = limit > 0 ? limit : 100;
-    const char *sql = "SELECT id,kind,content,scope_project,scope_user,scope_task,entity_key,predicate,confidence,source_event_ids "
-                      "FROM memory_item WHERE status='candidate' AND deleted_at IS NULL AND (?1 IS NULL OR scope_project=?1) LIMIT ?2;";
+    const char *sql = "SELECT "
+                      "id,kind,content,scope_project,scope_user,scope_task,entity_key,predicate,"
+                      "confidence,source_event_ids "
+                      "FROM memory_item WHERE status='candidate' AND deleted_at IS NULL AND (?1 IS "
+                      "NULL OR scope_project=?1) LIMIT ?2;";
 
     /* One transaction for the whole batch. Each consolidated item touches
      * memory_item + memory_edge + memory_vec + memory_fts; a crash mid-item
@@ -3953,16 +4189,22 @@ int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit,
         char *summary = memory_summary_from_content(content);
         char entity[CBM_SZ_512];
         char source_event_id[CBM_SZ_128];
-        const char *predicate = existing_predicate && existing_predicate[0] ? existing_predicate : memory_infer_predicate(kind, content);
-        if (existing_entity && existing_entity[0]) snprintf(entity, sizeof(entity), "%s", existing_entity);
-        else memory_infer_entity(scope_project, scope_user, content, entity, sizeof(entity));
+        const char *predicate = existing_predicate && existing_predicate[0]
+                                    ? existing_predicate
+                                    : memory_infer_predicate(kind, content);
+        if (existing_entity && existing_entity[0])
+            snprintf(entity, sizeof(entity), "%s", existing_entity);
+        else
+            memory_infer_entity(scope_project, scope_user, content, entity, sizeof(entity));
         memory_first_source_id(source_ids, source_event_id, sizeof(source_event_id));
 
         sqlite3_stmt *dup = NULL;
-        const char *dup_sql = "SELECT id,content FROM memory_item WHERE status='active' AND deleted_at IS NULL AND entity_key=?1 AND predicate=?2 "
-                              "AND ((?3 IS NULL AND scope_project IS NULL) OR scope_project=?3) "
-                              "AND ((?4 IS NULL AND scope_user IS NULL) OR scope_user=?4) "
-                              "AND ((?5 IS NULL AND scope_task IS NULL) OR scope_task=?5) LIMIT 20;";
+        const char *dup_sql =
+            "SELECT id,content FROM memory_item WHERE status='active' AND deleted_at IS NULL AND "
+            "entity_key=?1 AND predicate=?2 "
+            "AND ((?3 IS NULL AND scope_project IS NULL) OR scope_project=?3) "
+            "AND ((?4 IS NULL AND scope_user IS NULL) OR scope_user=?4) "
+            "AND ((?5 IS NULL AND scope_task IS NULL) OR scope_task=?5) LIMIT 20;";
         char merge_buf[CBM_SZ_128] = {0};
         const char *merge_id = NULL;
 
@@ -3992,13 +4234,14 @@ int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit,
             while (sqlite3_step(dup) == SQLITE_ROW) {
                 const char *other_id = (const char *)sqlite3_column_text(dup, 0);
                 const char *other_content = (const char *)sqlite3_column_text(dup, 1);
-                if (!other_id) continue;
+                if (!other_id)
+                    continue;
                 /* Compute cosine similarity via the same int8 vectors used at retrieve time. */
                 int8_t other_vec[MEMORY_VEC_DIM];
                 memory_feature_vec(other_content, other_vec);
                 int32_t dot = 0, mag_a = 0, mag_b = 0;
                 for (int vi = 0; vi < MEMORY_VEC_DIM; vi++) {
-                    dot  += (int32_t)cand_vec[vi] * (int32_t)other_vec[vi];
+                    dot += (int32_t)cand_vec[vi] * (int32_t)other_vec[vi];
                     mag_a += (int32_t)cand_vec[vi] * (int32_t)cand_vec[vi];
                     mag_b += (int32_t)other_vec[vi] * (int32_t)other_vec[vi];
                 }
@@ -4024,11 +4267,13 @@ int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit,
         if (merge_id) {
             sqlite3_stmt *m1 = NULL;
             /* Boost confidence of the surviving active item and record that it now supersedes
-             * the incoming candidate (supersedes points TO the item being retired, not the survivor). */
+             * the incoming candidate (supersedes points TO the item being retired, not the
+             * survivor). */
             if (sqlite3_prepare_v2(s->db,
-                    "UPDATE memory_item SET confidence=MIN(1.0, confidence + 0.05), supersedes=?1, updated_at=?2 WHERE id=?3;",
-                    CBM_NOT_FOUND, &m1, NULL) == SQLITE_OK) {
-                bind_text(m1, 1, id);               /* survivor.supersedes = candidate being archived */
+                                   "UPDATE memory_item SET confidence=MIN(1.0, confidence + 0.05), "
+                                   "supersedes=?1, updated_at=?2 WHERE id=?3;",
+                                   CBM_NOT_FOUND, &m1, NULL) == SQLITE_OK) {
+                bind_text(m1, 1, id); /* survivor.supersedes = candidate being archived */
                 sqlite3_bind_int64(m1, 2, memory_now_ms());
                 bind_text(m1, 3, merge_id);
                 (void)sqlite3_step(m1);
@@ -4037,8 +4282,8 @@ int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit,
             sqlite3_stmt *m2 = NULL;
             /* Archive the duplicate candidate. supersedes is left NULL: it is the retired item,
              * not the one doing the superseding. */
-            if (sqlite3_prepare_v2(s->db,
-                    "UPDATE memory_item SET status='archived', updated_at=?1 WHERE id=?2;",
+            if (sqlite3_prepare_v2(
+                    s->db, "UPDATE memory_item SET status='archived', updated_at=?1 WHERE id=?2;",
                     CBM_NOT_FOUND, &m2, NULL) == SQLITE_OK) {
                 sqlite3_bind_int64(m2, 1, memory_now_ms());
                 bind_text(m2, 2, id);
@@ -4046,7 +4291,9 @@ int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit,
                 sqlite3_finalize(m2);
             }
             (void)memory_edge_insert(s, id, merge_id, "similar_to", "post", confidence);
-            if (source_event_id[0]) (void)memory_edge_insert(s, merge_id, source_event_id, "derived_from", "merge", 1.0);
+            if (source_event_id[0])
+                (void)memory_edge_insert(s, merge_id, source_event_id, "derived_from", "merge",
+                                         1.0);
         } else {
             sqlite3_stmt *up = NULL;
             const char *up_sql =
@@ -4063,13 +4310,16 @@ int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit,
                 (void)sqlite3_step(up);
                 sqlite3_finalize(up);
             }
-            if (source_event_id[0]) (void)memory_edge_insert(s, id, source_event_id, "derived_from", "rule", 1.0);
-            if (scope_project && scope_project[0]) (void)memory_edge_insert(s, id, scope_project, "belongs_to", "rule", 1.0);
+            if (source_event_id[0])
+                (void)memory_edge_insert(s, id, source_event_id, "derived_from", "rule", 1.0);
+            if (scope_project && scope_project[0])
+                (void)memory_edge_insert(s, id, scope_project, "belongs_to", "rule", 1.0);
             (void)memory_vec_upsert(s, id, content);
             /* P1: build FTS index now that the item is active (deferred from hot path). */
             {
                 cbm_memory_item_t fts_item = {0};
-                fts_item.title = id; /* use id as title placeholder if title not in consolidate select */
+                fts_item.title =
+                    id; /* use id as title placeholder if title not in consolidate select */
                 fts_item.summary = summary;
                 fts_item.content = content;
                 (void)memory_fts_upsert(s, &fts_item, id);
@@ -4091,27 +4341,29 @@ int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit,
         store_set_error_sqlite(s, "memory_consolidate_commit");
         return CBM_STORE_ERR;
     }
-    if (processed) *processed = n;
+    if (processed)
+        *processed = n;
     return CBM_STORE_OK;
 }
 
 int cbm_store_memory_reindex_fts(cbm_store_t *s, const char *project, int *processed) {
-    if (processed) *processed = 0;
-    if (!s || !s->db) return CBM_STORE_ERR;
+    if (processed)
+        *processed = 0;
+    if (!s || !s->db)
+        return CBM_STORE_ERR;
     /* Drop existing FTS rows for the project's items, then re-insert with current
      * segmentation. Scoped by project so reindex of one project leaves others alone. */
-    const char *del_sql =
-        "DELETE FROM memory_fts WHERE item_id IN "
-        "(SELECT id FROM memory_item WHERE ?1 IS NULL OR scope_project=?1);";
+    const char *del_sql = "DELETE FROM memory_fts WHERE item_id IN "
+                          "(SELECT id FROM memory_item WHERE ?1 IS NULL OR scope_project=?1);";
     sqlite3_stmt *del = NULL;
     if (sqlite3_prepare_v2(s->db, del_sql, CBM_NOT_FOUND, &del, NULL) == SQLITE_OK) {
         memory_bind_nullable(del, 1, project);
         (void)sqlite3_step(del);
         sqlite3_finalize(del);
     }
-    const char *sel_sql =
-        "SELECT id,title,summary,content FROM memory_item "
-        "WHERE (?1 IS NULL OR scope_project=?1) AND deleted_at IS NULL AND status IN ('active','candidate','deprecated');";
+    const char *sel_sql = "SELECT id,title,summary,content FROM memory_item "
+                          "WHERE (?1 IS NULL OR scope_project=?1) AND deleted_at IS NULL AND "
+                          "status IN ('active','candidate','deprecated');";
     sqlite3_stmt *sel = NULL;
     if (sqlite3_prepare_v2(s->db, sel_sql, CBM_NOT_FOUND, &sel, NULL) != SQLITE_OK) {
         store_set_error_sqlite(s, "memory_reindex_select");
@@ -4125,21 +4377,28 @@ int cbm_store_memory_reindex_fts(cbm_store_t *s, const char *project, int *proce
         item.summary = (const char *)sqlite3_column_text(sel, 2);
         item.content = (const char *)sqlite3_column_text(sel, 3);
         const char *id = (const char *)sqlite3_column_text(sel, 0);
-        if (id && memory_fts_upsert(s, &item, id) == CBM_STORE_OK) n++;
+        if (id && memory_fts_upsert(s, &item, id) == CBM_STORE_OK)
+            n++;
     }
     sqlite3_finalize(sel);
-    if (processed) *processed = n;
+    if (processed)
+        *processed = n;
     return CBM_STORE_OK;
 }
 
 int cbm_store_memory_decay(cbm_store_t *s, const char *project, int limit, int *processed) {
-    if (processed) *processed = 0;
-    if (!s || !s->db) return CBM_STORE_ERR;
+    if (processed)
+        *processed = 0;
+    if (!s || !s->db)
+        return CBM_STORE_ERR;
     int lim = limit > 0 ? limit : 100;
     int64_t now = memory_now_ms();
-    const char *sql = "SELECT id,last_hit_at,confidence,reusability,decay FROM memory_item WHERE status='active' AND deleted_at IS NULL AND (?1 IS NULL OR scope_project=?1) LIMIT ?2;";
+    const char *sql =
+        "SELECT id,last_hit_at,confidence,reusability,decay FROM memory_item WHERE status='active' "
+        "AND deleted_at IS NULL AND (?1 IS NULL OR scope_project=?1) LIMIT ?2;";
     sqlite3_stmt *stmt = NULL;
-    if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) return CBM_STORE_ERR;
+    if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK)
+        return CBM_STORE_ERR;
     /* P0-4: the per-item decay UPDATEs and the summary audit event commit
      * together — collect the rows first (the read cursor is finalized before
      * COMMIT to avoid a cursor-vs-write SQLITE_BUSY). */
@@ -4159,12 +4418,16 @@ int cbm_store_memory_decay(cbm_store_t *s, const char *project, int limit, int *
         double reusability = sqlite3_column_double(stmt, 3);
         double old_decay = sqlite3_column_double(stmt, 4);
         int64_t age_ms = last_hit > 0 ? now - last_hit : 30LL * 24LL * 60LL * 60LL * 1000LL;
-        if (age_ms < 0) age_ms = 0;
+        if (age_ms < 0)
+            age_ms = 0;
         double age_days = (double)age_ms / (1000.0 * 60.0 * 60.0 * 24.0);
-        double next_decay = old_decay + (age_days / 30.0) * (1.0 - confidence) * (1.0 - reusability);
+        double next_decay =
+            old_decay + (age_days / 30.0) * (1.0 - confidence) * (1.0 - reusability);
         const char *status = next_decay >= 1.0 ? "archived" : "active";
         sqlite3_stmt *up = NULL;
-        if (sqlite3_prepare_v2(s->db, "UPDATE memory_item SET decay=?1,status=?2,updated_at=?3 WHERE id=?4;", CBM_NOT_FOUND, &up, NULL) == SQLITE_OK) {
+        if (sqlite3_prepare_v2(
+                s->db, "UPDATE memory_item SET decay=?1,status=?2,updated_at=?3 WHERE id=?4;",
+                CBM_NOT_FOUND, &up, NULL) == SQLITE_OK) {
             sqlite3_bind_double(up, 1, next_decay);
             bind_text(up, 2, status);
             sqlite3_bind_int64(up, 3, now);
@@ -4172,7 +4435,8 @@ int cbm_store_memory_decay(cbm_store_t *s, const char *project, int limit, int *
             (void)sqlite3_step(up);
             sqlite3_finalize(up);
             n++;
-            if (next_decay >= 1.0) archived++;
+            if (next_decay >= 1.0)
+                archived++;
         }
     }
     sqlite3_finalize(stmt);
@@ -4187,7 +4451,8 @@ int cbm_store_memory_decay(cbm_store_t *s, const char *project, int limit, int *
         store_set_error_sqlite(s, "memory_decay_commit");
         return CBM_STORE_ERR;
     }
-    if (processed) *processed = n;
+    if (processed)
+        *processed = n;
     return CBM_STORE_OK;
 }
 
@@ -4210,11 +4475,11 @@ int cbm_store_memory_maintain_if_due(cbm_store_t *s, const char *project,
     }
 
     enum {
-        CONSOLIDATE_THRESHOLD = 8,           /* candidates needed to trigger early */
-        MIN_INTERVAL_MS = 60 * 1000,         /* debounce: don't consolidate more often */
-        MAX_INTERVAL_MS = 5 * 60 * 1000,     /* backstop: any pending candidate eventually */
-        DECAY_INTERVAL_MS = 60 * 60 * 1000,  /* decay is time-driven only */
-        SWEEP_INTERVAL_MS = 60 * 60 * 1000   /* retention sweep cadence (time-driven) */
+        CONSOLIDATE_THRESHOLD = 8,          /* candidates needed to trigger early */
+        MIN_INTERVAL_MS = 60 * 1000,        /* debounce: don't consolidate more often */
+        MAX_INTERVAL_MS = 5 * 60 * 1000,    /* backstop: any pending candidate eventually */
+        DECAY_INTERVAL_MS = 60 * 60 * 1000, /* decay is time-driven only */
+        SWEEP_INTERVAL_MS = 60 * 60 * 1000  /* retention sweep cadence (time-driven) */
     };
     /* Grace window before a soft-deleted item is physically purged. Default 7
      * days; override with CBM_MEMORY_DELETE_GRACE_MS (e.g. 0 in tests). */
@@ -4224,7 +4489,8 @@ int cbm_store_memory_maintain_if_due(cbm_store_t *s, const char *project,
         cbm_safe_getenv("CBM_MEMORY_DELETE_GRACE_MS", gbuf, sizeof(gbuf), NULL);
         if (gbuf[0]) {
             long long g = atoll(gbuf);
-            if (g >= 0) grace_ms = (int64_t)g;
+            if (g >= 0)
+                grace_ms = (int64_t)g;
         }
     }
 
@@ -4235,9 +4501,9 @@ int cbm_store_memory_maintain_if_due(cbm_store_t *s, const char *project,
     {
         sqlite3_stmt *st = NULL;
         if (sqlite3_prepare_v2(s->db,
-                "SELECT COUNT(*) FROM memory_item WHERE status='candidate' "
-                "AND (?1 IS NULL OR scope_project=?1);",
-                CBM_NOT_FOUND, &st, NULL) == SQLITE_OK) {
+                               "SELECT COUNT(*) FROM memory_item WHERE status='candidate' "
+                               "AND (?1 IS NULL OR scope_project=?1);",
+                               CBM_NOT_FOUND, &st, NULL) == SQLITE_OK) {
             memory_bind_nullable(st, 1, project);
             if (sqlite3_step(st) == SQLITE_ROW) {
                 candidates = sqlite3_column_int(st, 0);
@@ -4310,15 +4576,22 @@ int cbm_store_memory_health(cbm_store_t *s, const char *project, cbm_memory_heal
         "(SELECT COUNT(*) FROM memory_event WHERE ?1 IS NULL OR project=?1),"
         "(SELECT COUNT(*) FROM memory_item WHERE ?1 IS NULL OR scope_project=?1),"
         "(SELECT COUNT(*) FROM memory_edge),"
-        "(SELECT COUNT(*) FROM memory_item WHERE status='candidate' AND deleted_at IS NULL AND (?1 IS NULL OR scope_project=?1)),"
-        "(SELECT COUNT(*) FROM memory_item WHERE status='active' AND deleted_at IS NULL AND (?1 IS NULL OR scope_project=?1)),"
-        "(SELECT COUNT(*) FROM memory_item WHERE status='deprecated' AND deleted_at IS NULL AND (?1 IS NULL OR scope_project=?1)),"
-        "(SELECT COUNT(*) FROM memory_item WHERE status='archived' AND deleted_at IS NULL AND (?1 IS NULL OR scope_project=?1)),"
-        "(SELECT COUNT(*) FROM memory_item WHERE status='retracted' AND deleted_at IS NULL AND (?1 IS NULL OR scope_project=?1)),"
+        "(SELECT COUNT(*) FROM memory_item WHERE status='candidate' AND deleted_at IS NULL AND (?1 "
+        "IS NULL OR scope_project=?1)),"
+        "(SELECT COUNT(*) FROM memory_item WHERE status='active' AND deleted_at IS NULL AND (?1 IS "
+        "NULL OR scope_project=?1)),"
+        "(SELECT COUNT(*) FROM memory_item WHERE status='deprecated' AND deleted_at IS NULL AND "
+        "(?1 IS NULL OR scope_project=?1)),"
+        "(SELECT COUNT(*) FROM memory_item WHERE status='archived' AND deleted_at IS NULL AND (?1 "
+        "IS NULL OR scope_project=?1)),"
+        "(SELECT COUNT(*) FROM memory_item WHERE status='retracted' AND deleted_at IS NULL AND (?1 "
+        "IS NULL OR scope_project=?1)),"
         "(SELECT COALESCE(SUM(hit_count),0) FROM memory_item WHERE ?1 IS NULL OR scope_project=?1),"
         "(SELECT COUNT(*) FROM memory_edge WHERE type='contradicts'),"
-        "(SELECT COUNT(DISTINCT COALESCE(scope_project, scope_user, scope_task, 'global')) FROM memory_item WHERE ?1 IS NULL OR scope_project=?1),"
-        "(SELECT COUNT(*) FROM memory_item WHERE deleted_at IS NOT NULL AND (?1 IS NULL OR scope_project=?1));";
+        "(SELECT COUNT(DISTINCT COALESCE(scope_project, scope_user, scope_task, 'global')) FROM "
+        "memory_item WHERE ?1 IS NULL OR scope_project=?1),"
+        "(SELECT COUNT(*) FROM memory_item WHERE deleted_at IS NOT NULL AND (?1 IS NULL OR "
+        "scope_project=?1));";
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
         store_set_error_sqlite(s, "memory_health_prepare");
@@ -4338,12 +4611,12 @@ int cbm_store_memory_health(cbm_store_t *s, const char *project, cbm_memory_heal
         out->conflict_count = sqlite3_column_int(stmt, 9);
         out->scope_count = sqlite3_column_int(stmt, 10);
         out->deleted_count = sqlite3_column_int(stmt, 11);
-        out->hit_rate = out->item_count > 0 ? (double)out->total_hits / (double)out->item_count : 0.0;
+        out->hit_rate =
+            out->item_count > 0 ? (double)out->total_hits / (double)out->item_count : 0.0;
     }
     sqlite3_finalize(stmt);
     return CBM_STORE_OK;
 }
-
 
 /* ── FindNodesByFileOverlap ─────────────────────────────────────── */
 
