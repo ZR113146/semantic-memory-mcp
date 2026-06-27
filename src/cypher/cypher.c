@@ -1615,6 +1615,10 @@ static int parse_return_or_with(parser_t *p, cbm_return_clause_t **out, bool is_
     }
 
     cbm_return_clause_t *r = calloc(CBM_ALLOC_ONE, sizeof(cbm_return_clause_t));
+    /* -1 = no LIMIT clause (return all). An explicit `LIMIT 0` parses to 0 below
+     * and must return 0 rows — distinguishing the two requires a sentinel, since
+     * calloc zeroes limit and `limit > 0` would treat LIMIT 0 as "no limit". */
+    r->limit = -1;
     int cap = CYP_INIT_CAP8;
     r->items = malloc(cap * sizeof(cbm_return_item_t));
 
@@ -3092,7 +3096,7 @@ static void rb_apply_skip_limit(result_builder_t *rb, int skip_n, int limit) {
         rb->row_count = 0;
     }
     /* Limit */
-    if (limit > 0 && rb->row_count > limit) {
+    if (limit >= 0 && rb->row_count > limit) {
         for (int i = limit; i < rb->row_count; i++) {
             for (int c = 0; c < rb->col_count; c++) {
                 safe_str_free(&rb->rows[i][c]);
@@ -3406,7 +3410,7 @@ static void bindings_skip_limit(binding_t *vbindings, int *count, int skip, int 
         }
         *count = 0;
     }
-    if (limit > 0 && *count > limit) {
+    if (limit >= 0 && *count > limit) {
         for (int i = limit; i < *count; i++) {
             binding_free(&vbindings[i]);
         }
@@ -4246,7 +4250,7 @@ static void execute_return_clause(cbm_query_t *q, cbm_return_clause_t *ret, bind
     }
 
     rb_apply_order_by(rb, ret);
-    rb_apply_skip_limit(rb, ret->skip, ret->limit > 0 ? ret->limit : max_rows);
+    rb_apply_skip_limit(rb, ret->skip, ret->limit >= 0 ? ret->limit : max_rows);
     if (ret->distinct) {
         rb_apply_distinct(rb);
     }
