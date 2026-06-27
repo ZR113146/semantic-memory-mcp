@@ -61,3 +61,6 @@ soak-results/
 
 # LSP originality-check reference cache (scripts/check-lsp-originality.sh)
 .lsp-refs/
+
+# Python install-manager cache (pymanager) — not part of this project
+/Python/
