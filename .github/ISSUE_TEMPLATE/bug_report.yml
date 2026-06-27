@@ -43,10 +43,6 @@ body:
         - GitHub release archive / install.sh / install.ps1
         - npm
         - PyPI
-        - Homebrew
-        - AUR
-        - Scoop / Winget / Chocolatey
-        - go install
         - Built from source
     validations:
       required: true

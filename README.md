@@ -186,7 +186,7 @@ Removes all agent configs, skills, hooks, and instructions. Does not remove the 
 - **Auto-sync**: Background watcher detects file changes and re-indexes automatically
 - **Route nodes**: REST endpoints are first-class graph entities
 - **CLI mode**: `semantic-memory-mcp cli search_graph '{"name_pattern": ".*Handler.*"}'`
-- **Available on**: npm, PyPI, Homebrew, Scoop, Winget, Chocolatey, AUR, `go install`
+- **Available on**: npm, PyPI
 
 ## Team-Shared Graph Artifact
 
@@ -296,18 +296,6 @@ irm https://raw.githubusercontent.com/ZR113146/semantic-memory-mcp/main/scripts/
 ```
 
 </details>
-
-### AUR (Arch Linux)
-
-```bash
-yay -S semantic-memory-mcp-bin
-```
-
-```bash
-paru -S semantic-memory-mcp-bin
-```
-
-The `semantic-memory-mcp-bin` package is available at: https://aur.archlinux.org/packages/semantic-memory-mcp-bin
 
 ### Install via Claude Code
 

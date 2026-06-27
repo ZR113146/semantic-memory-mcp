@@ -1,4 +1,4 @@
-"""Downloads the codebase-memory-mcp binary on first run, then exec's it."""
+"""Downloads the semantic-memory-mcp binary on first run, then exec's it."""
 
 import hashlib
 import os
@@ -12,7 +12,7 @@ import urllib.error
 import urllib.parse
 from pathlib import Path
 
-REPO = "DeusData/codebase-memory-mcp"
+REPO = "ZR113146/semantic-memory-mcp"
 
 # Security: only permit https fetches. urllib's default handlers accept
 # file://, ftp://, and custom schemes — a redirect or tainted URL source
@@ -25,7 +25,7 @@ def _validate_url_scheme(url: str) -> None:
     scheme = urllib.parse.urlparse(url).scheme
     if scheme not in _ALLOWED_SCHEMES:
         sys.exit(
-            f"codebase-memory-mcp: refusing to fetch non-https URL "
+            f"semantic-memory-mcp: refusing to fetch non-https URL "
             f"(scheme={scheme!r}): {url}"
         )
 
@@ -45,13 +45,13 @@ def _safe_extract_tar(tf, dest: str) -> None:
     for member in tf.getmembers():
         if member.issym() or member.islnk():
             sys.exit(
-                f"codebase-memory-mcp: refusing unsafe tar entry "
+                f"semantic-memory-mcp: refusing unsafe tar entry "
                 f"(link: {member.name!r})"
             )
         member_abs = os.path.abspath(os.path.join(dest_abs, member.name))
         if not (member_abs == dest_abs or member_abs.startswith(dest_abs + os.sep)):
             sys.exit(
-                f"codebase-memory-mcp: refusing unsafe tar entry "
+                f"semantic-memory-mcp: refusing unsafe tar entry "
                 f"(escapes dest: {member.name!r})"
             )
     tf.extractall(dest)
@@ -64,7 +64,7 @@ def _safe_extract_zip(zf, dest: str) -> None:
         member_abs = os.path.abspath(os.path.join(dest_abs, name))
         if not (member_abs == dest_abs or member_abs.startswith(dest_abs + os.sep)):
             sys.exit(
-                f"codebase-memory-mcp: refusing unsafe zip entry "
+                f"semantic-memory-mcp: refusing unsafe zip entry "
                 f"(escapes dest: {name!r})"
             )
     zf.extractall(dest)
@@ -89,11 +89,11 @@ def _verify_checksum(archive_path: str, archive_name: str, version: str) -> None
                     actual = h.hexdigest()
                     if expected != actual:
                         sys.exit(
-                            f"codebase-memory-mcp: CHECKSUM MISMATCH for {archive_name}\n"
+                            f"semantic-memory-mcp: CHECKSUM MISMATCH for {archive_name}\n"
                             f"  expected: {expected}\n"
                             f"  actual:   {actual}"
                         )
-                    print("codebase-memory-mcp: checksum verified.", file=sys.stderr)
+                    print("semantic-memory-mcp: checksum verified.", file=sys.stderr)
                     break
     except SystemExit:
         raise
@@ -109,9 +109,9 @@ def _verify_checksum(archive_path: str, archive_name: str, version: str) -> None
 def _version() -> str:
     try:
         from importlib.metadata import version
-        return version("codebase-memory-mcp")
+        return version("semantic-memory-mcp")
     except Exception:
-        return "0.8.1"
+        return "0.9.1"
 
 
 def _os_name() -> str:
@@ -122,7 +122,7 @@ def _os_name() -> str:
         return "darwin"
     if p == "win32":
         return "windows"
-    sys.exit(f"codebase-memory-mcp: unsupported platform: {p}")
+    sys.exit(f"semantic-memory-mcp: unsupported platform: {p}")
 
 
 def _arch() -> str:
@@ -131,7 +131,7 @@ def _arch() -> str:
         return "arm64"
     if m in ("x86_64", "amd64"):
         return "amd64"
-    sys.exit(f"codebase-memory-mcp: unsupported architecture: {m}")
+    sys.exit(f"semantic-memory-mcp: unsupported architecture: {m}")
 
 
 def _cache_dir() -> Path:
@@ -141,11 +141,11 @@ def _cache_dir() -> Path:
         base = Path.home() / "Library" / "Caches"
     else:
         base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-    return base / "codebase-memory-mcp"
+    return base / "semantic-memory-mcp"
 
 
 def _bin_path(version: str) -> Path:
-    name = "codebase-memory-mcp.exe" if sys.platform == "win32" else "codebase-memory-mcp"
+    name = "semantic-memory-mcp.exe" if sys.platform == "win32" else "semantic-memory-mcp"
     return _cache_dir() / version / name
 
 
@@ -157,7 +157,7 @@ def _download(version: str) -> Path:
     # dynamically links glibc 2.38+ and fails on older distros. macOS/Windows
     # have no such variant. Keep in sync with install.sh / install.js / cli.c.
     variant = "-portable" if os_name == "linux" else ""
-    archive = f"codebase-memory-mcp-{os_name}-{arch}{variant}.{ext}"
+    archive = f"semantic-memory-mcp-{os_name}-{arch}{variant}.{ext}"
     url = f"https://github.com/{REPO}/releases/download/v{version}/{archive}"
     _validate_url_scheme(url)
 
@@ -165,7 +165,7 @@ def _download(version: str) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     print(
-        f"codebase-memory-mcp: downloading v{version} for {os_name}/{arch}...",
+        f"semantic-memory-mcp: downloading v{version} for {os_name}/{arch}...",
         file=sys.stderr,
     )
 
@@ -175,7 +175,7 @@ def _download(version: str) -> Path:
             urllib.request.urlretrieve(url, tmp_archive)  # noqa: S310 — scheme validated above
         except urllib.error.HTTPError as e:
             sys.exit(
-                f"codebase-memory-mcp: download failed ({e})\n"
+                f"semantic-memory-mcp: download failed ({e})\n"
                 f"URL: {url}\n"
                 f"See https://github.com/{REPO}/releases for available versions."
             )
@@ -191,10 +191,10 @@ def _download(version: str) -> Path:
             with zipfile.ZipFile(tmp_archive) as zf:
                 _safe_extract_zip(zf, tmp)
 
-        bin_name = "codebase-memory-mcp.exe" if os_name == "windows" else "codebase-memory-mcp"
+        bin_name = "semantic-memory-mcp.exe" if os_name == "windows" else "semantic-memory-mcp"
         extracted = os.path.join(tmp, bin_name)
         if not os.path.exists(extracted):
-            sys.exit("codebase-memory-mcp: binary not found after extraction")
+            sys.exit("semantic-memory-mcp: binary not found after extraction")
 
         shutil.copy2(extracted, dest)
         current = dest.stat().st_mode
