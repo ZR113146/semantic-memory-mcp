@@ -16,7 +16,7 @@
 
 **The fastest and most efficient code intelligence engine for AI coding agents.** Full-indexes an average repository in milliseconds, the Linux kernel (28M LOC, 75K files) in 3 minutes. Answers structural queries in under 1ms. Ships as a single static binary for macOS, Linux, and Windows — download, run `install`, done.
 
-High-quality parsing through [tree-sitter](https://tree-sitter.github.io/tree-sitter/) AST analysis across all 158 languages, enhanced with [**Hybrid LSP** semantic type resolution](#hybrid-lsp) for Python, TypeScript / JavaScript / JSX / TSX, PHP, C#, Go, C, C++, Java, Kotlin, and Rust — producing a persistent knowledge graph of functions, classes, call chains, HTTP routes, and cross-service links. 14 MCP tools. Zero dependencies. Plug and play across 11 coding agents.
+High-quality parsing through [tree-sitter](https://tree-sitter.github.io/tree-sitter/) AST analysis across all 158 languages, enhanced with [**Hybrid LSP** semantic type resolution](#hybrid-lsp) for Python, TypeScript / JavaScript / JSX / TSX, PHP, C#, Go, C, C++, Java, Kotlin, and Rust — producing a persistent knowledge graph of functions, classes, call chains, HTTP routes, and cross-service links, plus a [**self-maintaining long-term memory**](#long-term-memory) that recalls prior decisions automatically. 21 MCP tools. Zero dependencies. Plug and play across 11 coding agents.
 
 > **Research** — The design and benchmarks behind this project are described in the preprint [*Codebase-Memory: Tree-Sitter-Based Knowledge Graphs for LLM Code Exploration via MCP*](https://arxiv.org/abs/2603.27277) (arXiv:2603.27277). Evaluated across 31 real-world repositories: 83% answer quality, 10× fewer tokens, 2.1× fewer tool calls vs. file-by-file exploration.
 
@@ -37,7 +37,7 @@ High-quality parsing through [tree-sitter](https://tree-sitter.github.io/tree-si
 - **11 agents, one command** — `install` auto-detects Claude Code, Codex CLI, Gemini CLI, Zed, OpenCode, Antigravity, Aider, KiloCode, VS Code, OpenClaw, and Kiro — configures MCP entries, instruction files, and pre-tool hooks for each.
 - **Built-in graph visualization** — 3D interactive UI at `localhost:9749` (optional UI binary variant).
 - **Infrastructure-as-code indexing** — Dockerfiles, Kubernetes manifests, and Kustomize overlays indexed as graph nodes with cross-references. `Resource` nodes for K8s kinds, `Module` nodes for Kustomize overlays with `IMPORTS` edges to referenced resources.
-- **14 MCP tools** — search, trace, architecture, impact analysis, Cypher queries, dead code detection, cross-service HTTP linking, long-term memory MVP, and more.
+- **21 MCP tools** — search, trace, architecture, impact analysis, Cypher queries, dead code detection, cross-service HTTP linking, self-maintaining long-term memory, and more.
 
 ## Quick Start
 
@@ -136,7 +136,7 @@ Removes all agent configs, skills, hooks, and instructions. Does not remove the 
 
 ### Graph & analysis
 - **Architecture overview**: `get_architecture` returns languages, packages, entry points, routes, hotspots, boundaries, layers, and clusters in a single call
-- **Graph long-term memory MVP**: `events`, `memories_retrieve`, `admin_consolidate`, `admin_decay`, and `memory_health` provide the new SQLite-backed memory entrypoints
+- **Self-maintaining long-term memory**: a SQLite-backed memory subsystem that learns across sessions. Write events via `events`; retrieve with `memories_retrieve`; manage with `memories_inspect`, `memory_update_status`, `memory_feedback`, and `memory_delete` (soft / hard / purge / restore + retention sweep). Candidates are consolidated (dedup, 768-d embeddings, evidence edges), decayed, and conflict-adjudicated automatically on the hot path — no manual admin calls needed. Optional [auto-recall hook](#long-term-memory) surfaces relevant memories on every prompt. See [Long-Term Memory](#long-term-memory).
 - **Louvain community detection**: Discovers functional modules by clustering call edges
 - **Git diff impact mapping**: `detect_changes` maps uncommitted changes to affected symbols with risk classification
 - **Call graph**: Resolves function calls across files and packages (import-aware, type-inferred)
@@ -196,6 +196,30 @@ Commit a single compressed file to your repo and your teammates skip the reindex
 - **Optional**: never committed unless you want it. Add `.semantic-memory/` to `.gitignore` if you prefer everyone to reindex from scratch.
 
 The result is similar in spirit to graphify's `graphify-out/` directory, but as a single compressed file with explicit two-tier export, integrity-checked import, and zero merge friction.
+
+## Long-Term Memory
+
+Beyond the code graph, semantic-memory-mcp maintains a **self-maintaining long-term memory** — durable facts, decisions, and preferences that persist across sessions and surface when relevant. It is SQLite-backed, fully local, and learns without manual curation.
+
+**How it flows:**
+
+```
+events(...)            →  raw event + candidate item written (hot path, transactional)
+   ↓ (automatic, time-gated)
+consolidate            →  dedup, 768-d embeddings, evidence edges, conflict adjudication
+   ↓
+memories_retrieve(...)  →  vector + FTS + structured recall, hit-counted
+   ↓ (automatic)
+decay / retention      →  stale items archived; deleted items swept after a grace period
+```
+
+- **Write once, maintain automatically** — `events` is the only write entrypoint. Consolidation, decay, conflict resolution, and the soft-delete retention sweep run lazily on the hot path (time-gated, best-effort, never blocking the caller). No manual `admin_*` calls required for normal use.
+- **Real embeddings** — recall is powered by 768-d `nomic-embed-code` vectors compiled into the binary (no API, no Ollama). Topic-aware contradiction detection clusters opposing claims on the same subject. An **optional bge-m3 local sidecar** (off by default, `CBM_MEMORY_EMBED_BACKEND=sidecar`) raises recall top-1 from 0.83 to 0.96 on the internal eval set.
+- **Code anchoring** — memories can attach to graph symbols via `about_code` edges, boosting recall when you're working in the same file or on the same function.
+- **Lifecycle & safety** — items move through `candidate → active → deprecated → archived`; `memory_delete` supports soft (undoable), hard, and GDPR `purge` (erases source events), all transactional and audited.
+- **Auto-recall hook** *(Claude Code)* — `install` wires a non-blocking `UserPromptSubmit` hook that recalls relevant memories on every prompt and reminds the agent to persist durable findings via `events`. Recording always stays the agent's judgment — nothing is written automatically.
+
+See the [memory tools](#long-term-memory-1) for the full API.
 
 ## How It Works
 
@@ -324,7 +348,7 @@ Add to `~/.claude/.mcp.json` (global) or project `.mcp.json`:
 }
 ```
 
-Restart your agent. Verify with `/mcp` — you should see `semantic-memory-mcp` with 14 tools.
+Restart your agent. Verify with `/mcp` — you should see `semantic-memory-mcp` with 21 tools.
 
 </details>
 
@@ -334,7 +358,7 @@ Restart your agent. Verify with `/mcp` — you should see `semantic-memory-mcp` 
 
 | Agent | MCP Config | Instructions | Hooks |
 |-------|-----------|-------------|-------|
-| Claude Code | `.claude/.mcp.json` | 4 Skills | PreToolUse (Grep/Glob graph augment, non-blocking) |
+| Claude Code | `.claude/.mcp.json` | 4 Skills | PreToolUse (Grep/Glob graph augment) + UserPromptSubmit (memory recall) + SessionStart reminder |
 | Codex CLI | `.codex/config.toml` | `.codex/AGENTS.md` | SessionStart reminder |
 | Gemini CLI | `.gemini/settings.json` | `.gemini/GEMINI.md` | BeforeTool (grep reminder) + SessionStart reminder |
 | Zed | `settings.json` (JSONC) | — | — |
@@ -351,12 +375,16 @@ For Claude Code, the `PreToolUse` hook intercepts `Grep`/`Glob` (never `Read` �
 gating `Read` breaks the read-before-edit invariant) and, when the search
 token matches indexed symbols, injects them as `additionalContext` via
 `search_graph` so the agent gets structured context alongside its normal
-search results. For Codex, Gemini CLI, and Antigravity, a `SessionStart` hook
-injects a one-line code-discovery reminder as session context (Gemini CLI also
-keeps its `BeforeTool` reminder).
-The installed Claude shim file is named `cbm-code-discovery-gate` for
-backward compatibility with existing installs; despite the legacy name it
-never gates and never blocks.
+search results. A `UserPromptSubmit` hook runs `memories_retrieve` against
+each prompt and injects task-relevant long-term memories as context, plus a
+standing reminder to persist durable decisions via `events` — re-injected
+every turn so it survives context compaction (recording always stays the
+agent's judgment; nothing is written automatically). For Codex, Gemini CLI,
+and Antigravity, a `SessionStart` hook injects a one-line code-discovery
+reminder as session context (Gemini CLI also keeps its `BeforeTool` reminder).
+The installed Claude shim files are named `cbm-code-discovery-gate` and
+`cbm-memory-recall`; despite the legacy gate name, neither ever gates or
+blocks a tool.
 
 ## CLI Mode
 
@@ -394,12 +422,20 @@ semantic-memory-mcp cli --raw search_graph '{"label": "Function"}' | jq '.result
 | `get_code_snippet` | Read source code for a function by qualified name. |
 | `get_architecture` | Codebase overview: languages, packages, routes, hotspots, clusters, ADR. |
 | `search_code` | Grep-like text search within indexed project files. |
-| `events` | Append raw long-term memory events through the synchronous hot path. |
-| `memories_retrieve` | Retrieve task-relevant long-term memories and update hit counters. |
-| `admin_consolidate` | Run the deterministic candidate consolidation pass. |
-| `admin_decay` | Run explainable decay and archive stale active memories. |
-| `memory_health` | Inspect memory MVP counters and candidate backlog. |
-| `ingest_traces` | Ingest runtime traces to validate HTTP_CALLS edges. |
+
+### Long-term memory
+
+| Tool | Description |
+|------|-------------|
+| `events` | Append a raw long-term memory event through the synchronous hot path. Triggers lazy auto-maintenance (consolidate/decay/sweep). |
+| `memories_retrieve` | Retrieve task-relevant long-term memories (vector + FTS + structured), update hit counters. |
+| `memories_inspect` | List memory items with entity_key, predicate, and status for manual review. |
+| `memory_update_status` | Mark an item active / candidate / deprecated / archived / retracted. |
+| `memory_feedback` | Record feedback (useful / not_useful / wrong / stale) and adjust retrieval health. |
+| `memory_delete` | Delete a memory: soft (undoable), hard (keep events), purge (GDPR, erase events), or restore. |
+| `admin_consolidate` | Run the deterministic candidate consolidation pass (usually automatic). |
+| `admin_decay` | Run explainable decay and archive stale active memories (usually automatic). |
+| `memory_health` | Report long-term memory health counters and candidate backlog. |
 
 ## Graph Data Model
 
@@ -534,7 +570,7 @@ Also supported (not yet benchmarked): Ada, Agda, Apex, Assembly (NASM), Astro, A
 ```
 src/
   main.c              Entry point (MCP stdio server + CLI + install/update/config)
-  mcp/                MCP server (14 tools, JSON-RPC 2.0, session detection, auto-index)
+  mcp/                MCP server (21 tools, JSON-RPC 2.0, session detection, auto-index)
   cli/                Install/uninstall/update/config (10 agents, hooks, instructions)
   store/              SQLite graph storage (nodes, edges, traversal, search, Louvain)
   pipeline/           Multi-pass indexing (structure → definitions → calls → HTTP links → config → tests)
