@@ -37,6 +37,10 @@ enum {
 #define MCP_MS_TO_US 1000LL
 #define MCP_S_TO_US 1000000LL
 
+#ifndef CBM_VERSION
+#define CBM_VERSION "dev"
+#endif
+
 #define SLEN(s) (sizeof(s) - 1)
 #include "mcp/mcp.h"
 #include "store/store.h"
@@ -655,7 +659,7 @@ char *cbm_mcp_initialize_response(const char *params_json) {
 
     yyjson_mut_val *impl = yyjson_mut_obj(doc);
     yyjson_mut_obj_add_str(doc, impl, "name", "semantic-memory-mcp");
-    yyjson_mut_obj_add_str(doc, impl, "version", "0.10.0");
+    yyjson_mut_obj_add_str(doc, impl, "version", CBM_VERSION);
     yyjson_mut_obj_add_val(doc, root, "serverInfo", impl);
 
     yyjson_mut_val *caps = yyjson_mut_obj(doc);
