@@ -68,6 +68,13 @@ Options: `--ui` (graph visualization), `--skip-config` (binary only, no agent se
 
 Restart your coding agent. Say **"Index this project"** — done.
 
+> **Install your coding agent first.** `install` configures only the agents it
+> can detect (for Claude Code, it looks for `~/.claude`). If you run `install`
+> before the agent exists — or before it has created its config directory —
+> the MCP entry, instruction files, and hooks (including the long-term memory
+> recall hook) are silently skipped. Start the agent once, then run `install`.
+> If you ever upgrade the binary, re-run `install` so new hooks get registered.
+
 <details>
 <summary>Manual install</summary>
 
@@ -94,7 +101,7 @@ Restart your coding agent. Say **"Index this project"** — done.
 The `install` command automatically strips macOS quarantine attributes and ad-hoc signs the binary — no manual `xattr`/`codesign` needed.
 </details>
 
-The `install` command auto-detects all installed coding agents and configures MCP server entries, instruction files, skills, and pre-tool hooks for each.
+The `install` command auto-detects all installed coding agents and configures MCP server entries, instruction files, skills, and hooks for each — including the `UserPromptSubmit` long-term memory recall hook (non-blocking) that surfaces relevant past decisions at the start of every turn.
 
 ### Graph Visualization UI
 

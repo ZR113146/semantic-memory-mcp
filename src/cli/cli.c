@@ -3403,6 +3403,22 @@ static void cbm_install_agent_configs(const char *home, const char *binary_path,
         print_detected_agents(&agents);
     }
 
+    /* If no agent was detected, the MCP entries, instruction files, and hooks
+     * (including the long-term memory recall hook) are NOT installed for any
+     * agent — there is nothing to configure against. This is the #1 reason a
+     * fresh install appears to "do nothing": install ran before the agent was
+     * installed (or before it created its config dir). Warn loudly and tell
+     * the user to install the agent first, then re-run install. */
+    bool any_agent = agents.claude_code || agents.codex || agents.gemini || agents.zed ||
+                     agents.opencode || agents.antigravity || agents.aider || agents.kilocode ||
+                     agents.vscode || agents.cursor || agents.openclaw || agents.kiro;
+    if (!any_agent && !g_install_plan) {
+        printf("WARNING: no coding agent detected — skipping all agent configuration.\n");
+        printf("  No MCP entries, instruction files, or hooks were installed.\n");
+        printf("  Install your agent first (e.g. start Claude Code once so ~/.claude\n");
+        printf("  exists), then re-run `semantic-memory-mcp install`.\n\n");
+    }
+
     if (agents.claude_code) {
         install_claude_code_config(home, binary_path, force, dry_run);
     }
