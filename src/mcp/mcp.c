@@ -575,16 +575,15 @@ static void slim_strip_param_descs(yyjson_mut_val *val) {
     }
 }
 
-
 /* Low-frequency maintenance/admin tools. These remain fully callable via
  * tools/call and describable via describe_tool, but are omitted from the
  * default tools/list to keep the per-session schema payload small (~2.3k
  * bytes). Set CBM_MCP_ADMIN_TOOLS=1 (or true) to list them as well. */
 static bool is_admin_tool(const char *name) {
     static const char *const ADMIN_TOOLS[] = {
-        "delete_project",      "index_status",        "memories_inspect",
-        "memory_update_status", "memory_feedback",    "memory_delete",
-        "admin_consolidate",   "admin_decay",         "memory_health",
+        "delete_project",       "index_status",    "memories_inspect",
+        "memory_update_status", "memory_feedback", "memory_delete",
+        "admin_consolidate",    "admin_decay",     "memory_health",
     };
     for (size_t i = 0; i < sizeof(ADMIN_TOOLS) / sizeof(ADMIN_TOOLS[0]); i++) {
         if (strcmp(name, ADMIN_TOOLS[i]) == 0) {
@@ -4987,8 +4986,7 @@ static char *handle_describe_tool(const char *args_json) {
     yyjson_mut_obj_add_str(doc, root, "name", found->name);
     yyjson_mut_obj_add_str(doc, root, "description", found->description);
 
-    yyjson_doc *schema_doc =
-        yyjson_read(found->input_schema, strlen(found->input_schema), 0);
+    yyjson_doc *schema_doc = yyjson_read(found->input_schema, strlen(found->input_schema), 0);
     if (schema_doc) {
         yyjson_mut_val *schema = yyjson_val_mut_copy(doc, yyjson_doc_get_root(schema_doc));
         yyjson_mut_obj_add_val(doc, root, "inputSchema", schema);
@@ -5001,7 +4999,6 @@ static char *handle_describe_tool(const char *args_json) {
     free(json);
     return result;
 }
-
 
 char *cbm_mcp_handle_tool(cbm_mcp_server_t *srv, const char *tool_name, const char *args_json) {
     if (!tool_name) {
