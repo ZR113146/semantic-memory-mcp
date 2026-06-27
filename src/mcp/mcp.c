@@ -576,6 +576,31 @@ static void slim_strip_param_descs(yyjson_mut_val *val) {
 }
 
 
+/* Low-frequency maintenance/admin tools. These remain fully callable via
+ * tools/call and describable via describe_tool, but are omitted from the
+ * default tools/list to keep the per-session schema payload small (~2.3k
+ * bytes). Set CBM_MCP_ADMIN_TOOLS=1 (or true) to list them as well. */
+static bool is_admin_tool(const char *name) {
+    static const char *const ADMIN_TOOLS[] = {
+        "delete_project",      "index_status",        "memories_inspect",
+        "memory_update_status", "memory_feedback",    "memory_delete",
+        "admin_consolidate",   "admin_decay",         "memory_health",
+    };
+    for (size_t i = 0; i < sizeof(ADMIN_TOOLS) / sizeof(ADMIN_TOOLS[0]); i++) {
+        if (strcmp(name, ADMIN_TOOLS[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Whether admin tools should be included in tools/list (env opt-in). */
+static bool mcp_list_admin_tools(void) {
+    char env_buf[CBM_SZ_32] = "";
+    cbm_safe_getenv("CBM_MCP_ADMIN_TOOLS", env_buf, sizeof(env_buf), NULL);
+    return env_buf[0] != '\0' && (strcmp(env_buf, "1") == 0 || strcmp(env_buf, "true") == 0);
+}
+
 char *cbm_mcp_tools_list(void) {
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
@@ -583,7 +608,11 @@ char *cbm_mcp_tools_list(void) {
 
     yyjson_mut_val *tools = yyjson_mut_arr(doc);
 
+    bool include_admin = mcp_list_admin_tools();
     for (int i = 0; i < TOOL_COUNT; i++) {
+        if (!include_admin && is_admin_tool(TOOLS[i].name)) {
+            continue;
+        }
         yyjson_mut_val *tool = yyjson_mut_obj(doc);
         yyjson_mut_obj_add_str(doc, tool, "name", TOOLS[i].name);
 
