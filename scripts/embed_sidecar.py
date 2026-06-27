@@ -25,6 +25,16 @@ def log(msg):
 
 
 def main():
+    # The C process speaks UTF-8 JSON over our stdin/stdout. On Windows the
+    # default stdio encoding follows the console codepage (e.g. gbk), which
+    # mangles non-ASCII text (notably Chinese) before it reaches the tokenizer.
+    # Pin both streams to UTF-8 so the protocol is codepage-independent.
+    for stream in (sys.stdin, sys.stdout):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="strict")
+        except (AttributeError, ValueError):
+            pass
+
     model_name = os.environ.get("CBM_EMBED_MODEL", "BAAI/bge-m3")
     # Default to offline so a missing cache fails fast rather than hitting the
     # network; callers who want a download can unset this explicitly.
@@ -37,7 +47,11 @@ def main():
         log(json.dumps({"ready": False, "error": f"{type(e).__name__}: {e}"}))
         return 1
 
-    dim = int(model.get_sentence_embedding_dimension())
+    # get_sentence_embedding_dimension was renamed to get_embedding_dimension;
+    # prefer the new name, fall back for older sentence-transformers.
+    get_dim = getattr(model, "get_embedding_dimension", None) or \
+        model.get_sentence_embedding_dimension
+    dim = int(get_dim())
     log(json.dumps({"ready": True, "dim": dim, "model": model_name}))
 
     for line in sys.stdin:
