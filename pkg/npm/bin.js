@@ -20,7 +20,7 @@ if (!fs.existsSync(binPath)) {
   if (installResult.status !== 0 || !fs.existsSync(binPath)) {
     process.stderr.write(
       'semantic-memory-mcp: download failed.\n' +
-      'Try reinstalling: npm install -g semantic-memory-mcp\n'
+      'Try reinstalling: npm install -g @zr113146/semantic-memory-mcp\n'
     );
     process.exit(1);
   }

@@ -1,6 +1,6 @@
-# semantic-memory-mcp
+# @zr113146/semantic-memory-mcp
 
-[![npm](https://img.shields.io/npm/v/semantic-memory-mcp?style=flat&color=blue)](https://www.npmjs.com/package/semantic-memory-mcp)
+[![npm](https://img.shields.io/npm/v/@zr113146/semantic-memory-mcp?style=flat&color=blue)](https://www.npmjs.com/package/@zr113146/semantic-memory-mcp)
 [![GitHub Release](https://img.shields.io/github/v/release/ZR113146/semantic-memory-mcp?style=flat&color=blue)](https://github.com/ZR113146/semantic-memory-mcp/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-green)](https://github.com/ZR113146/semantic-memory-mcp/blob/main/LICENSE)
 [![Platform](https://img.shields.io/badge/macOS_%7C_Linux_%7C_Windows-supported-lightgrey)](https://github.com/ZR113146/semantic-memory-mcp/releases/latest)
@@ -12,7 +12,7 @@ High-quality parsing through [tree-sitter](https://tree-sitter.github.io/tree-si
 ## Installation
 
 ```bash
-npm install -g semantic-memory-mcp
+npm install -g @zr113146/semantic-memory-mcp
 ```
 
 The binary for your platform is downloaded automatically at install time. Then configure your coding agents:

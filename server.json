@@ -12,7 +12,7 @@
   "packages": [
     {
       "registryType": "npm",
-      "identifier": "semantic-memory-mcp",
+      "identifier": "@zr113146/semantic-memory-mcp",
       "version": "0.9.1",
       "runtimeHint": "npx",
       "transport": {

@@ -1,9 +1,12 @@
 {
-  "name": "semantic-memory-mcp",
+  "name": "@zr113146/semantic-memory-mcp",
   "version": "0.9.1",
   "description": "Fast code intelligence engine for AI coding agents — single static binary MCP server",
   "mcpName": "io.github.ZR113146/semantic-memory-mcp",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ZR113146/semantic-memory-mcp.git"
