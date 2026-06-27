@@ -491,9 +491,86 @@ static const tool_def_t TOOLS[] = {
     {"memory_health", "Report long-term memory MVP health counters",
      "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"}},"
      "\"required\":[\"project\"]}"},
+
+    {"describe_tool",
+     "Return the full usage guide (complete description + parameter docs) for one of this "
+     "server's tools. The tools/list payload is kept slim to save context; call this when you "
+     "need the detailed guidance for a specific tool before using it.",
+     "{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\",\"description\":"
+     "\"Exact tool name, e.g. query_graph, search_graph, trace_path\"}},"
+     "\"required\":[\"name\"]}"},
 };
 
 static const int TOOL_COUNT = sizeof(TOOLS) / sizeof(TOOLS[0]);
+
+/* ── Slim tools/list generation ───────────────────────────────────
+ * The full TOOLS[] descriptions are the single source of truth, but
+ * injecting all of them into every session's tools/list costs ~3.5k
+ * tokens of mostly-prose guidance. To keep the startup payload small,
+ * tools/list emits a SLIM view: the first sentence of each top-level
+ * description (plus a pointer to describe_tool), and a schema copy with
+ * long per-parameter "description" prose stripped out. The structural
+ * parts of the schema (param names, types, enums, defaults, required)
+ * are always preserved so calls stay correct. The full guide for any
+ * tool is available on demand via the describe_tool tool. */
+
+/* Length above which a per-param schema "description" is considered
+ * verbose guidance (vs. a short necessary hint) and dropped from the
+ * slim schema. Short hints are kept so call sites stay unambiguous. */
+#define MCP_SLIM_PARAM_DESC_MAX 80
+
+/* Copy the first sentence (up to the first ". ") of a description, capped
+ * at MCP_SLIM_TOP_DESC_MAX chars, into buf. Always NUL-terminated. */
+#define MCP_SLIM_TOP_DESC_MAX 200
+static void slim_first_sentence(const char *desc, char *buf, size_t buf_sz) {
+    if (!desc) {
+        buf[0] = '\0';
+        return;
+    }
+    size_t n = 0;
+    size_t cap = buf_sz - 1;
+    if (cap > MCP_SLIM_TOP_DESC_MAX) {
+        cap = MCP_SLIM_TOP_DESC_MAX;
+    }
+    for (; desc[n] && n < cap; n++) {
+        /* End at sentence boundary ". " (copy the period, then stop). */
+        if (desc[n] == '.' && (desc[n + 1] == ' ' || desc[n + 1] == '\0')) {
+            buf[n] = desc[n];
+            n++;
+            break;
+        }
+        buf[n] = desc[n];
+    }
+    /* n <= cap <= buf_sz - 1, so this write is always in bounds. */
+    buf[n] = '\0';
+}
+
+/* Recursively walk a mutable schema value and remove any object member
+ * named "description" whose string value is longer than
+ * MCP_SLIM_PARAM_DESC_MAX. Structural keys are untouched. */
+static void slim_strip_param_descs(yyjson_mut_val *val) {
+    if (yyjson_mut_is_obj(val)) {
+        yyjson_mut_obj_iter iter = yyjson_mut_obj_iter_with(val);
+        yyjson_mut_val *key;
+        while ((key = yyjson_mut_obj_iter_next(&iter))) {
+            yyjson_mut_val *v = yyjson_mut_obj_iter_get_val(key);
+            const char *kstr = yyjson_mut_get_str(key);
+            if (kstr && strcmp(kstr, "description") == 0 && yyjson_mut_is_str(v) &&
+                yyjson_mut_get_len(v) > MCP_SLIM_PARAM_DESC_MAX) {
+                yyjson_mut_obj_iter_remove(&iter);
+                continue;
+            }
+            slim_strip_param_descs(v);
+        }
+    } else if (yyjson_mut_is_arr(val)) {
+        yyjson_mut_arr_iter iter = yyjson_mut_arr_iter_with(val);
+        yyjson_mut_val *v;
+        while ((v = yyjson_mut_arr_iter_next(&iter))) {
+            slim_strip_param_descs(v);
+        }
+    }
+}
+
 
 char *cbm_mcp_tools_list(void) {
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
@@ -505,13 +582,25 @@ char *cbm_mcp_tools_list(void) {
     for (int i = 0; i < TOOL_COUNT; i++) {
         yyjson_mut_val *tool = yyjson_mut_obj(doc);
         yyjson_mut_obj_add_str(doc, tool, "name", TOOLS[i].name);
-        yyjson_mut_obj_add_str(doc, tool, "description", TOOLS[i].description);
 
-        /* Parse input schema JSON and embed */
+        /* Slim top-level description: just the first sentence. The
+         * describe_tool tool is itself listed, so we don't repeat a
+         * "use describe_tool" hint on every entry (saves ~940 bytes).
+         * describe_tool itself keeps its full (short) description. */
+        if (strcmp(TOOLS[i].name, "describe_tool") == 0) {
+            yyjson_mut_obj_add_str(doc, tool, "description", TOOLS[i].description);
+        } else {
+            char sentence[MCP_SLIM_TOP_DESC_MAX + 1];
+            slim_first_sentence(TOOLS[i].description, sentence, sizeof(sentence));
+            yyjson_mut_obj_add_strcpy(doc, tool, "description", sentence);
+        }
+
+        /* Parse input schema JSON, strip verbose per-param prose, embed. */
         yyjson_doc *schema_doc =
             yyjson_read(TOOLS[i].input_schema, strlen(TOOLS[i].input_schema), 0);
         if (schema_doc) {
             yyjson_mut_val *schema = yyjson_val_mut_copy(doc, yyjson_doc_get_root(schema_doc));
+            slim_strip_param_descs(schema);
             yyjson_mut_obj_add_val(doc, tool, "inputSchema", schema);
             yyjson_doc_free(schema_doc);
         }
@@ -4834,11 +4923,61 @@ static char *handle_memory_health(cbm_mcp_server_t *srv, const char *args) {
 
 /* ── Tool dispatch ────────────────────────────────────────────── */
 
+/* describe_tool: return the full original description + full input schema
+ * for a named tool. This is the on-demand counterpart to the slim
+ * tools/list payload — the verbose guidance lives here instead of in
+ * every session's startup context. */
+static char *handle_describe_tool(const char *args_json) {
+    char *name = cbm_mcp_get_string_arg(args_json, "name");
+    if (!name) {
+        return cbm_mcp_text_result("describe_tool requires a 'name' argument", true);
+    }
+
+    const tool_def_t *found = NULL;
+    for (int i = 0; i < TOOL_COUNT; i++) {
+        if (strcmp(TOOLS[i].name, name) == 0) {
+            found = &TOOLS[i];
+            break;
+        }
+    }
+    if (!found) {
+        char msg[CBM_SZ_256];
+        snprintf(msg, sizeof(msg), "unknown tool: %s", name);
+        free(name);
+        return cbm_mcp_text_result(msg, true);
+    }
+    free(name);
+
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_str(doc, root, "name", found->name);
+    yyjson_mut_obj_add_str(doc, root, "description", found->description);
+
+    yyjson_doc *schema_doc =
+        yyjson_read(found->input_schema, strlen(found->input_schema), 0);
+    if (schema_doc) {
+        yyjson_mut_val *schema = yyjson_val_mut_copy(doc, yyjson_doc_get_root(schema_doc));
+        yyjson_mut_obj_add_val(doc, root, "inputSchema", schema);
+        yyjson_doc_free(schema_doc);
+    }
+
+    char *json = yy_doc_to_str(doc);
+    yyjson_mut_doc_free(doc);
+    char *result = cbm_mcp_text_result(json, false);
+    free(json);
+    return result;
+}
+
+
 char *cbm_mcp_handle_tool(cbm_mcp_server_t *srv, const char *tool_name, const char *args_json) {
     if (!tool_name) {
         return cbm_mcp_text_result("missing tool name", true);
     }
 
+    if (strcmp(tool_name, "describe_tool") == 0) {
+        return handle_describe_tool(args_json);
+    }
     if (strcmp(tool_name, "list_projects") == 0) {
         return handle_list_projects(srv, args_json);
     }
