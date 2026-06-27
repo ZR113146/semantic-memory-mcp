@@ -536,7 +536,7 @@ static void slim_first_sentence(const char *desc, char *buf, size_t buf_sz) {
     if (cap > MCP_SLIM_TOP_DESC_MAX) {
         cap = MCP_SLIM_TOP_DESC_MAX;
     }
-    for (; desc[n] && n < cap; n++) {
+    for (; n < cap && desc[n]; n++) {
         /* End at sentence boundary ". " (copy the period, then stop). */
         if (desc[n] == '.' && (desc[n + 1] == ' ' || desc[n + 1] == '\0')) {
             buf[n] = desc[n];

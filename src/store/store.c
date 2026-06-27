@@ -2637,19 +2637,16 @@ static void memory_json_append_escaped(char *buf, size_t sz, size_t *pos, const 
         return;
     }
     for (const unsigned char *p = (const unsigned char *)(s ? s : ""); *p && *pos + 2 < sz; p++) {
+        /* Loop guard guarantees *pos + 2 < sz on entry and *pos is unchanged
+         * until the writes below, so each 2-byte escape sequence fits without
+         * a per-branch recheck. */
         if (*p == '\\' || *p == '"') {
-            if (*pos + 2 >= sz)
-                break;
             buf[(*pos)++] = '\\';
             buf[(*pos)++] = (char)*p;
         } else if (*p == '\n') {
-            if (*pos + 2 >= sz)
-                break;
             buf[(*pos)++] = '\\';
             buf[(*pos)++] = 'n';
         } else if (*p == '\r') {
-            if (*pos + 2 >= sz)
-                break;
             buf[(*pos)++] = '\\';
             buf[(*pos)++] = 'r';
         } else if (*p >= 0x20) {
