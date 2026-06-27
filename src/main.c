@@ -331,6 +331,10 @@ static int handle_subcommand(int argc, char **argv) {
             cbm_mem_init(MAIN_RAM_FRACTION);
             return cbm_cmd_hook_augment();
         }
+        if (strcmp(argv[i], "memory-recall") == 0) {
+            cbm_mem_init(MAIN_RAM_FRACTION);
+            return cbm_cmd_hook_recall();
+        }
         if (strcmp(argv[i], "install") == 0) {
             return cbm_cmd_install(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
         }

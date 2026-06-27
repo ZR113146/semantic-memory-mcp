@@ -175,6 +175,15 @@ int cbm_upsert_claude_hooks(const char *settings_path);
  * Returns 0 on success. */
 int cbm_remove_claude_hooks(const char *settings_path);
 
+/* Upsert a UserPromptSubmit hook in ~/.claude/settings.json for Claude Code.
+ * Injects task-relevant long-term memories (memories_retrieve) as prompt
+ * context. Non-blocking augmenter, never a gate. Returns 0 on success. */
+int cbm_upsert_claude_recall_hook(const char *settings_path);
+
+/* Remove our UserPromptSubmit recall hook from Claude Code settings.json.
+ * Returns 0 on success. */
+int cbm_remove_claude_recall_hook(const char *settings_path);
+
 /* Write the PreToolUse gate shim to <home>/.claude/hooks/. The shim is a thin
  * wrapper that invokes the compiled `hook-augment` and writes to stdout only —
  * it must never create a predictable temp/state file (issue #384). Exposed for
@@ -280,6 +289,12 @@ int cbm_cmd_config(int argc, char **argv);
  * with search_graph hits for Grep/Glob calls. NEVER blocks: every failure
  * path returns 0 with no stdout output. */
 int cbm_cmd_hook_augment(void);
+
+/* memory-recall: stdin-driven Claude Code UserPromptSubmit augmenter.
+ * Reads the hook JSON from stdin and emits hookSpecificOutput.additionalContext
+ * with memories_retrieve hits for the user's prompt. NEVER blocks: every
+ * failure path returns 0 with no stdout output. */
+int cbm_cmd_hook_recall(void);
 
 /* Build the agent.install.plan.v1 install receipt for <home> (issue #388):
  * a machine-readable JSON list of the config/instruction/hook files `install`

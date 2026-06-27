@@ -1857,6 +1857,187 @@ int cbm_remove_claude_hooks(const char *settings_path) {
     });
 }
 
+/* ── Claude Code UserPromptSubmit recall hook ─────────────────────
+ * UserPromptSubmit entries carry NO matcher (the event has nothing to match
+ * against), so the generic matcher-keyed upsert_hooks_json/is_cmm_hook_entry
+ * path doesn't apply. These dedicated helpers identify our entry by the recall
+ * shim basename embedded in its command, keeping upsert/remove idempotent. */
+#define CMM_RECALL_SCRIPT "cbm-memory-recall"
+#define CMM_RECALL_TIMEOUT_SEC 5
+
+/* True if a UserPromptSubmit array entry is ours: any of its hooks[].command
+ * strings contains the recall shim basename. */
+static bool is_cmm_recall_entry(yyjson_mut_val *entry) {
+    yyjson_mut_val *hooks = yyjson_mut_obj_get(entry, "hooks");
+    if (!hooks || !yyjson_mut_is_arr(hooks)) {
+        return false;
+    }
+    size_t idx;
+    size_t max;
+    yyjson_mut_val *h;
+    yyjson_mut_arr_foreach(hooks, idx, max, h) {
+        yyjson_mut_val *cmd = yyjson_mut_obj_get(h, "command");
+        if (cmd && yyjson_mut_is_str(cmd)) {
+            const char *s = yyjson_mut_get_str(cmd);
+            if (s && strstr(s, CMM_RECALL_SCRIPT)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+int cbm_upsert_claude_recall_hook(const char *settings_path) {
+    if (!settings_path) {
+        return CLI_ERR;
+    }
+    char command[CLI_BUF_1K];
+    cbm_resolve_hook_command(CMM_RECALL_SCRIPT, command, sizeof(command));
+
+    yyjson_mut_doc *mdoc = yyjson_mut_doc_new(NULL);
+    if (!mdoc) {
+        return CLI_ERR;
+    }
+    yyjson_doc *doc = read_json_file(settings_path);
+    yyjson_mut_val *root;
+    if (doc) {
+        root = yyjson_val_mut_copy(mdoc, yyjson_doc_get_root(doc));
+        yyjson_doc_free(doc);
+    } else {
+        root = yyjson_mut_obj(mdoc);
+    }
+    if (!root) {
+        yyjson_mut_doc_free(mdoc);
+        return CLI_ERR;
+    }
+    yyjson_mut_doc_set_root(mdoc, root);
+
+    yyjson_mut_val *hooks = yyjson_mut_obj_get(root, "hooks");
+    if (!hooks || !yyjson_mut_is_obj(hooks)) {
+        hooks = yyjson_mut_obj(mdoc);
+        yyjson_mut_obj_add_val(mdoc, root, "hooks", hooks);
+    }
+    yyjson_mut_val *event_arr = yyjson_mut_obj_get(hooks, "UserPromptSubmit");
+    if (!event_arr || !yyjson_mut_is_arr(event_arr)) {
+        event_arr = yyjson_mut_arr(mdoc);
+        yyjson_mut_obj_add_val(mdoc, hooks, "UserPromptSubmit", event_arr);
+    }
+
+    /* Drop any prior entry of ours so re-install/upgrade stays idempotent. */
+    size_t idx;
+    size_t max;
+    yyjson_mut_val *item;
+    yyjson_mut_arr_foreach(event_arr, idx, max, item) {
+        if (is_cmm_recall_entry(item)) {
+            yyjson_mut_arr_remove(event_arr, idx);
+            break;
+        }
+    }
+
+    yyjson_mut_val *entry = yyjson_mut_obj(mdoc);
+    yyjson_mut_val *hooks_arr = yyjson_mut_arr(mdoc);
+    yyjson_mut_val *hook_obj = yyjson_mut_obj(mdoc);
+    yyjson_mut_obj_add_str(mdoc, hook_obj, "type", "command");
+    yyjson_mut_obj_add_str(mdoc, hook_obj, "command", command);
+    yyjson_mut_obj_add_int(mdoc, hook_obj, "timeout", CMM_RECALL_TIMEOUT_SEC);
+    yyjson_mut_arr_append(hooks_arr, hook_obj);
+    yyjson_mut_obj_add_val(mdoc, entry, "hooks", hooks_arr);
+    yyjson_mut_arr_append(event_arr, entry);
+
+    int rc = write_json_file(settings_path, mdoc);
+    yyjson_mut_doc_free(mdoc);
+    return rc;
+}
+
+int cbm_remove_claude_recall_hook(const char *settings_path) {
+    if (!settings_path) {
+        return CLI_ERR;
+    }
+    yyjson_doc *doc = read_json_file(settings_path);
+    if (!doc) {
+        return CLI_ERR;
+    }
+    yyjson_mut_doc *mdoc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = yyjson_val_mut_copy(mdoc, yyjson_doc_get_root(doc));
+    yyjson_doc_free(doc);
+    if (!root) {
+        yyjson_mut_doc_free(mdoc);
+        return CLI_ERR;
+    }
+    yyjson_mut_doc_set_root(mdoc, root);
+
+    yyjson_mut_val *hooks = yyjson_mut_obj_get(root, "hooks");
+    if (!hooks) {
+        yyjson_mut_doc_free(mdoc);
+        return 0;
+    }
+    yyjson_mut_val *event_arr = yyjson_mut_obj_get(hooks, "UserPromptSubmit");
+    if (!event_arr || !yyjson_mut_is_arr(event_arr)) {
+        yyjson_mut_doc_free(mdoc);
+        return 0;
+    }
+    size_t idx;
+    size_t max;
+    yyjson_mut_val *item;
+    yyjson_mut_arr_foreach(event_arr, idx, max, item) {
+        if (is_cmm_recall_entry(item)) {
+            yyjson_mut_arr_remove(event_arr, idx);
+            break;
+        }
+    }
+    if (yyjson_mut_arr_size(event_arr) == 0) {
+        yyjson_mut_obj_remove_key(hooks, "UserPromptSubmit");
+    }
+    int rc = write_json_file(settings_path, mdoc);
+    yyjson_mut_doc_free(mdoc);
+    return rc;
+}
+
+/* Install the recall shim to ~/.claude/hooks/. Thin wrapper that delegates to
+ * `<binary> memory-recall`. Same non-blocking contract as the gate shim: a
+ * missing/old/hung binary is a silent exit 0. */
+static void cbm_install_recall_script(const char *home, const char *binary_path) {
+    if (!home || !binary_path) {
+        return;
+    }
+    if (strchr(binary_path, '"') != NULL) {
+        return; /* would break BIN="..." quoting; unreachable in normal installs */
+    }
+    char config_dir[CLI_BUF_1K];
+    cbm_claude_config_dir(home, config_dir, sizeof(config_dir));
+    if (!config_dir[0]) {
+        return;
+    }
+    char hooks_dir[CLI_BUF_1K];
+    snprintf(hooks_dir, sizeof(hooks_dir), "%s/hooks", config_dir);
+    cbm_mkdir_p(hooks_dir, CLI_OCTAL_PERM);
+
+    char script_path[CLI_BUF_1K];
+    snprintf(script_path, sizeof(script_path), "%s/" CMM_RECALL_SCRIPT, hooks_dir);
+
+    FILE *f = fopen(script_path, "w");
+    if (!f) {
+        return;
+    }
+    (void)fprintf(f,
+                  "#!/bin/bash\n"
+                  "# semantic-memory-mcp recall augmenter (Claude Code UserPromptSubmit).\n"
+                  "# Injects task-relevant long-term memories as prompt context.\n"
+                  "# This NEVER blocks a prompt - any failure is silent (exit 0, no output).\n"
+                  "BIN=\"%s\"\n"
+                  "[ -x \"$BIN\" ] || exit 0\n"
+                  "\"$BIN\" memory-recall 2>/dev/null\n"
+                  "exit 0\n",
+                  binary_path);
+#ifndef _WIN32
+    fchmod(fileno(f), CLI_OCTAL_PERM);
+#endif
+    (void)fclose(f);
+#ifdef _WIN32
+    chmod(script_path, CLI_OCTAL_PERM);
+#endif
+}
+
 /* Install the search-augmenter shim to ~/.claude/hooks/.
  * The shim is a thin wrapper that delegates to `<binary> hook-augment`,
  * which adds graph context to Grep/Glob calls. It NEVER blocks a tool call:
@@ -1950,6 +2131,8 @@ static void cbm_install_session_reminder_script(const char *home) {
            "2. Use Grep/Glob/Read freely for text, configs, non-code files, and\n"
            "   always Read a file before editing it.\n"
            "3. If a project is not indexed yet, run index_repository FIRST.\n"
+           "4. Recall first: call memories_retrieve at the start of a task to surface\n"
+           "   prior decisions/preferences; sediment durable findings via events.\n"
            "REMINDER\n");
 #ifndef _WIN32
     fchmod(fileno(f), CLI_OCTAL_PERM);
@@ -2971,6 +3154,8 @@ static void install_claude_code_config(const char *home, const char *binary_path
         plan_record("Claude Code", "hook", p);
         snprintf(p, sizeof(p), "%s/hooks/%s", config_dir, CMM_SESSION_REMINDER_SCRIPT);
         plan_record("Claude Code", "hook", p);
+        snprintf(p, sizeof(p), "%s/hooks/%s", config_dir, CMM_RECALL_SCRIPT);
+        plan_record("Claude Code", "hook", p);
         return;
     }
 
@@ -3004,9 +3189,12 @@ static void install_claude_code_config(const char *home, const char *binary_path
         cbm_install_hook_gate_script(home, binary_path);
         cbm_install_session_reminder_script(home);
         cbm_upsert_session_hooks(settings_path);
+        cbm_install_recall_script(home, binary_path);
+        cbm_upsert_claude_recall_hook(settings_path);
     }
     printf("  hooks: PreToolUse (Grep/Glob search-graph augmenter, non-blocking)\n");
     printf("  hooks: SessionStart (MCP usage reminder on startup/resume/clear/compact)\n");
+    printf("  hooks: UserPromptSubmit (long-term memory recall, non-blocking)\n");
 
     /* Migration nudge: when CLAUDE_CONFIG_DIR is set and a legacy ~/.claude tree
      * still exists, mention it so users can clean up stale artifacts. */
@@ -3484,8 +3672,9 @@ static void uninstall_claude_code(const char *home, bool dry_run) {
     if (!dry_run) {
         cbm_remove_claude_hooks(settings_path);
         cbm_remove_session_hooks(settings_path);
+        cbm_remove_claude_recall_hook(settings_path);
     }
-    printf("  removed PreToolUse + SessionStart hooks\n");
+    printf("  removed PreToolUse + SessionStart + UserPromptSubmit hooks\n");
 }
 
 /* Remove MCP + instructions for a generic agent. */

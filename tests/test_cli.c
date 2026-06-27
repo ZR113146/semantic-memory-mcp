@@ -2244,6 +2244,87 @@ TEST(cli_remove_claude_hooks) {
     PASS();
 }
 
+/* ── UserPromptSubmit recall hook (memory-recall) ───────────────── */
+
+TEST(cli_upsert_recall_hook_fresh) {
+    char tmpdir[256];
+    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-rhook-XXXXXX");
+    if (!cbm_mkdtemp(tmpdir))
+        FAIL("cbm_mkdtemp failed");
+
+    char settingspath[512];
+    snprintf(settingspath, sizeof(settingspath), "%s/settings.json", tmpdir);
+
+    int rc = cbm_upsert_claude_recall_hook(settingspath);
+    ASSERT_EQ(rc, 0);
+
+    const char *data = read_test_file(settingspath);
+    ASSERT_NOT_NULL(data);
+    ASSERT(strstr(data, "UserPromptSubmit") != NULL);
+    ASSERT(strstr(data, "cbm-memory-recall") != NULL);
+
+    test_rmdir_r(tmpdir);
+    PASS();
+}
+
+/* Idempotent upsert: a second call must not duplicate our entry, and must
+ * preserve a pre-existing third-party UserPromptSubmit hook. */
+TEST(cli_upsert_recall_hook_idempotent_preserves_others) {
+    char tmpdir[256];
+    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-rhook-XXXXXX");
+    if (!cbm_mkdtemp(tmpdir))
+        FAIL("cbm_mkdtemp failed");
+
+    char settingspath[512];
+    snprintf(settingspath, sizeof(settingspath), "%s/settings.json", tmpdir);
+    /* Pre-existing third-party UserPromptSubmit hook. */
+    write_test_file(settingspath,
+                    "{\"hooks\":{\"UserPromptSubmit\":[{\"hooks\":[{\"type\":\"command\","
+                    "\"command\":\"echo guard\"}]}]}}");
+
+    ASSERT_EQ(cbm_upsert_claude_recall_hook(settingspath), 0);
+    ASSERT_EQ(cbm_upsert_claude_recall_hook(settingspath), 0);
+
+    const char *data = read_test_file(settingspath);
+    ASSERT_NOT_NULL(data);
+    /* Third-party hook preserved. */
+    ASSERT(strstr(data, "echo guard") != NULL);
+    /* Exactly one occurrence of our shim after two upserts. */
+    const char *first = strstr(data, "cbm-memory-recall");
+    ASSERT_NOT_NULL(first);
+    ASSERT_NULL(strstr(first + 1, "cbm-memory-recall"));
+
+    test_rmdir_r(tmpdir);
+    PASS();
+}
+
+TEST(cli_remove_recall_hook) {
+    char tmpdir[256];
+    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-rhook-XXXXXX");
+    if (!cbm_mkdtemp(tmpdir))
+        FAIL("cbm_mkdtemp failed");
+
+    char settingspath[512];
+    snprintf(settingspath, sizeof(settingspath), "%s/settings.json", tmpdir);
+    /* Pre-existing third-party hook must survive our removal. */
+    write_test_file(settingspath,
+                    "{\"hooks\":{\"UserPromptSubmit\":[{\"hooks\":[{\"type\":\"command\","
+                    "\"command\":\"echo guard\"}]}]}}");
+
+    cbm_upsert_claude_recall_hook(settingspath);
+    int rc = cbm_remove_claude_recall_hook(settingspath);
+    ASSERT_EQ(rc, 0);
+
+    const char *data = read_test_file(settingspath);
+    ASSERT_NOT_NULL(data);
+    /* Ours gone, third-party preserved. */
+    ASSERT(strstr(data, "cbm-memory-recall") == NULL);
+    ASSERT(strstr(data, "echo guard") != NULL);
+
+    test_rmdir_r(tmpdir);
+    PASS();
+}
+
 /* ═══════════════════════════════════════════════════════════════════
  *  Group D: Pre-Tool Hook Upsert — Gemini CLI / Antigravity
  * ═══════════════════════════════════════════════════════════════════ */
@@ -2709,6 +2790,9 @@ SUITE(cli) {
     RUN_TEST(cli_upsert_claude_hook_replace);
     RUN_TEST(cli_upsert_claude_hook_preserves_others);
     RUN_TEST(cli_remove_claude_hooks);
+    RUN_TEST(cli_upsert_recall_hook_fresh);
+    RUN_TEST(cli_upsert_recall_hook_idempotent_preserves_others);
+    RUN_TEST(cli_remove_recall_hook);
 
     /* Gemini CLI hooks (4 tests — group D) */
     RUN_TEST(cli_upsert_gemini_hook_fresh);
