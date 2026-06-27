@@ -167,7 +167,8 @@ TEST(mcp_initialize_response) {
 TEST(mcp_tools_list) {
     char *json = cbm_mcp_tools_list();
     ASSERT_NOT_NULL(json);
-    /* Should contain all 21 tools */
+    /* Default tools/list exposes the core tools (admin/maintenance tools are
+     * gated out unless CBM_MCP_ADMIN_TOOLS is set — see below). */
     ASSERT_NOT_NULL(strstr(json, "index_repository"));
     ASSERT_NOT_NULL(strstr(json, "search_graph"));
     ASSERT_NOT_NULL(strstr(json, "query_graph"));
@@ -177,13 +178,29 @@ TEST(mcp_tools_list) {
     ASSERT_NOT_NULL(strstr(json, "get_architecture"));
     ASSERT_NOT_NULL(strstr(json, "search_code"));
     ASSERT_NOT_NULL(strstr(json, "list_projects"));
-    ASSERT_NOT_NULL(strstr(json, "delete_project"));
-    ASSERT_NOT_NULL(strstr(json, "index_status"));
     ASSERT_NOT_NULL(strstr(json, "detect_changes"));
     ASSERT_NOT_NULL(strstr(json, "events"));
     ASSERT_NOT_NULL(strstr(json, "memories_retrieve"));
-    ASSERT_NOT_NULL(strstr(json, "memory_health"));
+    ASSERT_NOT_NULL(strstr(json, "describe_tool"));
+    /* Admin/maintenance tools are NOT listed by default. */
+    ASSERT_NULL(strstr(json, "delete_project"));
+    ASSERT_NULL(strstr(json, "index_status"));
+    ASSERT_NULL(strstr(json, "memory_health"));
+    ASSERT_NULL(strstr(json, "admin_consolidate"));
     free(json);
+
+    /* With CBM_MCP_ADMIN_TOOLS=1 the admin tools are included as well. */
+    cbm_setenv("CBM_MCP_ADMIN_TOOLS", "1", 1);
+    json = cbm_mcp_tools_list();
+    ASSERT_NOT_NULL(json);
+    ASSERT_NOT_NULL(strstr(json, "delete_project"));
+    ASSERT_NOT_NULL(strstr(json, "index_status"));
+    ASSERT_NOT_NULL(strstr(json, "memory_health"));
+    ASSERT_NOT_NULL(strstr(json, "admin_consolidate"));
+    /* Core tools still present in the expanded list. */
+    ASSERT_NOT_NULL(strstr(json, "index_repository"));
+    free(json);
+    cbm_unsetenv("CBM_MCP_ADMIN_TOOLS");
     PASS();
 }
 
