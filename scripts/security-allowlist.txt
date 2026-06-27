@@ -9,6 +9,7 @@ src/foundation/compat_fs.c:popen:cbm_popen wrapper definition (POSIX)
 src/foundation/compat_fs.c:cbm_popen:cbm_popen function definition
 src/foundation/compat_fs.c:fork:cbm_exec_no_shell — fork+execvp for shell-free subprocess execution
 src/foundation/compat_fs.c:execvp:cbm_exec_no_shell — direct exec without shell interpretation
+src/foundation/compat_proc.c:fork:cbm_proc_spawn — fork+execvp+pipe for the optional embedding sidecar (shell-free, argv-only)
 
 # ── CLI: update command (user-initiated, interactive) ──────────────────────
 src/cli/cli.c:cbm_popen:sha256 checksum verification (update cmd)
