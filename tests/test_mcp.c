@@ -167,7 +167,7 @@ TEST(mcp_initialize_response) {
 TEST(mcp_tools_list) {
     char *json = cbm_mcp_tools_list();
     ASSERT_NOT_NULL(json);
-    /* Should contain all 14 tools */
+    /* Should contain all 21 tools */
     ASSERT_NOT_NULL(strstr(json, "index_repository"));
     ASSERT_NOT_NULL(strstr(json, "search_graph"));
     ASSERT_NOT_NULL(strstr(json, "query_graph"));
@@ -180,8 +180,9 @@ TEST(mcp_tools_list) {
     ASSERT_NOT_NULL(strstr(json, "delete_project"));
     ASSERT_NOT_NULL(strstr(json, "index_status"));
     ASSERT_NOT_NULL(strstr(json, "detect_changes"));
-    ASSERT_NOT_NULL(strstr(json, "manage_adr"));
-    ASSERT_NOT_NULL(strstr(json, "ingest_traces"));
+    ASSERT_NOT_NULL(strstr(json, "events"));
+    ASSERT_NOT_NULL(strstr(json, "memories_retrieve"));
+    ASSERT_NOT_NULL(strstr(json, "memory_health"));
     free(json);
     PASS();
 }
@@ -831,150 +832,12 @@ TEST(tool_detect_changes_no_project) {
     PASS();
 }
 
-TEST(tool_manage_adr_no_project) {
-    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
-
-    char *resp =
-        cbm_mcp_server_handle(srv, "{\"jsonrpc\":\"2.0\",\"id\":36,\"method\":\"tools/call\","
-                                   "\"params\":{\"name\":\"manage_adr\","
-                                   "\"arguments\":{}}}");
-    ASSERT_NOT_NULL(resp);
-    ASSERT_NOT_NULL(strstr(resp, "not found"));
-    free(resp);
-
-    cbm_mcp_server_free(srv);
-    PASS();
-}
-
-/* Regression test for use-after-free in handle_manage_adr (get path).
- * MUST FAIL before fix: free(buf) is called before yy_doc_to_str serializes doc,
- * so result field is missing or contains garbage. MUST PASS after fix. */
-TEST(tool_manage_adr_get_with_existing_adr) {
-    /* Create a temp directory with .semantic-memory/adr.md */
-    char tmp_dir[256];
-    snprintf(tmp_dir, sizeof(tmp_dir), "/tmp/cbm-adr-test-XXXXXX");
-    if (!cbm_mkdtemp(tmp_dir)) {
-        PASS(); /* skip if mkdtemp fails */
-    }
-
-    char adr_dir[512];
-    snprintf(adr_dir, sizeof(adr_dir), "%s/.semantic-memory", tmp_dir);
-    cbm_mkdir(adr_dir);
-
-    char adr_path[512];
-    snprintf(adr_path, sizeof(adr_path), "%s/adr.md", adr_dir);
-    FILE *fp = fopen(adr_path, "w");
-    ASSERT_NOT_NULL(fp);
-    fputs("## PURPOSE\nTest ADR content for regression test.\n\n"
-          "## STACK\nC, SQLite.\n\n"
-          "## ARCHITECTURE\nMCP server.\n",
-          fp);
-    fclose(fp);
-
-    /* Create server and register the project */
-    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
-    ASSERT_NOT_NULL(srv);
-    cbm_store_t *st = cbm_mcp_server_store(srv);
-    ASSERT_NOT_NULL(st);
-    cbm_store_upsert_project(st, "test-adr-uaf", tmp_dir);
-    cbm_mcp_server_set_project(srv, "test-adr-uaf");
-
-    /* Call manage_adr via full JSON-RPC path to exercise cbm_jsonrpc_format_response.
-     * The bug: free(buf) before yy_doc_to_str causes garbage JSON; format_response
-     * then fails to parse the result and omits the "result" field entirely. */
-    char *resp = cbm_mcp_server_handle(
-        srv, "{\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"tools/call\","
-             "\"params\":{\"name\":\"manage_adr\","
-             "\"arguments\":{\"project\":\"test-adr-uaf\",\"mode\":\"get\"}}}");
-    ASSERT_NOT_NULL(resp);
-    /* JSON-RPC response must include a "result" field (absent when use-after-free) */
-    ASSERT_NOT_NULL(strstr(resp, "\"result\""));
-    /* ADR content must appear in response */
-    ASSERT_NOT_NULL(strstr(resp, "PURPOSE"));
-    /* Must not be an error */
-    ASSERT_NULL(strstr(resp, "isError"));
-    free(resp);
-
-    /* Clean up */
-    cbm_mcp_server_free(srv);
-    remove(adr_path);
-    rmdir(adr_dir);
-    rmdir(tmp_dir);
-    PASS();
-}
-
-/* issue #256: manage_adr (MCP) and the UI /api/adr endpoints must share ONE
- * backend. A manage_adr(update) write must be readable via cbm_store_adr_get
- * (the exact API the UI's /api/adr GET uses). */
-TEST(tool_manage_adr_unified_backend_issue256) {
-    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
-    ASSERT_NOT_NULL(srv);
-    cbm_store_t *st = cbm_mcp_server_store(srv);
-    ASSERT_NOT_NULL(st);
-    cbm_store_upsert_project(st, "adr-unify", "/tmp/adr-unify");
-    cbm_mcp_server_set_project(srv, "adr-unify");
-
-    /* Write via the MCP tool. */
-    char *resp = cbm_mcp_server_handle(
-        srv, "{\"jsonrpc\":\"2.0\",\"id\":120,\"method\":\"tools/call\","
-             "\"params\":{\"name\":\"manage_adr\",\"arguments\":{\"project\":\"adr-unify\","
-             "\"mode\":\"update\",\"content\":\"## PURPOSE\\nUnified ADR backend.\\n\"}}}");
-    ASSERT_NOT_NULL(resp);
-    ASSERT_NOT_NULL(strstr(resp, "updated"));
-    free(resp);
-
-    /* Read DIRECTLY via the store API the UI /api/adr uses — must see it. */
-    cbm_adr_t adr;
-    memset(&adr, 0, sizeof(adr));
-    ASSERT_EQ(cbm_store_adr_get(st, "adr-unify", &adr), CBM_STORE_OK);
-    ASSERT_NOT_NULL(adr.content);
-    ASSERT_NOT_NULL(strstr(adr.content, "Unified ADR backend."));
-    cbm_store_adr_free(&adr);
-
-    /* And manage_adr(get) round-trips the same content. */
-    resp = cbm_mcp_server_handle(
-        srv, "{\"jsonrpc\":\"2.0\",\"id\":121,\"method\":\"tools/call\","
-             "\"params\":{\"name\":\"manage_adr\",\"arguments\":{\"project\":\"adr-unify\","
-             "\"mode\":\"get\"}}}");
-    ASSERT_NOT_NULL(resp);
-    ASSERT_NOT_NULL(strstr(resp, "Unified ADR backend."));
-    ASSERT_NULL(strstr(resp, "isError"));
-    free(resp);
-
-    cbm_mcp_server_free(srv);
-    PASS();
-}
-
-TEST(tool_ingest_traces_basic) {
-    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
-
-    char *resp = cbm_mcp_server_handle(
-        srv, "{\"jsonrpc\":\"2.0\",\"id\":37,\"method\":\"tools/call\","
-             "\"params\":{\"name\":\"ingest_traces\","
-             "\"arguments\":{\"traces\":[{\"caller\":\"a\",\"callee\":\"b\"}]}}}");
-    ASSERT_NOT_NULL(resp);
-    ASSERT_NOT_NULL(strstr(resp, "accepted"));
-    ASSERT_NOT_NULL(strstr(resp, "traces_received"));
-    free(resp);
-
-    cbm_mcp_server_free(srv);
-    PASS();
-}
-
-TEST(tool_ingest_traces_empty) {
-    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
-
-    char *resp =
-        cbm_mcp_server_handle(srv, "{\"jsonrpc\":\"2.0\",\"id\":38,\"method\":\"tools/call\","
-                                   "\"params\":{\"name\":\"ingest_traces\","
-                                   "\"arguments\":{\"traces\":[]}}}");
-    ASSERT_NOT_NULL(resp);
-    ASSERT_NOT_NULL(strstr(resp, "accepted"));
-    free(resp);
-
-    cbm_mcp_server_free(srv);
-    PASS();
-}
+/* The manage_adr and ingest_traces MCP tools were removed from the tool
+ * surface in 3ba99aa (the ADR store backend + UI /api/adr endpoints remain,
+ * but the MCP tool handlers are gone). Their former MCP-path tests
+ * (tool_manage_adr_*, tool_ingest_traces_*) asserted behavior of tools that
+ * no longer exist and were removed here. ADR storage is still covered via the
+ * cbm_store_adr_* API tests elsewhere. */
 
 /* ══════════════════════════════════════════════════════════════════
  *  IDLE STORE EVICTION
@@ -2060,11 +1923,6 @@ SUITE(mcp) {
     RUN_TEST(search_code_literal_pipe_warns_issue282);
     RUN_TEST(search_code_ampersand_accepted_issue272);
     RUN_TEST(tool_detect_changes_no_project);
-    RUN_TEST(tool_manage_adr_no_project);
-    RUN_TEST(tool_manage_adr_get_with_existing_adr);
-    RUN_TEST(tool_manage_adr_unified_backend_issue256);
-    RUN_TEST(tool_ingest_traces_basic);
-    RUN_TEST(tool_ingest_traces_empty);
 
     /* Idle store eviction */
     RUN_TEST(store_idle_eviction);
