@@ -203,6 +203,12 @@ int cbm_remove_gemini_hooks(const char *settings_path);
  * SessionStart hook (non-blocking; stdout injected as session context). */
 int cbm_upsert_codex_hooks(const char *config_path);
 int cbm_remove_codex_hooks(const char *config_path);
+/* Codex UserPromptSubmit long-term memory recall hook — runs
+ * `<binary_path> memory-recall` on each prompt and injects task-relevant
+ * memories as additionalContext. Codex shares Claude Code's hook stdin/stdout
+ * schema, so the same subcommand serves both. Non-blocking. */
+int cbm_upsert_codex_recall_hook(const char *config_path, const char *binary_path);
+int cbm_remove_codex_recall_hook(const char *config_path);
 int cbm_upsert_gemini_session_hooks(const char *settings_path);
 int cbm_remove_gemini_session_hooks(const char *settings_path);
 

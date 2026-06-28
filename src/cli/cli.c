@@ -1455,19 +1455,30 @@ int cbm_remove_codex_mcp(const char *config_path) {
 #define CODEX_HOOK_BEGIN "# >>> semantic-memory-mcp SessionStart >>>"
 #define CODEX_HOOK_END "# <<< semantic-memory-mcp SessionStart <<<"
 
-/* Splice out an existing [CODEX_HOOK_BEGIN .. CODEX_HOOK_END] block (inclusive,
- * plus a leading newline). Returns a newly-malloc'd string the caller frees, or
- * NULL if no block was present (content is left untouched). */
-static char *codex_hook_strip(const char *content) {
-    char *begin = strstr(content, CODEX_HOOK_BEGIN);
+/* Recall hook (UserPromptSubmit) block markers — same scheme as the
+ * SessionStart block above. Codex's UserPromptSubmit stdin/stdout schema is
+ * identical to Claude Code's (prompt/cwd/hook_event_name in;
+ * hookSpecificOutput.additionalContext out), so the same `memory-recall`
+ * subcommand augments both with zero per-agent branching (#330 parity). */
+#define CODEX_RECALL_BEGIN "# >>> semantic-memory-mcp UserPromptSubmit >>>"
+#define CODEX_RECALL_END "# <<< semantic-memory-mcp UserPromptSubmit <<<"
+#define CODEX_RECALL_TIMEOUT_SEC 5
+
+/* Splice out an existing [begin .. end] block (inclusive, plus a leading
+ * newline). Returns a newly-malloc'd string the caller frees, or NULL if no
+ * block was present (content is left untouched). Parametrized over the marker
+ * pair so it serves both the SessionStart and UserPromptSubmit blocks. */
+static char *codex_block_strip(const char *content, const char *begin_marker,
+                               const char *end_marker) {
+    char *begin = strstr(content, begin_marker);
     if (!begin) {
         return NULL;
     }
-    char *end = strstr(begin, CODEX_HOOK_END);
+    char *end = strstr(begin, end_marker);
     if (!end) {
         return NULL;
     }
-    end += strlen(CODEX_HOOK_END);
+    end += strlen(end_marker);
     if (*end == '\n') {
         end++;
     }
@@ -1486,6 +1497,89 @@ static char *codex_hook_strip(const char *content) {
     memcpy(out + prefix_len, end, suffix_len);
     out[prefix_len + suffix_len] = '\0';
     return out;
+}
+
+/* Strip the SessionStart block (back-compat wrapper over codex_block_strip). */
+static char *codex_hook_strip(const char *content) {
+    return codex_block_strip(content, CODEX_HOOK_BEGIN, CODEX_HOOK_END);
+}
+
+/* Splice a marker-delimited block into config.toml: removes any prior copy
+ * (idempotent upgrade) then appends the new block. `binary_path`, when
+ * non-NULL, is embedded via %s in `block_fmt`. Returns 0 on success. Shared by
+ * the SessionStart and UserPromptSubmit upserts. */
+static int codex_block_upsert(const char *config_path, const char *begin_marker,
+                              const char *end_marker, const char *block) {
+    size_t len = 0;
+    char *content = read_file_str(config_path, &len);
+    if (!content) {
+        return write_file_str(config_path, block + CLI_SKIP_ONE); /* skip leading newline */
+    }
+    char *stripped = codex_block_strip(content, begin_marker, end_marker);
+    const char *base = stripped ? stripped : content;
+    size_t base_len = strlen(base);
+    char *result = malloc(base_len + strlen(block) + CLI_SKIP_ONE);
+    if (!result) {
+        free(content);
+        free(stripped);
+        return CLI_ERR;
+    }
+    memcpy(result, base, base_len);
+    memcpy(result + base_len, block, strlen(block));
+    result[base_len + strlen(block)] = '\0';
+    int rc = write_file_str(config_path, result);
+    free(content);
+    free(stripped);
+    free(result);
+    return rc;
+}
+
+/* Install/update the Codex UserPromptSubmit long-term memory recall hook in
+ * config.toml. Mirrors the Claude Code recall hook: a non-blocking command that
+ * runs `<binary> memory-recall`, reads the prompt from stdin, and injects
+ * task-relevant memories as additionalContext. Codex shares Claude's hook
+ * schema, so the same subcommand serves both with no agent-specific code. */
+int cbm_upsert_codex_recall_hook(const char *config_path, const char *binary_path) {
+    if (!config_path || !binary_path) {
+        return CLI_ERR;
+    }
+    /* A double-quote in the path would break the TOML single-quoted literal's
+     * sibling command quoting; refuse rather than emit malformed TOML. The
+     * single-quoted TOML literal also cannot contain a single quote — guard
+     * that too (unreachable for real install paths). */
+    if (strchr(binary_path, '\'') != NULL) {
+        return CLI_ERR;
+    }
+    char block[CLI_BUF_2K];
+    snprintf(block, sizeof(block),
+             "\n" CODEX_RECALL_BEGIN "\n"
+             "[[hooks.UserPromptSubmit]]\n\n"
+             "[[hooks.UserPromptSubmit.hooks]]\n"
+             "type = \"command\"\n"
+             "command = '%s memory-recall'\n"
+             "timeout = %d\n" CODEX_RECALL_END "\n",
+             binary_path, CODEX_RECALL_TIMEOUT_SEC);
+    return codex_block_upsert(config_path, CODEX_RECALL_BEGIN, CODEX_RECALL_END, block);
+}
+
+int cbm_remove_codex_recall_hook(const char *config_path) {
+    if (!config_path) {
+        return CLI_ERR;
+    }
+    size_t len = 0;
+    char *content = read_file_str(config_path, &len);
+    if (!content) {
+        return CLI_TRUE;
+    }
+    char *stripped = codex_block_strip(content, CODEX_RECALL_BEGIN, CODEX_RECALL_END);
+    if (!stripped) {
+        free(content);
+        return CLI_TRUE; /* nothing to remove */
+    }
+    int rc = write_file_str(config_path, stripped);
+    free(content);
+    free(stripped);
+    return rc;
 }
 
 /* Install/update the Codex SessionStart reminder hook in config.toml. */
@@ -3272,8 +3366,9 @@ static void install_cli_agent_configs(const cbm_detected_agents_t *agents, const
         } else {
             if (!dry_run) {
                 cbm_upsert_codex_hooks(cp);
+                cbm_upsert_codex_recall_hook(cp, binary_path);
             }
-            printf("  hooks: SessionStart (semantic-memory-mcp reminder)\n");
+            printf("  hooks: SessionStart (reminder) + UserPromptSubmit (memory recall)\n");
         }
     }
     if (agents->gemini) {
@@ -3744,6 +3839,7 @@ static void uninstall_cli_agents(const cbm_detected_agents_t *agents, const char
                                   cbm_remove_codex_mcp);
         if (!dry_run) {
             cbm_remove_codex_hooks(cp);
+            cbm_remove_codex_recall_hook(cp);
         }
     }
     if (agents->gemini) {

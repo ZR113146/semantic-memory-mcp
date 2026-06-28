@@ -1573,6 +1573,50 @@ TEST(cli_codex_session_hook_issue330) {
     PASS();
 }
 
+/* Codex UserPromptSubmit long-term memory recall hook — installed alongside the
+ * SessionStart reminder, idempotent, coexists with it, and cleanly removed. */
+TEST(cli_codex_recall_hook) {
+    char tmpdir[256];
+    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-codexrecall-XXXXXX");
+    if (!cbm_mkdtemp(tmpdir))
+        FAIL("cbm_mkdtemp failed");
+
+    char cfg[512];
+    snprintf(cfg, sizeof(cfg), "%s/config.toml", tmpdir);
+    write_test_file(cfg, "[mcp_servers.other]\ncommand = \"x\"\n");
+
+    /* SessionStart + UserPromptSubmit coexist (mirrors the real install path). */
+    ASSERT_EQ(cbm_upsert_codex_hooks(cfg), 0);
+    ASSERT_EQ(cbm_upsert_codex_recall_hook(cfg, "/usr/local/bin/semantic-memory-mcp"), 0);
+    const char *d = read_test_file(cfg);
+    ASSERT_NOT_NULL(d);
+    ASSERT(strstr(d, "[[hooks.UserPromptSubmit]]") != NULL);
+    ASSERT(strstr(d, "[[hooks.UserPromptSubmit.hooks]]") != NULL);
+    ASSERT(strstr(d, "/usr/local/bin/semantic-memory-mcp memory-recall") != NULL);
+    ASSERT(strstr(d, "[[hooks.SessionStart]]") != NULL);   /* reminder still present */
+    ASSERT(strstr(d, "[mcp_servers.other]") != NULL);      /* pre-existing preserved */
+
+    /* Idempotent: re-upsert leaves exactly ONE recall block. */
+    ASSERT_EQ(cbm_upsert_codex_recall_hook(cfg, "/usr/local/bin/semantic-memory-mcp"), 0);
+    d = read_test_file(cfg);
+    const char *first = strstr(d, "[[hooks.UserPromptSubmit]]");
+    ASSERT_NOT_NULL(first);
+    ASSERT_NULL(strstr(first + 1, "[[hooks.UserPromptSubmit]]"));
+
+    /* Removing the recall hook leaves the SessionStart reminder untouched. */
+    ASSERT_EQ(cbm_remove_codex_recall_hook(cfg), 0);
+    d = read_test_file(cfg);
+    ASSERT_NULL(strstr(d, "hooks.UserPromptSubmit"));
+    ASSERT(strstr(d, "[[hooks.SessionStart]]") != NULL);
+    ASSERT(strstr(d, "[mcp_servers.other]") != NULL);
+
+    /* Remove on a config without our block is a clean no-op success. */
+    ASSERT_EQ(cbm_remove_codex_recall_hook(cfg), 1);
+
+    test_rmdir_r(tmpdir);
+    PASS();
+}
+
 /* Gemini/Antigravity SessionStart reminder parity (settings.json JSON path). */
 TEST(cli_gemini_session_hook_parity) {
     char tmpdir[256];
@@ -2751,6 +2795,7 @@ SUITE(cli) {
     RUN_TEST(cli_detect_agents_finds_cursor_issue222);
     RUN_TEST(cli_install_plan_receipt_no_mutation_issue388);
     RUN_TEST(cli_codex_session_hook_issue330);
+    RUN_TEST(cli_codex_recall_hook);
     RUN_TEST(cli_gemini_session_hook_parity);
     RUN_TEST(cli_detect_agents_finds_gemini);
     RUN_TEST(cli_detect_agents_finds_zed);

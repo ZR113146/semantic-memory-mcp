@@ -354,7 +354,7 @@ Restart your agent. Verify with `/mcp` — you should see `semantic-memory-mcp` 
 | Agent | MCP Config | Instructions | Hooks |
 |-------|-----------|-------------|-------|
 | Claude Code | `.claude/.mcp.json` | 4 Skills | PreToolUse (Grep/Glob graph augment) + UserPromptSubmit (memory recall) + SessionStart reminder |
-| Codex CLI | `.codex/config.toml` | `.codex/AGENTS.md` | SessionStart reminder |
+| Codex CLI | `.codex/config.toml` | `.codex/AGENTS.md` | UserPromptSubmit (memory recall) + SessionStart reminder |
 | Gemini CLI | `.gemini/settings.json` | `.gemini/GEMINI.md` | BeforeTool (grep reminder) + SessionStart reminder |
 | Zed | `settings.json` (JSONC) | — | — |
 | OpenCode | `opencode.json` | `AGENTS.md` | — |
@@ -374,9 +374,12 @@ search results. A `UserPromptSubmit` hook runs `memories_retrieve` against
 each prompt and injects task-relevant long-term memories as context, plus a
 standing reminder to persist durable decisions via `events` — re-injected
 every turn so it survives context compaction (recording always stays the
-agent's judgment; nothing is written automatically). For Codex, Gemini CLI,
-and Antigravity, a `SessionStart` hook injects a one-line code-discovery
-reminder as session context (Gemini CLI also keeps its `BeforeTool` reminder).
+agent's judgment; nothing is written automatically). Codex shares Claude
+Code's hook stdin/stdout schema, so it gets the same `UserPromptSubmit` recall
+hook (running `<binary> memory-recall` directly, no shim) in addition to its
+`SessionStart` code-discovery reminder. For Gemini CLI and Antigravity, a
+`SessionStart` hook injects a one-line code-discovery reminder as session
+context (Gemini CLI also keeps its `BeforeTool` reminder).
 The installed Claude shim files are named `cbm-code-discovery-gate` and
 `cbm-memory-recall`; despite the legacy gate name, neither ever gates or
 blocks a tool.
