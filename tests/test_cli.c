@@ -2369,9 +2369,54 @@ TEST(cli_remove_recall_hook) {
     PASS();
 }
 
-/* ═══════════════════════════════════════════════════════════════════
- *  Group D: Pre-Tool Hook Upsert — Gemini CLI / Antigravity
- * ═══════════════════════════════════════════════════════════════════ */
+/* Regression: cbm_remove_indexes (install/update/uninstall cache cleanup) must
+ * delete only REBUILDABLE graph indexes, never the persistent <project>-memory.db
+ * long-term-memory store or _config.db. A blanket "*.db" scan here wiped every
+ * project's memories on every deploy (the db-split decouples the FILE but this
+ * cleanup path was never taught the distinction). */
+TEST(cli_remove_indexes_spares_memory_db) {
+    char tmpdir[256];
+    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-idxrm-XXXXXX");
+    if (!cbm_mkdtemp(tmpdir))
+        FAIL("cbm_mkdtemp failed");
+
+    /* Point the cache dir at our temp dir for the duration of the test. */
+    const char *raw = getenv("CBM_CACHE_DIR");
+    char *old_cache = raw ? strdup(raw) : NULL;
+    cbm_setenv("CBM_CACHE_DIR", tmpdir, 1);
+
+    /* Two rebuildable graph indexes + one memory store + config + a sidecar. */
+    char p_graph1[512], p_graph2[512], p_mem[512], p_cfg[512], p_wal[512];
+    snprintf(p_graph1, sizeof(p_graph1), "%s/MyProj.db", tmpdir);
+    snprintf(p_graph2, sizeof(p_graph2), "%s/Other-Repo.db", tmpdir);
+    snprintf(p_mem, sizeof(p_mem), "%s/MyProj-memory.db", tmpdir);
+    snprintf(p_cfg, sizeof(p_cfg), "%s/_config.db", tmpdir);
+    snprintf(p_wal, sizeof(p_wal), "%s/MyProj-memory.db-wal", tmpdir);
+    write_test_file(p_graph1, "graph1");
+    write_test_file(p_graph2, "graph2");
+    write_test_file(p_mem, "memories");
+    write_test_file(p_cfg, "config");
+    write_test_file(p_wal, "wal");
+
+    /* count + remove must agree, and both must exclude memory/config. */
+    int removed = cbm_remove_indexes(NULL);
+    ASSERT_EQ(removed, 2); /* only the two graph .db files */
+
+    /* Graph indexes gone; memory store, config, and sidecar all survive. */
+    ASSERT(read_test_file(p_graph1) == NULL);
+    ASSERT(read_test_file(p_graph2) == NULL);
+    ASSERT_NOT_NULL(read_test_file(p_mem));
+    ASSERT_NOT_NULL(read_test_file(p_cfg));
+    ASSERT_NOT_NULL(read_test_file(p_wal));
+
+    if (old_cache) {
+        cbm_setenv("CBM_CACHE_DIR", old_cache, 1);
+        free(old_cache);
+    } else
+        cbm_unsetenv("CBM_CACHE_DIR");
+    test_rmdir_r(tmpdir);
+    PASS();
+}
 
 TEST(cli_upsert_gemini_hook_fresh) {
     char tmpdir[256];
@@ -2796,6 +2841,7 @@ SUITE(cli) {
     RUN_TEST(cli_install_plan_receipt_no_mutation_issue388);
     RUN_TEST(cli_codex_session_hook_issue330);
     RUN_TEST(cli_codex_recall_hook);
+    RUN_TEST(cli_remove_indexes_spares_memory_db);
     RUN_TEST(cli_gemini_session_hook_parity);
     RUN_TEST(cli_detect_agents_finds_gemini);
     RUN_TEST(cli_detect_agents_finds_zed);

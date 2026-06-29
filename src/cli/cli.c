@@ -2649,6 +2649,31 @@ static const char *get_cache_dir(const char *home_dir) {
     return buf;
 }
 
+/* Is this cache-dir filename a REBUILDABLE graph index (safe to delete on
+ * install/update/uninstall)? Returns false for persistent data that is NOT a
+ * rebuildable index and must survive a binary swap:
+ *   - <project>-memory.db : long-term memory (db-split; see e4c4b7f). Reindex
+ *     already spares it, but the install/update/uninstall path deletes via this
+ *     blanket scan — without this guard it blindly unlinks memory too, wiping
+ *     every project's memories on every deploy.
+ *   - _config.db          : install/config key-value store, not an index.
+ * Sidecars (-wal/-shm) don't end in .db so they're already excluded. */
+static bool cli_is_rebuildable_index(const char *name) {
+    size_t len = strlen(name);
+    if (len <= DB_EXT_LEN || strcmp(name + len - DB_EXT_LEN, ".db") != 0) {
+        return false;
+    }
+    const char *MEM_SUFFIX = "-memory.db";
+    size_t msl = strlen(MEM_SUFFIX);
+    if (len >= msl && strcmp(name + len - msl, MEM_SUFFIX) == 0) {
+        return false;
+    }
+    if (strcmp(name, "_config.db") == 0) {
+        return false;
+    }
+    return true;
+}
+
 int cbm_list_indexes(const char *home_dir) {
     const char *cache_dir = get_cache_dir(home_dir);
     if (!cache_dir) {
@@ -2663,8 +2688,7 @@ int cbm_list_indexes(const char *home_dir) {
     int count = 0;
     cbm_dirent_t *ent;
     while ((ent = cbm_readdir(d)) != NULL) {
-        size_t len = strlen(ent->name);
-        if (len > DB_EXT_LEN && strcmp(ent->name + len - DB_EXT_LEN, ".db") == 0) {
+        if (cli_is_rebuildable_index(ent->name)) {
             printf("  %s/%s\n", cache_dir, ent->name);
             count++;
         }
@@ -2687,8 +2711,7 @@ int cbm_remove_indexes(const char *home_dir) {
     int count = 0;
     cbm_dirent_t *ent;
     while ((ent = cbm_readdir(d)) != NULL) {
-        size_t len = strlen(ent->name);
-        if (len > DB_EXT_LEN && strcmp(ent->name + len - DB_EXT_LEN, ".db") == 0) {
+        if (cli_is_rebuildable_index(ent->name)) {
             char path[CLI_BUF_1K];
             snprintf(path, sizeof(path), "%s/%s", cache_dir, ent->name);
             /* Also remove .db.tmp if present */
@@ -3534,8 +3557,7 @@ static int count_db_indexes(const char *home) {
     int count = 0;
     cbm_dirent_t *ent;
     while ((ent = cbm_readdir(d)) != NULL) {
-        size_t len = strlen(ent->name);
-        if (len > DB_EXT_LEN && strcmp(ent->name + len - DB_EXT_LEN, ".db") == 0) {
+        if (cli_is_rebuildable_index(ent->name)) {
             count++;
         }
     }
