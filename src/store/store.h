@@ -120,6 +120,11 @@ typedef struct {
      * an about_code edge get a retrieval boost. Pure ranking signal — never
      * changes the candidate set. NULL = no code context. */
     const char *code_context;
+    /* Optional borrowed handle to the project's code-graph DB (NOT owned; valid
+     * only for the duration of the call). Since memory and graph now live in
+     * separate files, the anchor-boost pass reads `nodes` through this handle.
+     * NULL disables anchor boosting (memories still returned, just unboosted). */
+    struct sqlite3 *graph_db;
 } cbm_memory_query_t;
 
 typedef struct {
@@ -303,6 +308,18 @@ bool cbm_store_check_integrity(cbm_store_t *s);
 
 /* Open database for a named project in the default cache dir. */
 cbm_store_t *cbm_store_open(const char *project);
+
+/* Derive the per-project memory DB path: <cache>/<project>-memory.db.
+ * Memory lives in its own file so rebuilding the code graph never destroys it.
+ * Returns CBM_STORE_OK and fills buf, or CBM_STORE_ERR on bad input/overflow. */
+int cbm_memory_db_path(const char *project, char *buf, size_t bufsz);
+
+/* One-time, idempotent migration: lift memory_* rows from a legacy merged graph
+ * DB (where memory and graph shared one file) into this freshly opened memory
+ * store. No-op once the memory DB has been migrated, or if graph_db_path is
+ * absent / carries no memory rows. Best-effort: failure leaves the memory store
+ * usable. Returns CBM_STORE_OK on success/no-op, CBM_STORE_ERR on copy failure. */
+int cbm_store_migrate_memory_from_graph(cbm_store_t *mem, const char *graph_db_path);
 
 /* Close the store and free all resources. NULL-safe. */
 void cbm_store_close(cbm_store_t *s);

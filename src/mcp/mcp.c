@@ -788,6 +788,13 @@ struct cbm_mcp_server {
     bool owns_store;                /* true if we opened the store */
     char *current_project;          /* which project store is open for (heap) */
     time_t store_last_used;         /* last time resolve_store was called for a named project */
+
+    /* Long-term memory store — a SEPARATE <project>-memory.db file, opened on
+     * demand alongside the graph store. Kept apart so index_repository (which
+     * deletes + recreates the graph .db) can never destroy memory. */
+    cbm_store_t *mem_store; /* currently open memory store (or NULL) */
+    char *mem_project;      /* which project mem_store is open for (heap) */
+
     char update_notice[CBM_SZ_256]; /* one-shot update notice, cleared after first injection */
     bool update_checked;            /* true after background check has been launched */
     cbm_thread_t update_tid;        /* background update check thread */
@@ -863,14 +870,18 @@ void cbm_mcp_server_free(cbm_mcp_server_t *srv) {
     if (srv->owns_store && srv->store) {
         cbm_store_close(srv->store);
     }
+    if (srv->mem_store) {
+        cbm_store_close(srv->mem_store);
+    }
     free(srv->current_project);
+    free(srv->mem_project);
     free(srv);
 }
 
 /* ── Idle store eviction ──────────────────────────────────────── */
 
 void cbm_mcp_server_evict_idle(cbm_mcp_server_t *srv, int timeout_s) {
-    if (!srv || !srv->store) {
+    if (!srv || (!srv->store && !srv->mem_store)) {
         return;
     }
     /* Protect initial in-memory stores that were never accessed via a named project.
@@ -884,12 +895,20 @@ void cbm_mcp_server_evict_idle(cbm_mcp_server_t *srv, int timeout_s) {
         return;
     }
 
-    if (srv->owns_store) {
+    if (srv->owns_store && srv->store) {
         cbm_store_close(srv->store);
     }
     srv->store = NULL;
     free(srv->current_project);
     srv->current_project = NULL;
+    /* The memory store is always owned by the server and rides the same idle
+     * cadence (its access updates store_last_used too). */
+    if (srv->mem_store) {
+        cbm_store_close(srv->mem_store);
+        srv->mem_store = NULL;
+    }
+    free(srv->mem_project);
+    srv->mem_project = NULL;
     srv->store_last_used = 0;
 }
 
@@ -4156,13 +4175,58 @@ static char *memory_arg_raw_dup(yyjson_doc *doc, const char *key) {
     return yyjson_val_write(v, YYJSON_WRITE_ALLOW_INVALID_UNICODE, NULL);
 }
 
+/* Resolve the per-project long-term memory store, opening <project>-memory.db
+ * on demand (creating it if absent). Independent of the graph store: memory
+ * tools work even for a project that has never been indexed. Caches one
+ * (mem_project, mem_store) pair, reopening only on project change, and rides the
+ * same idle-eviction clock as the graph store via store_last_used.
+ *
+ * On a fresh memory DB, lifts any pre-existing memory rows out of the legacy
+ * merged graph .db (one-time, idempotent) so the split doesn't lose history. */
 static cbm_store_t *resolve_memory_store(cbm_mcp_server_t *srv, const char *project) {
-    cbm_store_t *store = resolve_store(srv, project);
-    if (!store && srv && srv->store &&
-        (!srv->current_project || !project || strcmp(srv->current_project, project) == 0)) {
-        store = srv->store;
+    if (!srv || !project) {
+        return NULL;
     }
-    return store;
+    srv->store_last_used = time(NULL);
+
+    /* Already open for this project? */
+    if (srv->mem_project && srv->mem_store && strcmp(srv->mem_project, project) == 0) {
+        return srv->mem_store;
+    }
+
+    /* Switching projects — close the previous memory handle. */
+    if (srv->mem_store) {
+        cbm_store_close(srv->mem_store);
+        srv->mem_store = NULL;
+    }
+    free(srv->mem_project);
+    srv->mem_project = NULL;
+
+    char mem_path[CBM_SZ_1K];
+    if (cbm_memory_db_path(project, mem_path, sizeof(mem_path)) != CBM_STORE_OK) {
+        return NULL;
+    }
+    bool fresh = !cbm_file_exists(mem_path);
+
+    /* Create-if-absent open: memory is durable and project-scoped, decoupled
+     * from whether the code graph has ever been indexed. */
+    srv->mem_store = cbm_store_open_path(mem_path);
+    if (!srv->mem_store) {
+        return NULL;
+    }
+
+    /* First time we materialize this memory DB: pull forward any memory rows
+     * still living in the legacy merged graph .db. Best-effort. */
+    if (fresh) {
+        char graph_path[CBM_SZ_1K];
+        project_db_path(project, graph_path, sizeof(graph_path));
+        if (graph_path[0]) {
+            (void)cbm_store_migrate_memory_from_graph(srv->mem_store, graph_path);
+        }
+    }
+
+    srv->mem_project = heap_strdup(project);
+    return srv->mem_store;
 }
 
 static const char *memory_item_str(const char *s) {
@@ -4590,6 +4654,15 @@ static char *handle_memories_retrieve(cbm_mcp_server_t *srv, const char *args) {
     query.code_context = cbm_mcp_get_string_arg(args, "code_context");
     query.include_inactive = cbm_mcp_get_bool_arg(args, "include_inactive");
     query.limit = cbm_mcp_get_int_arg(args, "limit", MCP_DEFAULT_LIMIT);
+    /* Anchor-boost (about_code) needs the code graph, which now lives in a
+     * separate DB. Borrow the project's graph handle only when a code_context is
+     * given; absence/unindexed graph degrades to "no boost", never an error. */
+    if (query.code_context && query.code_context[0]) {
+        cbm_store_t *graph = resolve_store(srv, project);
+        if (graph) {
+            query.graph_db = cbm_store_get_db(graph);
+        }
+    }
     cbm_memory_result_t out = {0};
     int rc = cbm_store_memory_retrieve(store, &query, &out);
     if (rc == CBM_STORE_OK && out.count > 0) {

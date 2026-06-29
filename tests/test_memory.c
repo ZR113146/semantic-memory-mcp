@@ -841,6 +841,10 @@ TEST(memory_anchor_boost_raises_rank) {
     /* Without code_context: both present, anchoring inert. */
     cbm_memory_query_t q = {0};
     q.project = "test-proj"; q.query = "认证"; q.limit = 5;
+    /* Single-file test DB: the code graph lives in the same handle, so borrow it
+     * as the anchor-boost graph handle (in production this is the separate
+     * <project>-graph.db handle). */
+    q.graph_db = cbm_store_get_db(s);
     cbm_memory_result_t r0 = {0};
     ASSERT(cbm_store_memory_retrieve(s, &q, &r0) == CBM_STORE_OK);
     ASSERT(r0.count >= 2);
@@ -882,6 +886,7 @@ TEST(memory_anchor_stale_no_boost_but_kept) {
     cbm_memory_query_t q = {0};
     q.project = "test-proj"; q.query = "认证"; q.limit = 5;
     q.code_context = "gone.symbol";
+    q.graph_db = cbm_store_get_db(s);
     cbm_memory_result_t r = {0};
     ASSERT(cbm_store_memory_retrieve(s, &q, &r) == CBM_STORE_OK);
     bool found = false;

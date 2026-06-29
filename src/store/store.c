@@ -524,6 +524,11 @@ static int read_user_version(cbm_store_t *s) {
  * formatted into the statement; it is an internal compile-time constant, never
  * user input. */
 static int memory_vec_upsert(cbm_store_t *s, const char *item_id, const char *content);
+/* memory_meta key/value helpers — defined below (schema v2); forward-declared
+ * here so the merged-DB migration (cbm_store_migrate_memory_from_graph, defined
+ * above their definition) can read/stamp the migration marker. */
+static int64_t memory_meta_get_i64(cbm_store_t *s, const char *key, int64_t fallback);
+static void memory_meta_set_i64(cbm_store_t *s, const char *key, int64_t value);
 /* Audit-event helper (P0-2/P0-4): writes a memory_event row inside the caller's
  * open transaction. Defined below near the delete path; forward-declared here so
  * the lifecycle mutators (update_status, consolidate, decay) can record events. */
@@ -1229,6 +1234,26 @@ cbm_store_t *cbm_store_open(const char *project) {
     return store_open_internal(path, false);
 }
 
+/* Derive the per-project memory DB path: <cache>/<project>-memory.db.
+ * Memory lives in its own file so that rebuilding the code graph (which deletes
+ * and recreates <project>.db wholesale) never destroys long-term memory. The
+ * graph DB keeps the legacy <project>.db name for backward compatibility.
+ * Returns CBM_STORE_OK and fills buf, or CBM_STORE_ERR on bad input/overflow. */
+int cbm_memory_db_path(const char *project, char *buf, size_t bufsz) {
+    if (!project || !buf || bufsz == 0 || !cbm_validate_project_name(project)) {
+        return CBM_STORE_ERR;
+    }
+    const char *cdir = cbm_resolve_cache_dir();
+    if (!cdir) {
+        cdir = cbm_tmpdir();
+    }
+    int n = snprintf(buf, bufsz, "%s/%s-memory.db", cdir, project);
+    if (n < 0 || (size_t)n >= bufsz) {
+        return CBM_STORE_ERR;
+    }
+    return CBM_STORE_OK;
+}
+
 static void finalize_stmt(sqlite3_stmt **s) {
     if (*s) {
         sqlite3_finalize(*s);
@@ -1291,6 +1316,118 @@ void cbm_store_close(cbm_store_t *s) {
 
 sqlite3 *cbm_store_get_db(cbm_store_t *s) {
     return s ? s->db : NULL;
+}
+
+/* One-time migration: pull memory_* tables out of a legacy merged graph DB into
+ * a freshly created standalone memory DB. Historically memory and code-graph
+ * tables shared one <project>.db file, so rebuilding the graph (which unlinks
+ * that file) destroyed memory. New installs keep memory in <project>-memory.db;
+ * this lifts pre-existing memory rows across on first open of the new file.
+ *
+ * Idempotent and best-effort: guarded by a memory_meta flag, and any failure
+ * leaves the (empty) memory DB usable rather than aborting open. Uses a raw
+ * sqlite3 handle with NO authorizer so the trusted internal ATTACH is allowed
+ * (the store_authorizer hard-denies ATTACH on normal handles). Source memory
+ * rows are left in place in the graph DB for now — harmless, and a safety net
+ * until the split is proven; they simply stop being read. */
+int cbm_store_migrate_memory_from_graph(cbm_store_t *mem, const char *graph_db_path) {
+    if (!mem || !mem->db || !mem->db_path || !graph_db_path) {
+        return CBM_STORE_ERR;
+    }
+    /* Already migrated? memory_meta marker makes this a no-op on every later open. */
+    if (memory_meta_get_i64(mem, "migrated_from_merged", 0) != 0) {
+        return CBM_STORE_OK;
+    }
+    /* Nothing to lift if there is no legacy graph file. Still stamp the marker so
+     * we don't re-probe forever on fresh installs. */
+    if (!cbm_file_exists(graph_db_path)) {
+        memory_meta_set_i64(mem, "migrated_from_merged", 1);
+        return CBM_STORE_OK;
+    }
+
+    /* Open a dedicated, authorizer-free handle on the memory DB for the copy.
+     * mem->db carries store_authorizer (denies ATTACH); this trusted path must
+     * attach, so it uses its own connection to the same file. */
+    sqlite3 *cx = NULL;
+    if (sqlite3_open_v2(mem->db_path, &cx, SQLITE_OPEN_READWRITE, NULL) != SQLITE_OK) {
+        sqlite3_close(cx);
+        return CBM_STORE_ERR;
+    }
+
+    int result = CBM_STORE_ERR;
+    char *err = NULL;
+    sqlite3_stmt *st = NULL;
+
+    /* ATTACH the legacy graph DB. Bind the path as a parameter rather than
+     * formatting a file: URI — the cache path is a native Windows path (drive
+     * letter + backslashes) that does not survive URI construction, and binding
+     * also sidesteps SQL quoting. We only SELECT from it, so RW attach is fine. */
+    {
+        sqlite3_stmt *att = NULL;
+        if (sqlite3_prepare_v2(cx, "ATTACH DATABASE ?1 AS legacy;", CBM_NOT_FOUND, &att, NULL) !=
+            SQLITE_OK) {
+            goto done;
+        }
+        sqlite3_bind_text(att, 1, graph_db_path, -1, SQLITE_TRANSIENT);
+        int arc = sqlite3_step(att);
+        sqlite3_finalize(att);
+        if (arc != SQLITE_DONE) {
+            goto done; /* graph DB unreadable — leave memory DB empty, do not stamp */
+        }
+    }
+
+    /* Does the legacy DB actually carry memory rows? If memory_item is absent or
+     * empty there is nothing to lift; stamp the marker and finish clean. */
+    bool has_rows = false;
+    if (sqlite3_prepare_v2(cx,
+                           "SELECT count(*) FROM legacy.sqlite_master "
+                           "WHERE type='table' AND name='memory_item';",
+                           CBM_NOT_FOUND, &st, NULL) == SQLITE_OK &&
+        sqlite3_step(st) == SQLITE_ROW && sqlite3_column_int(st, 0) > 0) {
+        sqlite3_finalize(st);
+        st = NULL;
+        if (sqlite3_prepare_v2(cx, "SELECT count(*) FROM legacy.memory_item;", CBM_NOT_FOUND, &st,
+                               NULL) == SQLITE_OK &&
+            sqlite3_step(st) == SQLITE_ROW && sqlite3_column_int(st, 0) > 0) {
+            has_rows = true;
+        }
+    }
+    sqlite3_finalize(st);
+    st = NULL;
+
+    if (has_rows) {
+        /* Copy each memory table. INSERT OR IGNORE keeps the copy idempotent and
+         * tolerant of the destination tables already existing (created by the
+         * memory DB's own schema init). Wrapped in one transaction so a partial
+         * failure rolls back and the marker is not stamped. */
+        static const char *const copy_sql =
+            "BEGIN;"
+            "INSERT OR IGNORE INTO memory_event  SELECT * FROM legacy.memory_event;"
+            "INSERT OR IGNORE INTO memory_item   SELECT * FROM legacy.memory_item;"
+            "INSERT OR IGNORE INTO memory_edge   SELECT * FROM legacy.memory_edge;"
+            "INSERT OR IGNORE INTO memory_vec    SELECT * FROM legacy.memory_vec;"
+            "INSERT OR IGNORE INTO memory_fts (item_id,title,summary,content) "
+            "  SELECT item_id,title,summary,content FROM legacy.memory_fts;"
+            "INSERT OR IGNORE INTO memory_meta   SELECT * FROM legacy.memory_meta;"
+            "COMMIT;";
+        if (sqlite3_exec(cx, copy_sql, NULL, NULL, &err) != SQLITE_OK) {
+            (void)sqlite3_exec(cx, "ROLLBACK;", NULL, NULL, NULL);
+            goto done;
+        }
+    }
+
+    (void)sqlite3_exec(cx, "DETACH DATABASE legacy;", NULL, NULL, NULL);
+    /* Stamp via the store handle so it shares mem->db's view immediately. */
+    memory_meta_set_i64(mem, "migrated_from_merged", 1);
+    result = CBM_STORE_OK;
+
+done:
+    if (err) {
+        snprintf(mem->errbuf, sizeof(mem->errbuf), "memory migrate: %s", err);
+        sqlite3_free(err);
+    }
+    sqlite3_close_v2(cx);
+    return result;
 }
 
 int cbm_store_exec(cbm_store_t *s, const char *sql) {
@@ -2760,9 +2897,10 @@ static void memory_fill_result_evidence(cbm_store_t *s, cbm_memory_result_t *out
 
 /* Does code symbol `qn` still exist in this project's code graph? Used to
  * lazily skip the boost for memories whose anchor target was renamed/deleted
- * since indexing (stale anchor → silent de-weight, memory itself is kept). */
-static bool memory_code_symbol_exists(cbm_store_t *s, const char *project, const char *qn) {
-    if (!s || !s->db || !qn || !qn[0]) {
+ * since indexing (stale anchor → silent de-weight, memory itself is kept).
+ * Queries the borrowed graph handle (code graph now lives in a separate DB). */
+static bool memory_code_symbol_exists(sqlite3 *graph_db, const char *project, const char *qn) {
+    if (!graph_db || !qn || !qn[0]) {
         return false;
     }
     sqlite3_stmt *st = NULL;
@@ -2770,7 +2908,7 @@ static bool memory_code_symbol_exists(cbm_store_t *s, const char *project, const
     const char *sql = project
                           ? "SELECT 1 FROM nodes WHERE project=?1 AND qualified_name=?2 LIMIT 1;"
                           : "SELECT 1 FROM nodes WHERE qualified_name=?2 LIMIT 1;";
-    if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &st, NULL) == SQLITE_OK) {
+    if (sqlite3_prepare_v2(graph_db, sql, CBM_NOT_FOUND, &st, NULL) == SQLITE_OK) {
         memory_bind_nullable(st, 1, project);
         bind_text(st, 2, qn);
         exists = sqlite3_step(st) == SQLITE_ROW;
@@ -2780,12 +2918,19 @@ static bool memory_code_symbol_exists(cbm_store_t *s, const char *project, const
 }
 
 /* Apply about_code anchoring boosts to the result set, then stable-sort by the
- * adjusted retrieval_score (desc). No-op unless query->code_context is set, so
- * default retrieval order is unchanged. Must run before the limit truncation in
- * memory_resolve_conflicts so a boosted memory can actually rise into the cut. */
+ * adjusted retrieval_score (desc). No-op unless query->code_context is set AND a
+ * borrowed graph handle is supplied, so default retrieval order is unchanged and
+ * a missing/unindexed graph degrades to "no boost" rather than failing. Must run
+ * before the limit truncation in memory_resolve_conflicts so a boosted memory
+ * can actually rise into the cut. */
 static void memory_apply_anchor_boost(cbm_store_t *s, const cbm_memory_query_t *query,
                                       cbm_memory_result_t *out) {
     if (!query || !query->code_context || !query->code_context[0] || !out || out->count <= 0) {
+        return;
+    }
+    sqlite3 *graph_db = query->graph_db;
+    /* No graph handle → anchor data is unreachable; leave scores untouched. */
+    if (!graph_db) {
         return;
     }
     const char *ctx_qn = query->code_context;
@@ -2798,7 +2943,7 @@ static void memory_apply_anchor_boost(cbm_store_t *s, const cbm_memory_query_t *
             query->project
                 ? "SELECT file_path FROM nodes WHERE project=?1 AND qualified_name=?2 LIMIT 1;"
                 : "SELECT file_path FROM nodes WHERE qualified_name=?2 LIMIT 1;";
-        if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &st, NULL) == SQLITE_OK) {
+        if (sqlite3_prepare_v2(graph_db, sql, CBM_NOT_FOUND, &st, NULL) == SQLITE_OK) {
             memory_bind_nullable(st, 1, query->project);
             bind_text(st, 2, ctx_qn);
             if (sqlite3_step(st) == SQLITE_ROW) {
@@ -2810,7 +2955,9 @@ static void memory_apply_anchor_boost(cbm_store_t *s, const cbm_memory_query_t *
         sqlite3_finalize(st);
     }
 
-    /* For each result, find its strongest about_code anchor relative to ctx. */
+    /* For each result, find its strongest about_code anchor relative to ctx.
+     * about_code edges live in the memory DB (s->db); node existence/file checks
+     * go to the borrowed graph handle. */
     const char *anchor_sql = "SELECT substr(dst_id, 6) AS qn FROM memory_edge "
                              "WHERE src_id=?1 AND type='about_code' AND dst_id LIKE 'code:%';";
     for (int i = 0; i < out->count; i++) {
@@ -2827,7 +2974,7 @@ static void memory_apply_anchor_boost(cbm_store_t *s, const cbm_memory_query_t *
             if (!qn || !qn[0])
                 continue;
             /* Stale anchor (symbol gone since indexing) → no boost, keep memory. */
-            if (!memory_code_symbol_exists(s, query->project, qn))
+            if (!memory_code_symbol_exists(graph_db, query->project, qn))
                 continue;
             if (strcmp(qn, ctx_qn) == 0) {
                 if (MEMORY_ANCHOR_BOOST_SYMBOL > best)
@@ -2840,7 +2987,7 @@ static void memory_apply_anchor_boost(cbm_store_t *s, const cbm_memory_query_t *
                         ? "SELECT 1 FROM nodes WHERE project=?1 AND qualified_name=?2 AND "
                           "file_path=?3 LIMIT 1;"
                         : "SELECT 1 FROM nodes WHERE qualified_name=?2 AND file_path=?3 LIMIT 1;";
-                if (sqlite3_prepare_v2(s->db, fsql, CBM_NOT_FOUND, &fst, NULL) == SQLITE_OK) {
+                if (sqlite3_prepare_v2(graph_db, fsql, CBM_NOT_FOUND, &fst, NULL) == SQLITE_OK) {
                     memory_bind_nullable(fst, 1, query->project);
                     bind_text(fst, 2, qn);
                     bind_text(fst, 3, ctx_file);
