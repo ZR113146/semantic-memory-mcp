@@ -447,7 +447,8 @@ static const tool_def_t TOOLS[] = {
      "decision timeline is keyed on entity_key, not on overwriting. Always pass distinct "
      "summary and content; never wrap content in JSON.",
      "{\"type\":\"object\",\"properties\":{"
-     "\"project\":{\"type\":\"string\",\"description\":\"Target project (memory DB is per-project)\"},"
+     "\"project\":{\"type\":\"string\",\"description\":\"Target project (memory DB is "
+     "per-project)\"},"
      "\"kind\":{\"type\":\"string\",\"description\":\"Controlled vocabulary: decision | lesson | "
      "constraint | fact | todo | reference. Use 'decision' for code-change rationale.\"},"
      "\"summary\":{\"type\":\"string\",\"description\":\"One independent sentence stating the "
@@ -465,7 +466,8 @@ static const tool_def_t TOOLS[] = {
      "(0-1). Tune, don't default.\"},"
      "\"specificity\":{\"type\":\"number\",\"description\":\"Lower = tied to one file/moment, "
      "higher = general principle (0-1).\"},"
-     "\"confidence\":{\"type\":\"number\",\"description\":\"Certainty the memory is correct (0-1)\"},"
+     "\"confidence\":{\"type\":\"number\",\"description\":\"Certainty the memory is correct "
+     "(0-1)\"},"
      "\"predicate\":{\"type\":\"string\",\"description\":\"Relation verb, e.g. 'decides' for a "
      "decision\"},"
      "\"payload\":{},\"type\":{\"type\":\"string\"},\"source\":{\"type\":\"string\"},"
@@ -809,10 +811,10 @@ bool cbm_mcp_get_bool_arg(const char *args_json, const char *key) {
  * ══════════════════════════════════════════════════════════════════ */
 
 struct cbm_mcp_server {
-    cbm_store_t *store;             /* currently open project store (or NULL) */
-    bool owns_store;                /* true if we opened the store */
-    char *current_project;          /* which project store is open for (heap) */
-    time_t store_last_used;         /* last time resolve_store was called for a named project */
+    cbm_store_t *store;     /* currently open project store (or NULL) */
+    bool owns_store;        /* true if we opened the store */
+    char *current_project;  /* which project store is open for (heap) */
+    time_t store_last_used; /* last time resolve_store was called for a named project */
 
     /* Long-term memory store — a SEPARATE <project>-memory.db file, opened on
      * demand alongside the graph store. Kept apart so index_repository (which
