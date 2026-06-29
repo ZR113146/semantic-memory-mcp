@@ -221,6 +221,7 @@ decay / retention      →  stale items archived; deleted items swept after a gr
 ```
 
 - **Write once, maintain automatically** — `events` is the only write entrypoint. Consolidation, decay, conflict resolution, and the soft-delete retention sweep run lazily on the hot path (time-gated, best-effort, never blocking the caller). No manual `admin_*` calls required for normal use.
+- **Consistent format across sessions** — the `events` schema and a server-side gate enforce an ADR-style shape for code decisions (independent summary, four-section content: Decision / Context / Rejected alternatives / Anchors, decisions on one entity keyed by `entity_key`). Because the rules live in the MCP server, the format holds in every window regardless of how the request was phrased.
 - **Real embeddings** — recall is powered by 768-d `nomic-embed-code` vectors compiled into the binary (no API, no Ollama). Topic-aware contradiction detection clusters opposing claims on the same subject. An **optional bge-m3 local sidecar** (off by default, `CBM_MEMORY_EMBED_BACKEND=sidecar`) raises recall top-1 from 0.83 to 0.96 on the internal eval set.
 - **Code anchoring** — memories can attach to graph symbols via `about_code` edges, boosting recall when you're working in the same file or on the same function.
 - **Lifecycle & safety** — items move through `candidate → active → deprecated → archived`; `memory_delete` supports soft (undoable), hard, and GDPR `purge` (erases source events), all transactional and audited.
@@ -425,7 +426,7 @@ semantic-memory-mcp cli --raw search_graph '{"label": "Function"}' | jq '.result
 
 | Tool | Description |
 |------|-------------|
-| `events` | Append a raw long-term memory event through the synchronous hot path. Triggers lazy auto-maintenance (consolidate/decay/sweep). |
+| `events` | Write one long-term memory item through the synchronous hot path. For code decisions, enforces an ADR-style format (independent summary; four-section content: Decision / Context / Rejected alternatives / Anchors) and rejects malformed writes. Triggers lazy auto-maintenance (consolidate/decay/sweep). |
 | `memories_retrieve` | Retrieve task-relevant long-term memories (vector + FTS + structured), update hit counters. |
 | `memories_inspect` | List memory items with entity_key, predicate, and status for manual review. |
 | `memory_update_status` | Mark an item active / candidate / deprecated / archived / retracted. |
