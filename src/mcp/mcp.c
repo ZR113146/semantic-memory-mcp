@@ -437,16 +437,41 @@ static const tool_def_t TOOLS[] = {
      "\"Git ref or date to compare from (e.g. HEAD~5, v0.5.0, 2026-01-01)\"}},\"required\":"
      "[\"project\"]}"},
 
-    {"events", "Write a raw long-term memory event through the synchronous hot path",
-     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
-     "\"type\":{\"type\":\"string\"},\"source\":{\"type\":\"string\"},\"user\":{\"type\":"
-     "\"string\"},"
-     "\"task\":{\"type\":\"string\"},\"payload\":{},\"content\":{\"type\":\"string\"},"
-     "\"context\":{},\"kind\":{\"type\":\"string\"},\"layer\":{\"type\":\"string\"},"
-     "\"title\":{\"type\":\"string\"},\"summary\":{\"type\":\"string\"},"
-     "\"entity_key\":{\"type\":\"string\"},\"predicate\":{\"type\":\"string\"},"
-     "\"importance\":{\"type\":\"number\"},\"confidence\":{\"type\":\"number\"},"
-     "\"reusability\":{\"type\":\"number\"},\"specificity\":{\"type\":\"number\"}},"
+    {"events",
+     "Write one long-term memory item. For a CODE DECISION (why a change was made), set "
+     "kind=decision and write content in four labelled sections: [Decision] what was "
+     "decided; [Context] why, with the absolute date; [Rejected alternatives] options "
+     "considered and why each was dropped; [Anchors] commit hashes and files touched. "
+     "ONE decision per call, never bundle several. To record that a new decision reverses "
+     "an earlier one, reuse the SAME entity_key (the code entity, e.g. ppr-engine) — the "
+     "decision timeline is keyed on entity_key, not on overwriting. Always pass distinct "
+     "summary and content; never wrap content in JSON.",
+     "{\"type\":\"object\",\"properties\":{"
+     "\"project\":{\"type\":\"string\",\"description\":\"Target project (memory DB is per-project)\"},"
+     "\"kind\":{\"type\":\"string\",\"description\":\"Controlled vocabulary: decision | lesson | "
+     "constraint | fact | todo | reference. Use 'decision' for code-change rationale.\"},"
+     "\"summary\":{\"type\":\"string\",\"description\":\"One independent sentence stating the "
+     "conclusion. MUST differ from content and read like a query someone would ask. Required for "
+     "decision/lesson/constraint.\"},"
+     "\"content\":{\"type\":\"string\",\"description\":\"Plain text, NEVER JSON-wrapped. For "
+     "kind=decision use the four sections [Decision]/[Context]/[Rejected alternatives]/[Anchors]. "
+     "Convert relative dates to absolute. Required for decision/lesson/constraint.\"},"
+     "\"entity_key\":{\"type\":\"string\",\"description\":\"kebab-case name of the code entity the "
+     "decision is about (e.g. ppr-engine, resolver). Reuse the same key across decisions on the "
+     "same entity so they form one timeline.\"},"
+     "\"importance\":{\"type\":\"number\",\"description\":\"0.9 architecture-level decision | 0.7 "
+     "useful lesson | 0.5 minor fact. Do not leave at default.\"},"
+     "\"reusability\":{\"type\":\"number\",\"description\":\"How reusable across future tasks "
+     "(0-1). Tune, don't default.\"},"
+     "\"specificity\":{\"type\":\"number\",\"description\":\"Lower = tied to one file/moment, "
+     "higher = general principle (0-1).\"},"
+     "\"confidence\":{\"type\":\"number\",\"description\":\"Certainty the memory is correct (0-1)\"},"
+     "\"predicate\":{\"type\":\"string\",\"description\":\"Relation verb, e.g. 'decides' for a "
+     "decision\"},"
+     "\"payload\":{},\"type\":{\"type\":\"string\"},\"source\":{\"type\":\"string\"},"
+     "\"user\":{\"type\":\"string\"},\"task\":{\"type\":\"string\","
+     "\"description\":\"Work-session id; groups memories from one episode\"},"
+     "\"context\":{},\"layer\":{\"type\":\"string\"},\"title\":{\"type\":\"string\"}},"
      "\"required\":[\"project\",\"payload\"]}"},
 
     {"memories_retrieve", "Retrieve task-relevant long-term memories with structured filters",
@@ -4301,6 +4326,47 @@ static bool memory_policy_contains_i(const char *hay, const char *needle) {
     return false;
 }
 
+/* Skip leading ASCII whitespace. */
+static const char *memory_skip_ws(const char *s) {
+    if (!s)
+        return s;
+    while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r')
+        s++;
+    return s;
+}
+
+/* Structured-format gate for high-value kinds (decision/lesson/constraint).
+ * Returns a non-NULL reason string when the write is malformed, NULL when OK.
+ * Enforces the ADR contract advertised in the events tool schema so the format
+ * holds across every window regardless of how the user phrased the request:
+ *   - summary and content must both be present and non-empty
+ *   - content must be plain text, not a {"content":...} JSON wrapper
+ *   - summary must not be a copy of content (it is the independent recall key)
+ * Other kinds (fact/todo/reference/raw events) are not constrained here. */
+static const char *memory_validate_format(const char *kind, const char *summary,
+                                          const char *content) {
+    if (!kind)
+        return NULL;
+    if (strcmp(kind, "decision") != 0 && strcmp(kind, "lesson") != 0 &&
+        strcmp(kind, "constraint") != 0)
+        return NULL;
+    if (!memory_policy_has_signal(summary))
+        return "missing_summary";
+    if (!memory_policy_has_signal(content))
+        return "missing_content";
+    /* Reject JSON-wrapped content like {"content":"..."} — a write-side bug that
+     * double-encodes the field. Detect a leading '{' followed by a quoted key. */
+    const char *c = memory_skip_ws(content);
+    if (*c == '{') {
+        const char *q = memory_skip_ws(c + 1);
+        if (*q == '"')
+            return "content_json_wrapped";
+    }
+    if (strcmp(summary, content) == 0)
+        return "summary_equals_content";
+    return NULL;
+}
+
 static const char *memory_write_policy_decide(const char *text, const char *kind, const char *type,
                                               const char **reason) {
     if (!memory_policy_has_signal(text)) {
@@ -4375,6 +4441,18 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     const char *policy_reason = NULL;
     const char *policy_decision =
         memory_write_policy_decide(content ? content : payload, kind, type, &policy_reason);
+
+    /* Structured-format gate: for high-value kinds, malformed writes (missing or
+     * duplicated summary, JSON-wrapped content) are downgraded to rejected so the
+     * ADR format holds across every window. Only override an otherwise-accepting
+     * decision — never flip an already-rejected one. */
+    if (strcmp(policy_decision, "rejected") != 0) {
+        const char *fmt_reason = memory_validate_format(kind, summary, content);
+        if (fmt_reason) {
+            policy_decision = "rejected";
+            policy_reason = fmt_reason;
+        }
+    }
 
     /* Resolve the store early so we can write the audit event even for rejected writes. */
     cbm_store_t *store = resolve_memory_store(srv, project);
