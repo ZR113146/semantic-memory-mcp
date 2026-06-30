@@ -448,7 +448,9 @@ static const tool_def_t TOOLS[] = {
      "summary and content; never wrap content in JSON.",
      "{\"type\":\"object\",\"properties\":{"
      "\"project\":{\"type\":\"string\",\"description\":\"Target project (memory DB is "
-     "per-project)\"},"
+     "per-project). This is the path-derived name WITH its drive/path prefix (e.g. "
+     "D-semantic-memory-mcp, not semantic-memory-mcp). If unsure, call list_projects "
+     "first — a wrong name is rejected, never silently treated as an empty project.\"},"
      "\"kind\":{\"type\":\"string\",\"description\":\"Controlled vocabulary: decision | lesson | "
      "constraint | fact | todo | reference. Use 'decision' for code-change rationale.\"},"
      "\"summary\":{\"type\":\"string\",\"description\":\"One independent sentence stating the "
@@ -487,7 +489,10 @@ static const tool_def_t TOOLS[] = {
      "\"required\":[\"project\",\"payload\"]}"},
 
     {"memories_retrieve", "Retrieve task-relevant long-term memories with structured filters",
-     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},\"user\":{\"type\":"
+     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\",\"description\":\"Path-"
+     "derived project name WITH drive/path prefix (e.g. D-semantic-memory-mcp). If unsure call "
+     "list_projects first; a wrong name returns project-not-found with candidates, never an empty "
+     "result.\"},\"user\":{\"type\":"
      "\"string\"},"
      "\"task\":{\"type\":\"string\"},\"entity_key\":{\"type\":\"string\"},\"kind\":{\"type\":"
      "\"string\"},"
@@ -4432,15 +4437,24 @@ static char *normalize_phantom_project(const char *project) {
     return heap_strdup(project);
 }
 
-/* Resolve the per-project long-term memory store, opening <project>-memory.db
- * on demand (creating it if absent). Independent of the graph store: memory
- * tools work even for a project that has never been indexed. Caches one
- * (mem_project, mem_store) pair, reopening only on project change, and rides the
- * same idle-eviction clock as the graph store via store_last_used.
+/* Resolve the per-project long-term memory store, opening <project>-memory.db.
+ * Independent of the graph store: memory tools work even for a project that has
+ * never been indexed. Caches one (mem_project, mem_store) pair, reopening only
+ * on project change, and rides the same idle-eviction clock via store_last_used.
  *
- * On a fresh memory DB, lifts any pre-existing memory rows out of the legacy
- * merged graph .db (one-time, idempotent) so the split doesn't lose history. */
-static cbm_store_t *resolve_memory_store(cbm_mcp_server_t *srv, const char *project) {
+ * `create`: true on the WRITE path (events) — create-if-absent so a pure-memory
+ * project's first write materializes its DB. false on READ paths (retrieve,
+ * inspect, feedback, delete, ...) — if the DB does not exist, return NULL
+ * instead of silently creating an empty DB. A silently-created empty DB
+ * masquerades as "project has no memories" and hides a wrong/mistyped project
+ * name (e.g. the drive-prefix-less "semantic-memory-mcp" vs the real
+ * "D-semantic-memory-mcp"); on the read path the caller must surface that as
+ * "project not found" + nearest candidates, not as an empty result.
+ *
+ * On a fresh memory DB (create path), lifts any pre-existing memory rows out of
+ * the legacy merged graph .db (one-time, idempotent) so the split doesn't lose
+ * history. */
+static cbm_store_t *resolve_memory_store(cbm_mcp_server_t *srv, const char *project, bool create) {
     if (!srv || !project) {
         return NULL;
     }
@@ -4465,16 +4479,22 @@ static cbm_store_t *resolve_memory_store(cbm_mcp_server_t *srv, const char *proj
     }
     bool fresh = !cbm_file_exists(mem_path);
 
-    /* Create-if-absent open: memory is durable and project-scoped, decoupled
-     * from whether the code graph has ever been indexed. */
-    srv->mem_store = cbm_store_open_path(mem_path);
+    /* READ path (create=false): the DB must already exist. Don't materialize an
+     * empty one — that would hide a wrong/mistyped project name as "no memories".
+     * Caller surfaces "project not found" + candidates instead. */
+    if (fresh && !create) {
+        return NULL;
+    }
+
+    /* WRITE path uses create-if-absent; read path (db exists) opens query-only. */
+    srv->mem_store = create ? cbm_store_open_path(mem_path) : cbm_store_open_path_query(mem_path);
     if (!srv->mem_store) {
         return NULL;
     }
 
-    /* First time we materialize this memory DB: pull forward any memory rows
-     * still living in the legacy merged graph .db. Best-effort. */
-    if (fresh) {
+    /* First time we materialize this memory DB (write path only): pull forward
+     * any memory rows still living in the legacy merged graph .db. Best-effort. */
+    if (fresh && create) {
         char graph_path[CBM_SZ_1K];
         project_db_path(project, graph_path, sizeof(graph_path));
         if (graph_path[0]) {
@@ -4722,8 +4742,9 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         }
     }
 
-    /* Resolve the store early so we can write the audit event even for rejected writes. */
-    cbm_store_t *store = resolve_memory_store(srv, project);
+    /* Resolve the store early so we can write the audit event even for rejected writes.
+     * Write path: create-if-absent so a pure-memory project's first write builds its DB. */
+    cbm_store_t *store = resolve_memory_store(srv, project, true);
 
     if (strcmp(policy_decision, "rejected") == 0) {
         /* Write a lightweight audit.rejected event so policy decisions are traceable
@@ -5077,7 +5098,7 @@ static char *handle_memories_retrieve(cbm_mcp_server_t *srv, const char *args) {
             project = canon;
         }
     }
-    cbm_store_t *store = resolve_memory_store(srv, project);
+    cbm_store_t *store = resolve_memory_store(srv, project, false);
     if (!store) {
         char *_err = build_project_list_error("project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
@@ -5148,7 +5169,7 @@ static char *handle_memories_inspect(cbm_mcp_server_t *srv, const char *args) {
     char *project = cbm_mcp_get_string_arg(args, "project");
     if (!project)
         return cbm_mcp_text_result("project is required", true);
-    cbm_store_t *store = resolve_memory_store(srv, project);
+    cbm_store_t *store = resolve_memory_store(srv, project, false);
     if (!store) {
         char *_err = build_project_list_error("project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
@@ -5229,7 +5250,7 @@ static char *handle_memory_update_status(cbm_mcp_server_t *srv, const char *args
         free(status);
         return cbm_mcp_text_result("project, id, and status are required", true);
     }
-    cbm_store_t *store = resolve_memory_store(srv, project);
+    cbm_store_t *store = resolve_memory_store(srv, project, false);
     if (!store) {
         char *_err = build_project_list_error("project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
@@ -5273,7 +5294,7 @@ static char *handle_memory_feedback(cbm_mcp_server_t *srv, const char *args) {
         free(user);
         return cbm_mcp_text_result("project, id, and feedback are required", true);
     }
-    cbm_store_t *store = resolve_memory_store(srv, project);
+    cbm_store_t *store = resolve_memory_store(srv, project, false);
     if (!store) {
         char *_err = build_project_list_error("project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
@@ -5323,7 +5344,7 @@ static char *handle_memory_delete(cbm_mcp_server_t *srv, const char *args) {
         return cbm_mcp_text_result("project and id are required", true);
     }
     const char *m = (mode && mode[0]) ? mode : "soft";
-    cbm_store_t *store = resolve_memory_store(srv, project);
+    cbm_store_t *store = resolve_memory_store(srv, project, false);
     if (!store) {
         char *_err = build_project_list_error("project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
@@ -5371,7 +5392,7 @@ static char *handle_admin_consolidate(cbm_mcp_server_t *srv, const char *args) {
     char *project = cbm_mcp_get_string_arg(args, "project");
     if (!project)
         return cbm_mcp_text_result("project is required", true);
-    cbm_store_t *store = resolve_memory_store(srv, project);
+    cbm_store_t *store = resolve_memory_store(srv, project, false);
     if (!store) {
         char *_err = build_project_list_error("project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
@@ -5408,7 +5429,7 @@ static char *handle_admin_decay(cbm_mcp_server_t *srv, const char *args) {
     char *project = cbm_mcp_get_string_arg(args, "project");
     if (!project)
         return cbm_mcp_text_result("project is required", true);
-    cbm_store_t *store = resolve_memory_store(srv, project);
+    cbm_store_t *store = resolve_memory_store(srv, project, false);
     if (!store) {
         char *_err = build_project_list_error("project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
@@ -5436,7 +5457,7 @@ static char *handle_memory_health(cbm_mcp_server_t *srv, const char *args) {
     char *project = cbm_mcp_get_string_arg(args, "project");
     if (!project)
         return cbm_mcp_text_result("project is required", true);
-    cbm_store_t *store = resolve_memory_store(srv, project);
+    cbm_store_t *store = resolve_memory_store(srv, project, false);
     if (!store) {
         char *_err = build_project_list_error("project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
