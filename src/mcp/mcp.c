@@ -4386,8 +4386,8 @@ static const char *memory_structure_advice(const char *kind, const char *content
     }
     bool has_decision = strstr(content, "决策") || strstr(content, "Decision") ||
                         strstr(content, "decision") || strstr(content, "[Decision]");
-    bool has_context = strstr(content, "背景") || strstr(content, "Context") ||
-                       strstr(content, "context");
+    bool has_context =
+        strstr(content, "背景") || strstr(content, "Context") || strstr(content, "context");
     bool has_rejected = strstr(content, "否决") || strstr(content, "替代") ||
                         strstr(content, "Rejected") || strstr(content, "alternative") ||
                         strstr(content, "Alternative");
@@ -4958,10 +4958,11 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
      * inside this handler's transaction and that helper opens its own. */
     if (supersedes && supersedes[0]) {
         sqlite3_stmt *sup = NULL;
-        if (sqlite3_prepare_v2(cbm_store_get_db(store),
-                               "UPDATE memory_item SET status='archived', updated_at=?1 "
-                               "WHERE id=?2 AND scope_project=?3 AND status IN ('active','candidate');",
-                               -1, &sup, NULL) == SQLITE_OK) {
+        if (sqlite3_prepare_v2(
+                cbm_store_get_db(store),
+                "UPDATE memory_item SET status='archived', updated_at=?1 "
+                "WHERE id=?2 AND scope_project=?3 AND status IN ('active','candidate');",
+                -1, &sup, NULL) == SQLITE_OK) {
             sqlite3_bind_int64(sup, 1, (int64_t)time(NULL) * 1000);
             sqlite3_bind_text(sup, 2, supersedes, -1, SQLITE_TRANSIENT);
             sqlite3_bind_text(sup, 3, project, -1, SQLITE_TRANSIENT);

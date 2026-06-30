@@ -2908,11 +2908,11 @@ static void memory_fill_result_evidence(cbm_store_t *s, cbm_memory_result_t *out
  * These are intentionally configurable constants, not magic numbers baked into
  * the formula: the architecture fixes the SIGNAL SOURCES, the weights get tuned
  * against real recall data (see [[memory-lifecycle-architecture]]). */
-#define MEMORY_L1_CONF_BASE 0.5      /* confidence when an anchor exists but has no callers */
-#define MEMORY_L1_CONF_PER_INDEG 0.04 /* each inbound CALLS edge adds this to confidence */
-#define MEMORY_L1_CONF_CAP 0.95      /* never let pure graph signal claim certainty */
-#define MEMORY_L1_REUSE_BASE 0.4     /* reusability for a leaf symbol with one anchor */
-#define MEMORY_L1_REUSE_ENTRY 0.3    /* bonus when any anchor is an entry point */
+#define MEMORY_L1_CONF_BASE 0.5         /* confidence when an anchor exists but has no callers */
+#define MEMORY_L1_CONF_PER_INDEG 0.04   /* each inbound CALLS edge adds this to confidence */
+#define MEMORY_L1_CONF_CAP 0.95         /* never let pure graph signal claim certainty */
+#define MEMORY_L1_REUSE_BASE 0.4        /* reusability for a leaf symbol with one anchor */
+#define MEMORY_L1_REUSE_ENTRY 0.3       /* bonus when any anchor is an entry point */
 #define MEMORY_L1_REUSE_PER_OUTDEG 0.02 /* each outbound CALLS edge (breadth) adds this */
 #define MEMORY_L1_REUSE_PER_ANCHOR 0.05 /* each additional existing anchor adds this */
 #define MEMORY_L1_REUSE_CAP 1.0
@@ -2920,7 +2920,7 @@ static void memory_fill_result_evidence(cbm_store_t *s, cbm_memory_result_t *out
 /* Compute in/out CALLS degree + is_entry_point for one symbol via the borrowed
  * graph handle. Returns false if the symbol is absent (stale/hallucinated). */
 static bool memory_graph_symbol_signals(sqlite3 *graph_db, const char *project, const char *qn,
-                                         int *in_deg, int *out_deg, bool *is_entry) {
+                                        int *in_deg, int *out_deg, bool *is_entry) {
     *in_deg = 0;
     *out_deg = 0;
     *is_entry = false;
