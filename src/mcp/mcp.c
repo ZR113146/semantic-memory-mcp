@@ -4945,7 +4945,11 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     cbm_memory_item_t item = {0};
     item.kind = kind ? kind : "event";
     item.layer = layer ? layer : "episodic";
-    item.title = title ? title : (type ? type : "memory.event");
+    /* No poisoned default: if the writer gave no title, store NULL rather than
+     * the useless "memory.event" literal. Display/recall falls back to summary
+     * (which always carries the query-like conclusion). event.type keeps its
+     * "memory.event" default above — that is the event TYPE, a separate field. */
+    item.title = title;
     item.summary = summary ? summary : (content ? content : payload);
     item.content = content ? content : payload;
     item.scope_user = user;

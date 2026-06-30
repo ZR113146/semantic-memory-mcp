@@ -130,16 +130,20 @@ static char *hr_build_args(const char *project, const char *prompt) {
     return out; /* caller frees */
 }
 
-/* Pick the best human-readable label for a memory: title, else summary, else
- * a truncated content snippet. Returns NULL only if all three are empty. */
+/* Pick the best human-readable label for a memory: summary first (it is the
+ * one-sentence, query-like conclusion — the most useful recall label), then
+ * title, then a content snippet. Summary leads title because the events writer
+ * often leaves title unset, where it defaults to the useless "memory.event"
+ * literal; the summary always carries real signal. Returns NULL only if all
+ * three are empty. */
 static const char *hr_memory_label(yyjson_val *m) {
-    const char *title = hr_obj_str(m, "title");
-    if (title && title[0]) {
-        return title;
-    }
     const char *summary = hr_obj_str(m, "summary");
     if (summary && summary[0]) {
         return summary;
+    }
+    const char *title = hr_obj_str(m, "title");
+    if (title && title[0]) {
+        return title;
     }
     const char *content = hr_obj_str(m, "content");
     if (content && content[0]) {
