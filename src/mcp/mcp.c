@@ -1042,8 +1042,12 @@ static bool is_project_db_file(const char *name, size_t len);
 /* Forward decl �?definition lives below in handle_trace_call_path's helpers. */
 static void free_node_contents(cbm_node_t *n);
 
-/* Scan cache dir for .db files, writing comma-separated quoted names into out.
- * Returns the number of projects found. */
+/* Scan cache dir for .db files, writing comma-separated quoted CANONICAL
+ * (scope_project) names into out, deduped so a graph DB and its memory sidecar
+ * appear once. Returns the number of distinct projects found. */
+static char *canonical_project_name(const char *dir_path, const char *name, size_t name_len,
+                                    bool *is_mem); /* fwd decl; defined below */
+
 static int collect_db_project_names(const char *dir_path, char *out, size_t out_sz) {
     int count = 0;
     int offset = 0;
@@ -1058,12 +1062,28 @@ static int collect_db_project_names(const char *dir_path, char *out, size_t out_
         if (!is_project_db_file(n, len)) {
             continue;
         }
-        if ((size_t)offset >= out_sz)
+        char *cname = canonical_project_name(dir_path, n, len, NULL);
+        if (!cname) {
+            continue;
+        }
+        /* Dedupe: skip if this canonical name is already in out (graph + sidecar
+         * of the same project both map here). Substring match on the quoted form
+         * is exact because names are quoted and comma-separated. */
+        char quoted[CBM_SZ_1K];
+        snprintf(quoted, sizeof(quoted), "\"%s\"", cname);
+        if (offset > 0 && strstr(out, quoted)) {
+            free(cname);
+            continue;
+        }
+        if ((size_t)offset >= out_sz) {
+            free(cname);
             break; /* bounds check before write */
+        }
         if (count > 0 && offset < (int)out_sz - MCP_SEPARATOR) {
             out[offset++] = ',';
         }
-        int wrote = snprintf(out + offset, out_sz - (size_t)offset, "\"%.*s\"", (int)(len - 3), n);
+        int wrote = snprintf(out + offset, out_sz - (size_t)offset, "%s", quoted);
+        free(cname);
         if (wrote > 0) {
             offset += wrote;
             if ((size_t)offset >= out_sz) {
@@ -1131,27 +1151,134 @@ static bool is_project_db_file(const char *name, size_t len) {
     return true;
 }
 
-/* Open a .db file briefly, collect node/edge counts and root_path,
- * then append a JSON entry to arr. */
-static void build_project_json_entry(yyjson_mut_doc *doc, yyjson_mut_val *arr, const char *dir_path,
-                                     const char *name, size_t name_len, const struct stat *st) {
-    char project_name[CBM_SZ_1K];
-    snprintf(project_name, sizeof(project_name), "%.*s", (int)(name_len - 3), name);
+/* Memory-DB suffix appended by cbm_memory_db_path (db-split, e4c4b7f). A
+ * <project>-memory.db file is a memory sidecar, NOT a project of its own. */
+#define MEM_DB_SUFFIX "-memory.db"
 
+/* Read the authoritative project name out of a memory DB: memories store the
+ * real (un-suffixed) project in memory_item.scope_project at write time, so
+ * the data — not the filename — is the source of truth. This sidesteps the
+ * filename ambiguity for projects whose own name ends in "-memory" (e.g.
+ * "D-semantic-memory-mcp"): its sidecar file is "...-mcp-memory.db" but the
+ * scope_project column holds "D-semantic-memory-mcp". Returns a heap string the
+ * caller frees, or NULL when the DB has no memory rows (empty sidecar). */
+static char *memory_db_scope_project(const char *full_path) {
+    cbm_store_t *st = cbm_store_open_path(full_path);
+    if (!st) {
+        return NULL;
+    }
+    sqlite3 *db = cbm_store_get_db(st);
+    char *result = NULL;
+    sqlite3_stmt *stmt = NULL;
+    if (db && sqlite3_prepare_v2(db,
+                                 "SELECT scope_project FROM memory_item "
+                                 "WHERE scope_project IS NOT NULL AND scope_project <> '' LIMIT 1;",
+                                 CBM_NOT_FOUND, &stmt, NULL) == SQLITE_OK) {
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            const char *sp = (const char *)sqlite3_column_text(stmt, 0);
+            if (sp && sp[0]) {
+                result = heap_strdup(sp);
+            }
+        }
+        sqlite3_finalize(stmt);
+    }
+    cbm_store_close(st);
+    return result;
+}
+
+/* Derive the canonical project name for a cache .db file. For a graph DB it is
+ * the filename minus ".db". For a "<project>-memory.db" sidecar it is the
+ * scope_project stored inside (authoritative), falling back — for an empty
+ * sidecar with no rows — to stripping the "-memory.db" suffix. *is_mem reports
+ * whether the file was a memory sidecar. Caller frees the returned string. */
+static char *canonical_project_name(const char *dir_path, const char *name, size_t name_len,
+                                    bool *is_mem) {
+    size_t suf = SLEN(MEM_DB_SUFFIX);
+    bool mem = (name_len > suf && strcmp(name + name_len - suf, MEM_DB_SUFFIX) == 0);
+    if (is_mem) {
+        *is_mem = mem;
+    }
+    if (mem) {
+        char full_path[CBM_SZ_2K];
+        snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, name);
+        char *authoritative = memory_db_scope_project(full_path);
+        if (authoritative) {
+            return authoritative;
+        }
+        /* Empty sidecar: fall back to stripping the suffix. */
+        char buf[CBM_SZ_1K];
+        snprintf(buf, sizeof(buf), "%.*s", (int)(name_len - suf), name);
+        return heap_strdup(buf);
+    }
+    char buf[CBM_SZ_1K];
+    snprintf(buf, sizeof(buf), "%.*s", (int)(name_len - MCP_DB_EXT), name);
+    return heap_strdup(buf);
+}
+
+/* Find or create the JSON entry for a canonical project name in arr, so a
+ * graph DB and its memory sidecar collapse into ONE listed project. */
+static yyjson_mut_val *find_or_add_project(yyjson_mut_doc *doc, yyjson_mut_val *arr,
+                                           const char *cname) {
+    size_t n = yyjson_mut_arr_size(arr);
+    for (size_t i = 0; i < n; i++) {
+        yyjson_mut_val *p = yyjson_mut_arr_get(arr, i);
+        yyjson_mut_val *nm = yyjson_mut_obj_get(p, "name");
+        if (nm && yyjson_mut_is_str(nm) && strcmp(yyjson_mut_get_str(nm), cname) == 0) {
+            return p;
+        }
+    }
+    yyjson_mut_val *p = yyjson_mut_obj(doc);
+    yyjson_mut_obj_add_strcpy(doc, p, "name", cname);
+    yyjson_mut_obj_add_strcpy(doc, p, "root_path", "");
+    yyjson_mut_obj_add_int(doc, p, "nodes", 0);
+    yyjson_mut_obj_add_int(doc, p, "edges", 0);
+    yyjson_mut_obj_add_int(doc, p, "size_bytes", 0);
+    yyjson_mut_obj_add_bool(doc, p, "has_memory", false);
+    yyjson_mut_arr_add_val(arr, p);
+    return p;
+}
+
+/* Merge one cache .db file (graph or memory sidecar) into the deduped project
+ * list keyed by canonical name. Graph files contribute node/edge counts and
+ * root_path; memory sidecars set has_memory. size_bytes accumulates both. */
+static void merge_project_db_entry(yyjson_mut_doc *doc, yyjson_mut_val *arr, const char *dir_path,
+                                   const char *name, size_t name_len, const struct stat *st) {
+    bool is_mem = false;
+    char *cname = canonical_project_name(dir_path, name, name_len, &is_mem);
+    if (!cname) {
+        return;
+    }
+    yyjson_mut_val *p = find_or_add_project(doc, arr, cname);
+
+    /* Accumulate size across the graph + memory files of the same project. */
+    yyjson_mut_val *sz = yyjson_mut_obj_get(p, "size_bytes");
+    int64_t prev_sz = (sz && yyjson_mut_is_int(sz)) ? yyjson_mut_get_sint(sz) : 0;
+    yyjson_mut_obj_remove_key(p, "size_bytes");
+    yyjson_mut_obj_add_int(doc, p, "size_bytes", prev_sz + (int64_t)st->st_size);
+
+    if (is_mem) {
+        yyjson_mut_obj_remove_key(p, "has_memory");
+        yyjson_mut_obj_add_bool(doc, p, "has_memory", true);
+        free(cname);
+        return;
+    }
+
+    /* Graph DB: read node/edge counts and root_path keyed by the canonical name. */
     char full_path[CBM_SZ_2K];
     snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, name);
-
     cbm_store_t *pstore = cbm_store_open_path(full_path);
-    int nodes = 0;
-    int edges = 0;
-    char root_path_buf[CBM_SZ_1K] = "";
     if (pstore) {
-        nodes = cbm_store_count_nodes(pstore, project_name);
-        edges = cbm_store_count_edges(pstore, project_name);
+        int nodes = cbm_store_count_nodes(pstore, cname);
+        int edges = cbm_store_count_edges(pstore, cname);
+        yyjson_mut_obj_remove_key(p, "nodes");
+        yyjson_mut_obj_add_int(doc, p, "nodes", nodes);
+        yyjson_mut_obj_remove_key(p, "edges");
+        yyjson_mut_obj_add_int(doc, p, "edges", edges);
         cbm_project_t proj = {0};
-        if (cbm_store_get_project(pstore, project_name, &proj) == CBM_STORE_OK) {
-            if (proj.root_path) {
-                snprintf(root_path_buf, sizeof(root_path_buf), "%s", proj.root_path);
+        if (cbm_store_get_project(pstore, cname, &proj) == CBM_STORE_OK) {
+            if (proj.root_path && proj.root_path[0]) {
+                yyjson_mut_obj_remove_key(p, "root_path");
+                yyjson_mut_obj_add_strcpy(doc, p, "root_path", proj.root_path);
             }
             safe_str_free(&proj.name);
             safe_str_free(&proj.indexed_at);
@@ -1159,18 +1286,12 @@ static void build_project_json_entry(yyjson_mut_doc *doc, yyjson_mut_val *arr, c
         }
         cbm_store_close(pstore);
     }
-
-    yyjson_mut_val *p = yyjson_mut_obj(doc);
-    yyjson_mut_obj_add_strcpy(doc, p, "name", project_name);
-    yyjson_mut_obj_add_strcpy(doc, p, "root_path", root_path_buf);
-    yyjson_mut_obj_add_int(doc, p, "nodes", nodes);
-    yyjson_mut_obj_add_int(doc, p, "edges", edges);
-    yyjson_mut_obj_add_int(doc, p, "size_bytes", (int64_t)st->st_size);
-    yyjson_mut_arr_add_val(arr, p);
+    free(cname);
 }
 
-/* list_projects: scan cache directory for .db files.
- * Each project is a single .db file �?no central registry needed. */
+/* list_projects: scan cache directory for .db files. A project may have a graph
+ * DB (<project>.db) and/or a memory sidecar (<project>-memory.db); both collapse
+ * into ONE entry keyed by the canonical (scope_project) name. */
 static char *handle_list_projects(cbm_mcp_server_t *srv, const char *args) {
     (void)srv;
     (void)args;
@@ -1208,7 +1329,7 @@ static char *handle_list_projects(cbm_mcp_server_t *srv, const char *args) {
         if (stat(full_path, &st) != 0) {
             continue;
         }
-        build_project_json_entry(doc, arr, dir_path, name, len, &st);
+        merge_project_db_entry(doc, arr, dir_path, name, len, &st);
     }
     cbm_closedir(d);
 
@@ -4202,6 +4323,35 @@ static char *memory_arg_raw_dup(yyjson_doc *doc, const char *key) {
     return yyjson_val_write(v, YYJSON_WRITE_ALLOW_INVALID_UNICODE, NULL);
 }
 
+/* Phantom-name guard (db-split fallout): an earlier buggy list_projects handed
+ * callers the sidecar filename "<project>-memory"; passed back as a project it
+ * makes cbm_memory_db_path re-append "-memory.db" → a spurious
+ * "<project>-memory-memory.db" orphan, and the SQL filter scope_project=
+ * "<project>-memory" matches nothing (the rows store the un-suffixed name).
+ * If the incoming name ends in "-memory" AND the de-suffixed base already has a
+ * real "<base>-memory.db" on disk, the name is a phantom: return the base.
+ * Otherwise return a copy of the input unchanged. A genuine project whose own
+ * name ends in "-memory" (e.g. "D-semantic-memory-mcp" — its base
+ * "D-semantic-memory-" has no "-memory.db") is left intact. Caller frees. */
+static char *normalize_phantom_project(const char *project) {
+    if (!project) {
+        return NULL;
+    }
+    const char *suf = "-memory";
+    size_t plen = strlen(project);
+    size_t slen = strlen(suf);
+    if (plen > slen && strcmp(project + plen - slen, suf) == 0) {
+        char base[CBM_SZ_1K];
+        snprintf(base, sizeof(base), "%.*s", (int)(plen - slen), project);
+        char base_mem_path[CBM_SZ_1K];
+        if (cbm_memory_db_path(base, base_mem_path, sizeof(base_mem_path)) == CBM_STORE_OK &&
+            cbm_file_exists(base_mem_path)) {
+            return heap_strdup(base);
+        }
+    }
+    return heap_strdup(project);
+}
+
 /* Resolve the per-project long-term memory store, opening <project>-memory.db
  * on demand (creating it if absent). Independent of the graph store: memory
  * tools work even for a project that has never been indexed. Caches one
@@ -4439,6 +4589,15 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         free(content);
         free(context_json);
         return cbm_mcp_text_result("project and payload are required", true);
+    }
+    /* Collapse a phantom "<project>-memory" name so writes land in the real
+     * store with the canonical scope_project (not a "-memory-memory.db" orphan). */
+    {
+        char *canon = normalize_phantom_project(project);
+        if (canon) {
+            free(project);
+            project = canon;
+        }
     }
     const char *policy_reason = NULL;
     const char *policy_decision =
@@ -4712,6 +4871,15 @@ static char *handle_memories_retrieve(cbm_mcp_server_t *srv, const char *args) {
     char *project = cbm_mcp_get_string_arg(args, "project");
     if (!project)
         return cbm_mcp_text_result("project is required", true);
+    /* Collapse a phantom "<project>-memory" name onto the real project so both
+     * the store handle and the scope_project SQL filter use the canonical name. */
+    {
+        char *canon = normalize_phantom_project(project);
+        if (canon) {
+            free(project);
+            project = canon;
+        }
+    }
     cbm_store_t *store = resolve_memory_store(srv, project);
     if (!store) {
         char *_err = build_project_list_error("project not found or not indexed");
