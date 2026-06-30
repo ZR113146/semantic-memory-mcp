@@ -4931,6 +4931,21 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     yyjson_mut_obj_add_str(doc, root, "event_id", event_id ? event_id : "");
     yyjson_mut_obj_add_str(doc, root, "item_id", item_id ? item_id : "");
     yyjson_mut_obj_add_str(doc, root, "item_status", "candidate");
+    /* P3-b anchoring dimension (HELPER, not gatekeeper): report whether this
+     * memory got a code anchor, and for high-value decision-class kinds written
+     * WITHOUT one, advise (never block) — an unanchored decision misses L1 graph
+     * scoring and anchor-boost at recall, and can't ride the ADR↔code lifecycle.
+     * Pure-memory projects legitimately have no graph, so this stays advice. */
+    yyjson_mut_obj_add_bool(doc, root, "anchored", about_code_n > 0);
+    if (about_code_n == 0 && kind &&
+        (strcmp(kind, "decision") == 0 || strcmp(kind, "constraint") == 0 ||
+         strcmp(kind, "lesson") == 0)) {
+        yyjson_mut_obj_add_str(
+            doc, root, "anchoring_advice",
+            "no about_code anchor: this decision-class memory won't get graph-derived "
+            "confidence/reusability or recall anchor-boost. If it concerns specific code, "
+            "pass about_code=[\"<qualified_name>\", ...] so it anchors to the graph.");
+    }
     yyjson_mut_obj_add_bool(doc, root, "maintained", maint.consolidated || maint.decayed);
     if (maint.consolidated) {
         yyjson_mut_obj_add_int(doc, root, "consolidated", maint.consolidate_count);
