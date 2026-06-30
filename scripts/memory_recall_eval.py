@@ -67,11 +67,19 @@ class MCPClient:
     """Minimal stdio JSON-RPC client for the MCP server binary."""
 
     def __init__(self, binary):
+        # Deterministic isolation: this eval measures PROJECT recall against its
+        # own seeded throwaway project. The global (__global__) store is shared
+        # mutable state whose contents vary run-to-run, so unioning it would make
+        # scores non-deterministic and let unrelated global memories pollute the
+        # result set. Force project-only retrieval. (Production unions global; that
+        # path is validated separately, not by this regression gate.)
+        env = {**os.environ, "CBM_MEMORY_NO_GLOBAL_UNION": "1"}
         self.proc = subprocess.Popen(
             [binary, "serve"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
+            env=env,
         )
         self._id = 0
 
@@ -138,11 +146,30 @@ def setup_project(client):
 
 
 def seed_memories(client, project):
+    # Dataset-integrity guard: every seed MUST actually be written. The write
+    # policy gate rejects e.g. a decision/constraint/lesson with no distinct
+    # summary (missing_summary / summary_equals_content). A rejected seed silently
+    # vanishes from the store, so the eval would score recall against a dataset
+    # that is missing those targets — exactly the silent breakage that masked a
+    # real regression once. Fail loudly instead: the test data must mirror the
+    # production format the gate guarantees.
+    rejected = []
     for mem in SEED_MEMORIES:
         args = {"project": project, "payload": mem.get("payload", {})}
         args.update({k: v for k, v in mem.items() if k != "payload"})
         args["project"] = project
-        client.call("events", args)
+        res = client.call("events", args)
+        decision = res.get("policy_decision") if isinstance(res, dict) else None
+        if res.get("status") == "rejected" or decision == "rejected":
+            rejected.append((mem.get("kind"), res.get("policy_reason"),
+                             (mem.get("content") or "")[:40]))
+    if rejected:
+        msg = "; ".join(f"{k}({r}): {c}" for k, r, c in rejected)
+        raise RuntimeError(
+            f"{len(rejected)} seed(s) REJECTED by write policy — the eval dataset "
+            f"is incomplete and its scores would be meaningless. Fix the seed format "
+            f"to match the production write gate (e.g. add a distinct summary). "
+            f"Rejected: {msg}")
     client.call("admin_consolidate", {"project": project})
 
 

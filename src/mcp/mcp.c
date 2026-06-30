@@ -5165,6 +5165,12 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     free_anchor_qns(about_code_qns, about_code_n);
     return result;
 }
+/* Scope-aware downweight for global (cross-project) memories in a project-scoped
+ * recall: their retrieval_score is multiplied by this before merging with the
+ * project store. <1.0 so project-specific hits win the limited top-K; >0 so a
+ * strongly-relevant global memory can still surface. Tunable. */
+#define MEMORY_GLOBAL_SCOPE_WEIGHT 0.5
+
 /* qsort comparator: order memory item pointers by retrieval_score descending,
  * used to merge project-store and global-store result sets into one ranked list. */
 static int memory_item_ptr_score_desc(const void *a, const void *b) {
@@ -5241,13 +5247,27 @@ static char *handle_memories_retrieve(cbm_mcp_server_t *srv, const char *args) {
      * protects against mistyped project names. */
     cbm_memory_result_t gout = {0};
     bool have_global = false;
-    cbm_store_t *gstore = resolve_global_memory_store(srv, false);
+    /* Test/isolation switch: CBM_MEMORY_NO_GLOBAL_UNION=1 skips the global union
+     * so a project-scoped recall measures ONLY the project store. The recall eval
+     * sets this to stay deterministic (its baseline predates the global store);
+     * production leaves it unset so global memories surface everywhere. */
+    char no_union[8];
+    cbm_safe_getenv("CBM_MEMORY_NO_GLOBAL_UNION", no_union, sizeof(no_union), NULL);
+    cbm_store_t *gstore = (no_union[0] == '1') ? NULL : resolve_global_memory_store(srv, false);
     if (gstore) {
         (void)cbm_store_memory_maintain_if_due(gstore, CBM_GLOBAL_MEMORY_PROJECT, NULL);
         cbm_memory_query_t gquery = query;
         gquery.project = NULL; /* global rows carry scope_project=NULL */
         if (cbm_store_memory_retrieve(gstore, &gquery, &gout) == CBM_STORE_OK) {
             have_global = true;
+            /* Scope-aware downweight (B): global memories are cross-project,
+             * project-agnostic public info, AND are already injected every turn
+             * by the recall hook. So in a PROJECT-scoped query they must not
+             * compete head-to-head for the limited top-K — multiply their score
+             * by MEMORY_GLOBAL_SCOPE_WEIGHT so a project-specific hit wins, while
+             * a genuinely dominant global hit can still surface. */
+            for (int i = 0; i < gout.count; i++)
+                gout.items[i].retrieval_score *= MEMORY_GLOBAL_SCOPE_WEIGHT;
             if (gout.count > 0) {
                 const char **gids = calloc((size_t)gout.count, sizeof(char *));
                 if (gids) {

@@ -20,25 +20,25 @@ re-anchor, but only after manually confirming the new numbers are correct.
 SEED_MEMORIES = [
     # Chinese — preferences / decisions / constraints
     {"kind": "preference", "content": "用户偏好用 pnpm 而非 npm，所有新项目默认使用 pnpm 作为包管理器",
-     "importance": 0.9, "reusability": 0.9, "payload": {"tool": "pnpm"}},
+     "summary": "用户用哪个包管理器", "importance": 0.9, "reusability": 0.9, "payload": {"tool": "pnpm"}},
     {"kind": "decision", "content": "项目数据统一存储在 SQLite，知识图谱和长期记忆都走同一个库",
-     "importance": 0.8, "payload": {"storage": "sqlite"}},
+     "summary": "项目数据存在什么数据库", "importance": 0.8, "payload": {"storage": "sqlite"}},
     {"kind": "constraint", "content": "构建产物必须是单一静态二进制，不允许引入运行时外部依赖",
-     "importance": 0.8, "payload": {"rule": "static-binary"}},
+     "summary": "构建产物的形态约束", "importance": 0.8, "payload": {"rule": "static-binary"}},
     {"kind": "decision", "content": "认证服务采用 JWT 令牌，使用 RS256 算法对所有接口签名",
-     "importance": 0.8, "payload": {"auth": "jwt-rs256"}},
+     "summary": "认证用什么令牌和签名算法", "importance": 0.8, "payload": {"auth": "jwt-rs256"}},
     {"kind": "lesson", "content": "中文检索失效的根因是分词器把整段中文当成一个词，需要切成字符二元组",
-     "importance": 0.7, "payload": {"topic": "tokenizer"}},
+     "summary": "中文检索为什么失效", "importance": 0.7, "payload": {"topic": "tokenizer"}},
     # English — preferences / decisions
     {"kind": "preference", "content": "Prefer ripgrep over grep for code search across the repository",
-     "importance": 0.7, "payload": {"tool": "ripgrep"}},
+     "summary": "preferred code search tool", "importance": 0.7, "payload": {"tool": "ripgrep"}},
     {"kind": "decision", "content": "The HTTP server binds to localhost only and requires no authentication in dev mode",
-     "importance": 0.6, "payload": {"net": "localhost"}},
+     "summary": "how the dev HTTP server is exposed", "importance": 0.6, "payload": {"net": "localhost"}},
     {"kind": "constraint", "content": "All database writes must go through the WAL journal mode for durability",
-     "importance": 0.7, "payload": {"db": "wal"}},
+     "summary": "database write durability rule", "importance": 0.7, "payload": {"db": "wal"}},
     # A second pnpm-adjacent memory to test ranking (less specific)
     {"kind": "event", "content": "团队讨论了包管理器选型，最终倾向 pnpm 的硬链接节省磁盘",
-     "importance": 0.5, "payload": {"topic": "pkgmgr"}},
+     "summary": "团队包管理器选型讨论", "importance": 0.5, "payload": {"topic": "pkgmgr"}},
 ]
 
 # ── Query cases ────────────────────────────────────────────────────

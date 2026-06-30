@@ -3652,20 +3652,48 @@ int cbm_store_memory_retrieve(cbm_store_t *s, const cbm_memory_query_t *query,
         }
         while ((step_rc = sqlite3_step(stmt)) == SQLITE_ROW && n < cap) {
             memory_scan_item(stmt, &items[n]);
+            /* Relevance score = query-normalized token overlap, NOT a flat 1.0.
+             * memory_token_overlap returns matched_query_bigrams/total_query_bigrams
+             * (independent of doc length). Compute it against title/summary/content
+             * and take the MAX: summary is the distilled, query-like field (high
+             * signal); content is a long ADR body where a query bigram can land in
+             * an unrelated section (noise) — max lets a clean summary match win
+             * without being diluted by the long body. A flat 1.0 made an incidental
+             * single-bigram match tie a full match, letting long/global memories
+             * crowd out the real target (see recall-eval pollution finding). */
+            double ov = 0.0, ov_t = 0.0, ov_s = 0.0, ov_c = 0.0;
+            if (seg_q) {
+                if (items[n].title && items[n].title[0])
+                    (void)memory_token_overlap(seg_q, items[n].title, &ov_t);
+                if (items[n].summary && items[n].summary[0])
+                    (void)memory_token_overlap(seg_q, items[n].summary, &ov_s);
+                (void)memory_token_overlap(seg_q, items[n].content, &ov_c);
+                ov = ov_t;
+                if (ov_s > ov)
+                    ov = ov_s;
+                if (ov_c > ov)
+                    ov = ov_c;
+            }
             /* Overlap gate: with OR-join a doc sharing just one common bigram
              * (e.g. "用户") matches but is noise. Require >=30% of query tokens
-             * present for multi-token queries; single-token queries always pass. */
-            double overlap = 1.0;
-            if (qtok > 1 && seg_q) {
-                (void)memory_token_overlap(seg_q, items[n].content, &overlap);
-            }
-            if (qtok > 1 && overlap < MEMORY_FTS_MIN_OVERLAP) {
+             * present (in the best-matching field) for multi-token queries;
+             * single-token queries always pass (one token at 100% is legitimate). */
+            if (qtok > 1 && ov < MEMORY_FTS_MIN_OVERLAP) {
                 cbm_store_memory_item_free(&items[n]);
                 memset(&items[n], 0, sizeof(items[n]));
                 continue;
             }
             items[n].retrieval_source = heap_strdup("fts");
-            items[n].retrieval_score = 1.0;
+            /* Band the overlap into [0.5,1.0]: a lexical FTS hit is a CONFIRMED
+             * match and must rank above pure-vector (semantic-guess) candidates
+             * (~0.1-0.4) — comparing the raw overlap against cosine on the same
+             * scale would sink a stopword-only lexical match below a strong
+             * semantic neighbor. Within FTS hits, overlap still orders them so a
+             * full match outranks an incidental single-bigram one (the global-
+             * pollution fix). Single-token matches FTS-confirmed but with 0 literal
+             * overlap (stemming/diacritics) are treated as full (1.0). */
+            double ov_for_score = ov > 0.0 ? ov : (qtok <= 1 ? 1.0 : MEMORY_FTS_MIN_OVERLAP);
+            items[n].retrieval_score = 0.5 + 0.5 * ov_for_score;
             n++;
         }
         free(seg_q);

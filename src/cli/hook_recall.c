@@ -239,9 +239,19 @@ static char *hr_format_context(const char *envelope, bool *is_error) {
             continue;
         }
         const char *kind = hr_obj_str(m, "kind");
-        off += snprintf(text + off, (size_t)(HR_CTX_CAP - off), "\n- %s%s%s%s", label,
-                        (kind && kind[0]) ? "  [" : "", (kind && kind[0]) ? kind : "",
-                        (kind && kind[0]) ? "]" : "");
+        /* Scope marker: a memory with no scope_project is a GLOBAL (cross-project)
+         * memory — a user profile/preference or general lesson, not a fact about
+         * THIS project. Mark it so the agent weights it as general guidance vs a
+         * project-specific decision. Project-scoped memories get the kind tag alone. */
+        const char *scope_proj = hr_obj_str(m, "scope_project");
+        bool is_global = !scope_proj || !scope_proj[0];
+        if (kind && kind[0]) {
+            off += snprintf(text + off, (size_t)(HR_CTX_CAP - off), "\n- %s  [%s%s]", label, kind,
+                            is_global ? "·global" : "");
+        } else {
+            off += snprintf(text + off, (size_t)(HR_CTX_CAP - off), "\n- %s%s", label,
+                            is_global ? "  [global]" : "");
+        }
     }
 
     /* Append the standing write-side nudge (re-injected every turn). */
