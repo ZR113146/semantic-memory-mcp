@@ -837,6 +837,13 @@ struct cbm_mcp_server {
     cbm_store_t *mem_store; /* currently open memory store (or NULL) */
     char *mem_project;      /* which project mem_store is open for (heap) */
 
+    /* Global (cross-project) memory store — <cache>/__global__-memory.db. Holds
+     * scope_project=NULL memories (profile, preferences, cross-project lessons)
+     * and is union-merged with mem_store on retrieval so they show from every
+     * project. Held independently of mem_store (a project switch must not evict
+     * it) but rides the same idle clock. See CBM_GLOBAL_MEMORY_PROJECT. */
+    cbm_store_t *global_mem_store; /* open global memory store (or NULL) */
+
     char update_notice[CBM_SZ_256]; /* one-shot update notice, cleared after first injection */
     bool update_checked;            /* true after background check has been launched */
     cbm_thread_t update_tid;        /* background update check thread */
@@ -915,6 +922,9 @@ void cbm_mcp_server_free(cbm_mcp_server_t *srv) {
     if (srv->mem_store) {
         cbm_store_close(srv->mem_store);
     }
+    if (srv->global_mem_store) {
+        cbm_store_close(srv->global_mem_store);
+    }
     free(srv->current_project);
     free(srv->mem_project);
     free(srv);
@@ -951,6 +961,11 @@ void cbm_mcp_server_evict_idle(cbm_mcp_server_t *srv, int timeout_s) {
     }
     free(srv->mem_project);
     srv->mem_project = NULL;
+    /* Global memory store is server-owned and idle-evicted on the same cadence. */
+    if (srv->global_mem_store) {
+        cbm_store_close(srv->global_mem_store);
+        srv->global_mem_store = NULL;
+    }
     srv->store_last_used = 0;
 }
 
@@ -4506,6 +4521,37 @@ static cbm_store_t *resolve_memory_store(cbm_mcp_server_t *srv, const char *proj
     return srv->mem_store;
 }
 
+/* Resolve the global (cross-project) memory store: <cache>/__global__-memory.db.
+ * Held in its own srv->global_mem_store slot, independent of the per-project
+ * mem_store, so a project switch never evicts it. Union-merged with the project
+ * store on retrieval. `create` mirrors resolve_memory_store: true on the write
+ * path (create-if-absent), false on read (return NULL if the DB doesn't exist
+ * yet, rather than masking a never-written global store as an empty one).
+ * Unlike the per-project store there is no legacy-graph migration: the global
+ * store is new with the scope-split, so no merged .db ever held its rows. */
+static cbm_store_t *resolve_global_memory_store(cbm_mcp_server_t *srv, bool create) {
+    if (!srv) {
+        return NULL;
+    }
+    srv->store_last_used = time(NULL);
+
+    if (srv->global_mem_store) {
+        return srv->global_mem_store;
+    }
+
+    char mem_path[CBM_SZ_1K];
+    if (cbm_memory_db_path(CBM_GLOBAL_MEMORY_PROJECT, mem_path, sizeof(mem_path)) != CBM_STORE_OK) {
+        return NULL;
+    }
+    if (!cbm_file_exists(mem_path) && !create) {
+        return NULL;
+    }
+
+    srv->global_mem_store =
+        create ? cbm_store_open_path(mem_path) : cbm_store_open_path_query(mem_path);
+    return srv->global_mem_store;
+}
+
 static const char *memory_item_str(const char *s) {
     return s ? s : "";
 }
@@ -4655,6 +4701,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     if (!adoc)
         return cbm_mcp_text_result("invalid JSON arguments", true);
     char *project = memory_arg_string_dup(adoc, "project");
+    char *scope = memory_arg_string_dup(adoc, "scope");
     char *type = memory_arg_string_dup(adoc, "type");
     char *source = memory_arg_string_dup(adoc, "source");
     char *user = memory_arg_string_dup(adoc, "user");
@@ -4701,6 +4748,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     if (!project || !payload) {
         free(project);
         free(type);
+        free(scope);
         free(source);
         free(user);
         free(task);
@@ -4726,6 +4774,12 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
             project = canon;
         }
     }
+    /* scope routes the write: "global" lands in the cross-project store with
+     * scope_project=NULL; anything else (default) is project-scoped. `project`
+     * stays required and is still used as anchor/audit context even for global
+     * writes — it just isn't the storage key. */
+    bool is_global = scope && strcmp(scope, "global") == 0;
+
     const char *policy_reason = NULL;
     const char *policy_decision =
         memory_write_policy_decide(content ? content : payload, kind, type, &policy_reason);
@@ -4743,8 +4797,10 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     }
 
     /* Resolve the store early so we can write the audit event even for rejected writes.
-     * Write path: create-if-absent so a pure-memory project's first write builds its DB. */
-    cbm_store_t *store = resolve_memory_store(srv, project, true);
+     * Write path: create-if-absent so a pure-memory project's first write builds its DB.
+     * Global writes go to the cross-project store instead of the per-project one. */
+    cbm_store_t *store =
+        is_global ? resolve_global_memory_store(srv, true) : resolve_memory_store(srv, project, true);
 
     if (strcmp(policy_decision, "rejected") == 0) {
         /* Write a lightweight audit.rejected event so policy decisions are traceable
@@ -4779,6 +4835,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         free(json);
         free(project);
         free(type);
+        free(scope);
         free(source);
         free(user);
         free(task);
@@ -4801,6 +4858,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         free(_err);
         free(project);
         free(type);
+        free(scope);
         free(source);
         free(user);
         free(task);
@@ -4834,6 +4892,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     if (cbm_store_begin(store) != CBM_STORE_OK) {
         free(project);
         free(type);
+        free(scope);
         free(source);
         free(user);
         free(task);
@@ -4854,6 +4913,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         cbm_store_rollback(store);
         free(project);
         free(type);
+        free(scope);
         free(source);
         free(user);
         free(task);
@@ -4879,7 +4939,10 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     item.summary = summary ? summary : (content ? content : payload);
     item.content = content ? content : payload;
     item.scope_user = user;
-    item.scope_project = project;
+    /* Global memories carry no project scope (scope_project=NULL) so they read
+     * back from every project; memory_infer_entity then classifies them as
+     * global/user. Project-scoped writes keep the resolved project name. */
+    item.scope_project = is_global ? NULL : project;
     item.scope_task = task;
     item.entity_key = entity_key;
     item.predicate = predicate;
@@ -4902,6 +4965,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         free(item_id);
         free(project);
         free(type);
+        free(scope);
         free(source);
         free(user);
         free(task);
@@ -4998,6 +5062,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         free(item_id);
         free(project);
         free(type);
+        free(scope);
         free(source);
         free(user);
         free(task);
@@ -5069,6 +5134,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     free(item_id);
     free(project);
     free(type);
+    free(scope);
     free(source);
     free(user);
     free(task);

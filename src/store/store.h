@@ -309,6 +309,15 @@ bool cbm_store_check_integrity(cbm_store_t *s);
 /* Open database for a named project in the default cache dir. */
 cbm_store_t *cbm_store_open(const char *project);
 
+/* Sentinel project name for the global (cross-project) memory store. Memories
+ * with scope_project=NULL — user profile, preferences, cross-project lessons —
+ * live in <cache>/__global__-memory.db, opened in addition to the per-project
+ * store and union-merged on retrieval so they are visible from every project.
+ * Chosen so cbm_validate_project_name accepts it (alphanumerics + underscore,
+ * no leading dot) and cli_is_rebuildable_index spares it (the "-memory.db"
+ * suffix). It is NOT a real indexable project: list_projects filters it out. */
+#define CBM_GLOBAL_MEMORY_PROJECT "__global__"
+
 /* Derive the per-project memory DB path: <cache>/<project>-memory.db.
  * Memory lives in its own file so rebuilding the code graph never destroys it.
  * Returns CBM_STORE_OK and fills buf, or CBM_STORE_ERR on bad input/overflow. */
