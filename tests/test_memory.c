@@ -657,11 +657,15 @@ TEST(memory_consolidate_merges_paraphrase) {
     return 0;
 }
 
-/* Divergent values under the SAME (entity, predicate, scope) bucket must be
- * detected as a contradiction by consolidation itself (cosine<=0.30), producing
- * a contradicts edge WITHOUT any hand-injected edge. This is the signal the
- * read-time adjudicator depends on. */
-TEST(memory_consolidate_detects_contradiction) {
+/* Divergent (non-equivalent, low-cosine) values under the SAME (entity,
+ * predicate, scope) bucket must COEXIST after consolidation — NOT be merged and
+ * NOT be auto-marked contradictory. P3-c (2026-06-30) removed the old
+ * cosine<0.90 → contradicts auto-rule: a contradicts edge HIDES a memory from
+ * recall, so it must come from explicit evidence, never a cosine guess (real
+ * topic-clustered embeddings made the guess wrong — note the fixture below is
+ * actually two ALIGNED anti-spaces decisions the old rule falsely opposed).
+ * Read-time scope-aware adjudication ranks coexisting peers instead. */
+TEST(memory_consolidate_keeps_lowcosine_peers_without_contradiction) {
     cbm_store_t *s = cbm_store_open_memory();
     ASSERT(s != NULL);
     cbm_memory_item_t a = {0};
@@ -687,12 +691,14 @@ TEST(memory_consolidate_detects_contradiction) {
     int processed = -1;
     ASSERT(cbm_store_memory_consolidate(s, "test-proj", 100, &processed) == CBM_STORE_OK);
 
-    /* Not merged (low cosine) and a contradicts edge was raised by the rule path. */
+    /* Not merged (low cosine) → coexists as active, and NO contradicts edge is
+     * fabricated by the rule path (P3-c). */
     cbm_memory_item_t bout = {0};
     ASSERT(cbm_store_memory_get_item(s, b_id, &bout) == CBM_STORE_OK);
     ASSERT(strcmp(bout.status, "active") == 0); /* coexists, not archived */
     cbm_store_memory_item_free(&bout);
-    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_edge WHERE type='contradicts' AND origin='rule'") >= 1);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_edge WHERE type='contradicts' AND "
+                         "origin='rule'") == 0);
 
     free(a_id);
     free(b_id);
@@ -1590,7 +1596,7 @@ int main(void) {
     RUN(memory_consolidate);
     RUN(memory_consolidate_merge_keeps_new_event_evidence);
     RUN(memory_consolidate_merges_paraphrase);
-    RUN(memory_consolidate_detects_contradiction);
+    RUN(memory_consolidate_keeps_lowcosine_peers_without_contradiction);
     RUN(memory_mark_hits_relaxes_decay);
     RUN(memory_health);
     RUN(memory_mark_hits);

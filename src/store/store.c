@@ -4515,20 +4515,22 @@ int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit,
 
         /* Build the candidate's 768-d embedding once (mean-pooled nomic vectors),
          * reuse for all comparisons. The candidate is already SQL-filtered to the
-         * same (entity, predicate, scope) bucket. Real embeddings cluster by *topic*,
-         * so two opposing claims about the same subject score HIGH cosine, not low —
-         * "low cosine = contradiction" (which held under the old orthogonal bag-of-
-         * words vectors) no longer does. So within the bucket:
-         *   cosine >= 0.90 → merge   (same fact, same wording or near-identical paraphrase)
-         *   cosine <  0.90 AND explicit entity_key → contradicts edge
-         *                            (two competing, non-equivalent answers for the
-         *                             same deliberately-keyed slot)
-         * Contradiction is gated on an EXPLICIT entity_key (existing_entity), never an
-         * inferred one: inferred buckets are too noisy to anchor a hard conflict signal,
-         * and read-time adjudication (scope-aware) picks the winner among coexisting items. */
+         * same (entity, predicate, scope) bucket. Within the bucket:
+         *   cosine >= 0.90 → merge (same fact, same wording or near-identical paraphrase)
+         *   cosine <  0.90 → COEXIST (handled at read time by scope-aware conflict
+         *                    adjudication; NOT auto-marked as a contradiction)
+         * P3-c (2026-06-30): the old rule auto-inserted a `contradicts` edge for
+         * cosine<0.90 within an explicit-entity_key bucket. That was a GUESS, and a
+         * wrong one — real nomic embeddings cluster by topic, so two differently-
+         * worded but ALIGNED memories on the same subject score < 0.90 and were
+         * falsely marked contradictory. A contradicts edge is high-impact (it
+         * HIDES a memory from recall entirely, see memory_resolve_conflicts), so it
+         * must come from strong evidence (an explicit assertion), never a cosine
+         * heuristic. We keep the merge half (high cosine = same fact) and drop the
+         * auto-contradiction half; non-equivalent same-key items simply coexist and
+         * are ranked/adjudicated at read time. See [[memory-lifecycle-architecture]]. */
         int8_t cand_vec[MEMORY_VEC_DIM];
         memory_feature_vec(content, cand_vec);
-        bool entity_is_explicit = existing_entity && existing_entity[0];
 
         if (sqlite3_prepare_v2(s->db, dup_sql, CBM_NOT_FOUND, &dup, NULL) == SQLITE_OK) {
             bind_text(dup, 1, entity);
@@ -4558,13 +4560,8 @@ int cbm_store_memory_consolidate(cbm_store_t *s, const char *project, int limit,
                     merge_id = merge_buf;
                     break;
                 }
-                if (entity_is_explicit) {
-                    /* Same explicit (entity, predicate, scope) slot, not equivalent →
-                     * competing answers → contradiction. Mark both directions; read-time
-                     * adjudication picks the winner. */
-                    (void)memory_edge_insert(s, id, other_id, "contradicts", "rule", confidence);
-                    (void)memory_edge_insert(s, other_id, id, "contradicts", "rule", confidence);
-                }
+                /* cosine < 0.90: NOT auto-marked contradictory (P3-c). The item
+                 * coexists; read-time scope-aware adjudication ranks among peers. */
             }
             sqlite3_finalize(dup);
         }
