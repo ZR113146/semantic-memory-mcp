@@ -4948,6 +4948,28 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         }
     }
 
+    /* P4 recall=latest-link: an explicit `supersedes` retires the old ADR from
+     * the recall mainline. The merge path already archives the item it retires;
+     * the explicit-supersede path must do the same, or the superseded ADR stays
+     * active and both versions surface. Archive (not delete) the target: it
+     * leaves recall but stays on disk as history, still shielded by the purge
+     * red line. Scope-guarded; only an active/candidate target is touched.
+     * Direct UPDATE (not cbm_store_memory_update_status) because we are already
+     * inside this handler's transaction and that helper opens its own. */
+    if (supersedes && supersedes[0]) {
+        sqlite3_stmt *sup = NULL;
+        if (sqlite3_prepare_v2(cbm_store_get_db(store),
+                               "UPDATE memory_item SET status='archived', updated_at=?1 "
+                               "WHERE id=?2 AND scope_project=?3 AND status IN ('active','candidate');",
+                               -1, &sup, NULL) == SQLITE_OK) {
+            sqlite3_bind_int64(sup, 1, (int64_t)time(NULL) * 1000);
+            sqlite3_bind_text(sup, 2, supersedes, -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(sup, 3, project, -1, SQLITE_TRANSIENT);
+            (void)sqlite3_step(sup);
+            sqlite3_finalize(sup);
+        }
+    }
+
     if (cbm_store_commit(store) != CBM_STORE_OK) {
         cbm_store_rollback(store);
         free(event_id);

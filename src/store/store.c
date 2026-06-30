@@ -3834,12 +3834,19 @@ int cbm_store_memory_feedback(cbm_store_t *s, const char *id, const char *projec
               "confidence=MAX(0.0,confidence-0.05),decay=decay+0.20,updated_at=?1 "
               "WHERE id=?2 AND (?3 IS NULL OR scope_project=?3);";
     } else if (strcmp(feedback, "wrong") == 0) {
-        sql =
-            "UPDATE memory_item SET "
-            "confidence=MAX(0.0,confidence-0.20),decay=decay+1.0,status='retracted',updated_at=?1 "
-            "WHERE id=?2 AND (?3 IS NULL OR scope_project=?3);";
+        /* P4 zombie fix: importance is an independent positive term in the recall
+         * ranking (importance+confidence+reusability+...-decay), so dropping only
+         * confidence/decay leaves a falsified-but-high-importance item squatting
+         * near the top. A `wrong` verdict must also collapse importance. */
+        sql = "UPDATE memory_item SET "
+              "confidence=MAX(0.0,confidence-0.20),importance=MAX(0.0,importance-0.50),"
+              "decay=decay+1.0,status='retracted',updated_at=?1 "
+              "WHERE id=?2 AND (?3 IS NULL OR scope_project=?3);";
     } else {
-        sql = "UPDATE memory_item SET decay=MAX(decay,1.0),status='archived',updated_at=?1 "
+        /* stale: was once right, now outdated → archive and ease importance down
+         * (P4 zombie fix) so it can't keep ranking high from beyond the mainline. */
+        sql = "UPDATE memory_item SET decay=MAX(decay,1.0),importance=MAX(0.0,importance-0.20),"
+              "status='archived',updated_at=?1 "
               "WHERE id=?2 AND (?3 IS NULL OR scope_project=?3);";
     }
 

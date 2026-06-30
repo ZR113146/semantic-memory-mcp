@@ -570,6 +570,7 @@ TEST(memory_feedback_wrong_retracts_from_default_retrieval) {
     item.scope_project = "test-proj";
     item.status = "active";
     item.confidence = 0.8;
+    item.importance = 0.9; /* P4: a falsified high-importance item must lose importance */
     char *id = NULL;
     ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
     ASSERT(cbm_store_memory_feedback(s, id, "test-proj", "wrong", "contradicted by user", NULL, NULL) == CBM_STORE_OK);
@@ -584,6 +585,8 @@ TEST(memory_feedback_wrong_retracts_from_default_retrieval) {
     ASSERT(cbm_store_memory_retrieve(s, &q, &res) == CBM_STORE_OK);
     ASSERT(res.count == 1);
     ASSERT(strcmp(res.items[0].status, "retracted") == 0);
+    /* P4 zombie fix: importance collapsed (0.9 - 0.5 = 0.4), not left high. */
+    ASSERT(res.items[0].importance < 0.5);
     cbm_store_memory_result_free(&res);
     free(id);
     cbm_store_close(s);
