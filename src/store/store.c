@@ -2887,6 +2887,156 @@ static void memory_fill_result_evidence(cbm_store_t *s, cbm_memory_result_t *out
     }
 }
 
+/* ── P3-a: graph-signal scoring for confidence/reusability ─────────
+ * When a memory is written with about_code anchors, derive confidence and
+ * reusability from the code graph instead of trusting a self-reported (often
+ * all-0.5) value. Signals, all objective and queryable from the borrowed graph
+ * handle: anchor symbol EXISTS (real, not hallucinated), its in_degree (how
+ * widely it's called → how load-bearing → confidence), its out_degree +
+ * is_entry_point + #anchors (how central/architectural → reusability).
+ *
+ * These are intentionally configurable constants, not magic numbers baked into
+ * the formula: the architecture fixes the SIGNAL SOURCES, the weights get tuned
+ * against real recall data (see [[memory-lifecycle-architecture]]). */
+#define MEMORY_L1_CONF_BASE 0.5      /* confidence when an anchor exists but has no callers */
+#define MEMORY_L1_CONF_PER_INDEG 0.04 /* each inbound CALLS edge adds this to confidence */
+#define MEMORY_L1_CONF_CAP 0.95      /* never let pure graph signal claim certainty */
+#define MEMORY_L1_REUSE_BASE 0.4     /* reusability for a leaf symbol with one anchor */
+#define MEMORY_L1_REUSE_ENTRY 0.3    /* bonus when any anchor is an entry point */
+#define MEMORY_L1_REUSE_PER_OUTDEG 0.02 /* each outbound CALLS edge (breadth) adds this */
+#define MEMORY_L1_REUSE_PER_ANCHOR 0.05 /* each additional existing anchor adds this */
+#define MEMORY_L1_REUSE_CAP 1.0
+
+/* Compute in/out CALLS degree + is_entry_point for one symbol via the borrowed
+ * graph handle. Returns false if the symbol is absent (stale/hallucinated). */
+static bool memory_graph_symbol_signals(sqlite3 *graph_db, const char *project, const char *qn,
+                                         int *in_deg, int *out_deg, bool *is_entry) {
+    *in_deg = 0;
+    *out_deg = 0;
+    *is_entry = false;
+    if (!graph_db || !qn || !qn[0]) {
+        return false;
+    }
+    sqlite3_stmt *st = NULL;
+    int64_t node_id = -1;
+    const char *node_sql =
+        project ? "SELECT id, COALESCE(json_extract(properties,'$.is_entry_point'),0) "
+                  "FROM nodes WHERE project=?1 AND qualified_name=?2 LIMIT 1;"
+                : "SELECT id, COALESCE(json_extract(properties,'$.is_entry_point'),0) "
+                  "FROM nodes WHERE qualified_name=?2 LIMIT 1;";
+    if (sqlite3_prepare_v2(graph_db, node_sql, CBM_NOT_FOUND, &st, NULL) == SQLITE_OK) {
+        memory_bind_nullable(st, 1, project);
+        bind_text(st, 2, qn);
+        if (sqlite3_step(st) == SQLITE_ROW) {
+            node_id = sqlite3_column_int64(st, 0);
+            /* json_extract yields 1/true or 0/false/NULL; treat any nonzero as entry. */
+            *is_entry = sqlite3_column_int(st, 1) != 0;
+        }
+    }
+    sqlite3_finalize(st);
+    if (node_id < 0) {
+        return false; /* symbol not in graph */
+    }
+    st = NULL;
+    /* Degree counts ALL inbound/outbound edges, not just CALLS: a symbol's
+     * load-bearing-ness comes from every dependency on it (USAGE references
+     * usually dwarf direct CALLS for utility symbols), matching search_graph's
+     * in_degree. The near-constant DEFINES self-edge is uniform noise the
+     * scoring constants absorb. */
+    if (sqlite3_prepare_v2(graph_db, "SELECT COUNT(*) FROM edges WHERE target_id=?1;",
+                           CBM_NOT_FOUND, &st, NULL) == SQLITE_OK) {
+        sqlite3_bind_int64(st, 1, node_id);
+        if (sqlite3_step(st) == SQLITE_ROW) {
+            *in_deg = sqlite3_column_int(st, 0);
+        }
+    }
+    sqlite3_finalize(st);
+    st = NULL;
+    if (sqlite3_prepare_v2(graph_db, "SELECT COUNT(*) FROM edges WHERE source_id=?1;",
+                           CBM_NOT_FOUND, &st, NULL) == SQLITE_OK) {
+        sqlite3_bind_int64(st, 1, node_id);
+        if (sqlite3_step(st) == SQLITE_ROW) {
+            *out_deg = sqlite3_column_int(st, 0);
+        }
+    }
+    sqlite3_finalize(st);
+    return true;
+}
+
+/* Derive confidence/reusability signals from a memory's about_code anchors.
+ * Reads the item's about_code edges from the memory DB (s->db) and the symbol
+ * topology from the borrowed graph handle. Returns the number of anchors that
+ * resolve to a real graph symbol; 0 means "no usable graph signal" (caller then
+ * keeps the declared values — L3 fallback). Aggregates by taking the strongest
+ * signal across anchors (max in/out degree, any entry point) plus a small
+ * per-anchor breadth bonus. */
+int cbm_store_memory_score_from_anchors(cbm_store_t *s, sqlite3 *graph_db, const char *item_id,
+                                        const char *project, double *out_conf, double *out_reuse) {
+    if (out_conf) {
+        *out_conf = 0.0;
+    }
+    if (out_reuse) {
+        *out_reuse = 0.0;
+    }
+    if (!s || !s->db || !graph_db || !item_id || !item_id[0]) {
+        return 0;
+    }
+    const char *anchor_sql = "SELECT substr(dst_id, 6) AS qn FROM memory_edge "
+                             "WHERE src_id=?1 AND type='about_code' AND dst_id LIKE 'code:%';";
+    sqlite3_stmt *st = NULL;
+    if (sqlite3_prepare_v2(s->db, anchor_sql, CBM_NOT_FOUND, &st, NULL) != SQLITE_OK) {
+        return 0;
+    }
+    bind_text(st, 1, item_id);
+    int resolved = 0;
+    int max_in = 0;
+    int max_out = 0;
+    bool any_entry = false;
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        const char *qn = (const char *)sqlite3_column_text(st, 0);
+        if (!qn || !qn[0]) {
+            continue;
+        }
+        int in_deg = 0;
+        int out_deg = 0;
+        bool is_entry = false;
+        if (!memory_graph_symbol_signals(graph_db, project, qn, &in_deg, &out_deg, &is_entry)) {
+            continue; /* stale/hallucinated anchor contributes nothing */
+        }
+        resolved++;
+        if (in_deg > max_in) {
+            max_in = in_deg;
+        }
+        if (out_deg > max_out) {
+            max_out = out_deg;
+        }
+        any_entry = any_entry || is_entry;
+    }
+    sqlite3_finalize(st);
+    if (resolved == 0) {
+        return 0;
+    }
+    double conf = MEMORY_L1_CONF_BASE + (double)max_in * MEMORY_L1_CONF_PER_INDEG;
+    if (conf > MEMORY_L1_CONF_CAP) {
+        conf = MEMORY_L1_CONF_CAP;
+    }
+    double reuse = MEMORY_L1_REUSE_BASE + (double)max_out * MEMORY_L1_REUSE_PER_OUTDEG +
+                   (double)(resolved - 1) * MEMORY_L1_REUSE_PER_ANCHOR;
+    if (any_entry) {
+        reuse += MEMORY_L1_REUSE_ENTRY;
+    }
+    if (reuse > MEMORY_L1_REUSE_CAP) {
+        reuse = MEMORY_L1_REUSE_CAP;
+    }
+    if (out_conf) {
+        *out_conf = conf;
+    }
+    if (out_reuse) {
+        *out_reuse = reuse;
+    }
+    return resolved;
+}
+
 /* Retrieval boost added to a memory anchored (via an about_code edge) to the
  * code symbol the agent is currently looking at — or to a sibling symbol in the
  * same file. Same-symbol scores higher than same-file. The boost is added to

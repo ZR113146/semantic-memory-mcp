@@ -500,6 +500,12 @@ int cbm_store_memory_get_item(cbm_store_t *s, const char *id, cbm_memory_item_t 
  * out of the evidence-subgraph walk — they are a recall signal, not graph algo. */
 int cbm_store_memory_link_code(cbm_store_t *s, const char *item_id, const char *qualified_name,
                                const char *origin);
+/* P3-a: derive confidence/reusability from a memory's about_code anchors using
+ * the borrowed code-graph handle. Returns the count of anchors that resolve to a
+ * real graph symbol (0 = no usable signal → caller keeps declared values). */
+int cbm_store_memory_score_from_anchors(cbm_store_t *s, struct sqlite3 *graph_db,
+                                        const char *item_id, const char *project, double *out_conf,
+                                        double *out_reuse);
 int cbm_store_memory_retrieve(cbm_store_t *s, const cbm_memory_query_t *query,
                               cbm_memory_result_t *out);
 int cbm_store_memory_mark_hits(cbm_store_t *s, const char **ids, int count, int64_t now_ms);

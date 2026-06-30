@@ -4323,6 +4323,39 @@ static char *memory_arg_raw_dup(yyjson_doc *doc, const char *key) {
     return yyjson_val_write(v, YYJSON_WRITE_ALLOW_INVALID_UNICODE, NULL);
 }
 
+/* P3-a blend: combine a graph-derived signal with a self-declared score.
+ * Declared 0.5 is the schema default → treat as "unset" and take the signal
+ * outright (this is what kills the all-0.5 disease). A declared non-0.5 is an
+ * explicit OFFSET from the 0.5 baseline — value the writer sees that the graph
+ * can't (e.g. a low-degree symbol that is a future linchpin) — so apply it as
+ * (declared-0.5)*weight on top of the signal. Result clamped to [0,1]. */
+#define MEMORY_L1_DECLARED_OFFSET_WEIGHT 1.0
+static double memory_l1_blend(double declared, double signal) {
+    double eps = 1e-9;
+    if (declared > 0.5 - eps && declared < 0.5 + eps) {
+        return signal; /* unset → pure graph signal */
+    }
+    double blended = signal + (declared - 0.5) * MEMORY_L1_DECLARED_OFFSET_WEIGHT;
+    if (blended < 0.0) {
+        blended = 0.0;
+    }
+    if (blended > 1.0) {
+        blended = 1.0;
+    }
+    return blended;
+}
+
+/* Free the heap-copied about_code anchor list (see handle_events). */
+static void free_anchor_qns(char **qns, size_t n) {
+    if (!qns) {
+        return;
+    }
+    for (size_t i = 0; i < n; i++) {
+        free(qns[i]);
+    }
+    free(qns);
+}
+
 /* Phantom-name guard (db-split fallout): an earlier buggy list_projects handed
  * callers the sidecar filename "<project>-memory"; passed back as a project it
  * makes cbm_memory_db_path re-append "-memory.db" → a spurious
@@ -4572,6 +4605,30 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     double importance = memory_arg_positive_double(adoc, "importance", 0.5);
     double reusability = memory_arg_positive_double(adoc, "reusability", 0.5);
     double specificity = memory_arg_positive_double(adoc, "specificity", 0.5);
+    /* Extract about_code anchors BEFORE freeing adoc. (Previously this array was
+     * read from adoc AFTER yyjson_doc_free — a use-after-free that silently
+     * dropped every anchor, which is also why graph scoring had nothing to read.
+     * Copy the qualified-name strings onto the heap so they outlive the doc.) */
+    char **about_code_qns = NULL;
+    size_t about_code_n = 0;
+    {
+        yyjson_val *ac = yyjson_obj_get(yyjson_doc_get_root(adoc), "about_code");
+        if (ac && yyjson_is_arr(ac)) {
+            size_t cap = yyjson_arr_size(ac);
+            if (cap > 0) {
+                about_code_qns = calloc(cap, sizeof(char *));
+                if (about_code_qns) {
+                    size_t ai, amax;
+                    yyjson_val *av;
+                    yyjson_arr_foreach(ac, ai, amax, av) {
+                        if (yyjson_is_str(av)) {
+                            about_code_qns[about_code_n++] = heap_strdup(yyjson_get_str(av));
+                        }
+                    }
+                }
+            }
+        }
+    }
     yyjson_doc_free(adoc);
     if (!project || !payload) {
         free(project);
@@ -4588,6 +4645,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         free(payload);
         free(content);
         free(context_json);
+        free_anchor_qns(about_code_qns, about_code_n);
         return cbm_mcp_text_result("project and payload are required", true);
     }
     /* Collapse a phantom "<project>-memory" name so writes land in the real
@@ -4663,6 +4721,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         free(payload);
         free(content);
         free(context_json);
+        free_anchor_qns(about_code_qns, about_code_n);
         return result;
     }
     if (!store) {
@@ -4683,6 +4742,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         free(payload);
         free(content);
         free(context_json);
+        free_anchor_qns(about_code_qns, about_code_n);
         return _res;
     }
     cbm_memory_event_t event = {0};
@@ -4714,6 +4774,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         free(payload);
         free(content);
         free(context_json);
+        free_anchor_qns(about_code_qns, about_code_n);
         return cbm_mcp_text_result("failed to begin memory transaction", true);
     }
     if (cbm_store_memory_append_event(store, &event, &event_id) != CBM_STORE_OK) {
@@ -4732,6 +4793,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         free(payload);
         free(content);
         free(context_json);
+        free_anchor_qns(about_code_qns, about_code_n);
         return cbm_mcp_text_result("failed to append memory event", true);
     }
     char source_ids[CBM_SZ_256];
@@ -4777,6 +4839,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         free(payload);
         free(content);
         free(context_json);
+        free_anchor_qns(about_code_qns, about_code_n);
         return cbm_mcp_text_result("failed to append memory candidate", true);
     }
 
@@ -4786,13 +4849,45 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
      * Unknown qns are allowed — the symbol may be indexed later, and recall does
      * a lazy existence check anyway. */
     if (item_id) {
-        yyjson_val *ac = yyjson_obj_get(yyjson_doc_get_root(adoc), "about_code");
-        if (ac && yyjson_is_arr(ac)) {
-            size_t ai, amax;
-            yyjson_val *av;
-            yyjson_arr_foreach(ac, ai, amax, av) {
-                if (yyjson_is_str(av)) {
-                    (void)cbm_store_memory_link_code(store, item_id, yyjson_get_str(av), "user");
+        for (size_t ai = 0; ai < about_code_n; ai++) {
+            if (about_code_qns[ai]) {
+                (void)cbm_store_memory_link_code(store, item_id, about_code_qns[ai], "user");
+            }
+        }
+    }
+
+    /* P3-a: graph-signal scoring. With anchors now persisted, borrow the code
+     * graph and derive confidence/reusability from symbol topology instead of
+     * trusting self-reported (often all-0.5) values. Treats a declared 0.5 as
+     * "unset" → take the graph signal outright; a declared non-0.5 as an
+     * explicit OFFSET from the 0.5 baseline (the writer encoding value the graph
+     * can't see, e.g. a small symbol that is a future refactor linchpin) → add
+     * (declared-0.5)*weight on top of the signal. No anchors resolve or no graph
+     * (pure-memory project) → keep declared values (L3 fallback), never an error.
+     * NOTE (P4 groundwork): the confidence written here must stay a LIVE value a
+     * later falsification (memory_feedback/supersede) can pull down — it is a
+     * write-time snapshot, not a frozen constant. */
+    if (item_id) {
+        cbm_store_t *graph = resolve_store(srv, project);
+        sqlite3 *graph_db = graph ? cbm_store_get_db(graph) : NULL;
+        if (graph_db) {
+            double sig_conf = 0.0;
+            double sig_reuse = 0.0;
+            int resolved = cbm_store_memory_score_from_anchors(store, graph_db, item_id, project,
+                                                               &sig_conf, &sig_reuse);
+            if (resolved > 0) {
+                double final_conf = memory_l1_blend(confidence, sig_conf);
+                double final_reuse = memory_l1_blend(reusability, sig_reuse);
+                sqlite3_stmt *up = NULL;
+                if (sqlite3_prepare_v2(cbm_store_get_db(store),
+                                       "UPDATE memory_item SET confidence=?1,reusability=?2 "
+                                       "WHERE id=?3;",
+                                       -1, &up, NULL) == SQLITE_OK) {
+                    sqlite3_bind_double(up, 1, final_conf);
+                    sqlite3_bind_double(up, 2, final_reuse);
+                    sqlite3_bind_text(up, 3, item_id, -1, SQLITE_TRANSIENT);
+                    (void)sqlite3_step(up);
+                    sqlite3_finalize(up);
                 }
             }
         }
@@ -4816,6 +4911,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         free(payload);
         free(content);
         free(context_json);
+        free_anchor_qns(about_code_qns, about_code_n);
         return cbm_mcp_text_result("failed to commit memory transaction", true);
     }
 
@@ -4865,6 +4961,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     free(payload);
     free(content);
     free(context_json);
+    free_anchor_qns(about_code_qns, about_code_n);
     return result;
 }
 static char *handle_memories_retrieve(cbm_mcp_server_t *srv, const char *args) {
