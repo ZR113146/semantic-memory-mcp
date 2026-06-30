@@ -5151,6 +5151,18 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     free_anchor_qns(about_code_qns, about_code_n);
     return result;
 }
+/* qsort comparator: order memory item pointers by retrieval_score descending,
+ * used to merge project-store and global-store result sets into one ranked list. */
+static int memory_item_ptr_score_desc(const void *a, const void *b) {
+    const cbm_memory_item_t *ia = *(const cbm_memory_item_t *const *)a;
+    const cbm_memory_item_t *ib = *(const cbm_memory_item_t *const *)b;
+    if (ia->retrieval_score < ib->retrieval_score)
+        return 1;
+    if (ia->retrieval_score > ib->retrieval_score)
+        return -1;
+    return 0;
+}
+
 static char *handle_memories_retrieve(cbm_mcp_server_t *srv, const char *args) {
     char *project = cbm_mcp_get_string_arg(args, "project");
     if (!project)
@@ -5206,21 +5218,70 @@ static char *handle_memories_retrieve(cbm_mcp_server_t *srv, const char *args) {
             free(ids);
         }
     }
+
+    /* Union the global (cross-project) store: scope_project=NULL memories live
+     * in __global__-memory.db and must surface from every project. Query it with
+     * project=NULL (the global rows have no project scope) and merge by score.
+     * Purely additive — only runs if the global store exists; never gates or
+     * errors the project read, and the project-required guard above still
+     * protects against mistyped project names. */
+    cbm_memory_result_t gout = {0};
+    bool have_global = false;
+    cbm_store_t *gstore = resolve_global_memory_store(srv, false);
+    if (gstore) {
+        (void)cbm_store_memory_maintain_if_due(gstore, CBM_GLOBAL_MEMORY_PROJECT, NULL);
+        cbm_memory_query_t gquery = query;
+        gquery.project = NULL; /* global rows carry scope_project=NULL */
+        if (cbm_store_memory_retrieve(gstore, &gquery, &gout) == CBM_STORE_OK) {
+            have_global = true;
+            if (gout.count > 0) {
+                const char **gids = calloc((size_t)gout.count, sizeof(char *));
+                if (gids) {
+                    for (int i = 0; i < gout.count; i++)
+                        gids[i] = gout.items[i].id;
+                    (void)cbm_store_memory_mark_hits(gstore, gids, gout.count, 0);
+                    free(gids);
+                }
+            }
+        }
+    }
+
+    /* Build one ranked pointer list across both stores, sorted by retrieval
+     * score, truncated to the requested limit. Pointers borrow item storage
+     * from `out`/`gout`; both are freed after the JSON is serialized. */
+    int merged_total = out.total + (have_global ? gout.total : 0);
+    int combined = out.count + (have_global ? gout.count : 0);
+    const cbm_memory_item_t **ranked =
+        combined > 0 ? calloc((size_t)combined, sizeof(*ranked)) : NULL;
+    int nranked = 0;
+    if (ranked) {
+        for (int i = 0; i < out.count; i++)
+            ranked[nranked++] = &out.items[i];
+        if (have_global)
+            for (int i = 0; i < gout.count; i++)
+                ranked[nranked++] = &gout.items[i];
+        qsort(ranked, (size_t)nranked, sizeof(*ranked), memory_item_ptr_score_desc);
+        if (query.limit > 0 && nranked > query.limit)
+            nranked = query.limit;
+    }
+
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
     yyjson_mut_obj_add_str(doc, root, "project", project);
-    yyjson_mut_obj_add_int(doc, root, "total", out.total);
-    yyjson_mut_obj_add_int(doc, root, "count", out.count);
+    yyjson_mut_obj_add_int(doc, root, "total", merged_total);
+    yyjson_mut_obj_add_int(doc, root, "count", nranked);
     yyjson_mut_val *arr = yyjson_mut_arr(doc);
-    for (int i = 0; i < out.count; i++)
-        yyjson_mut_arr_add_val(arr, memory_item_to_json(doc, &out.items[i]));
+    for (int i = 0; i < nranked; i++)
+        yyjson_mut_arr_add_val(arr, memory_item_to_json(doc, ranked[i]));
     yyjson_mut_obj_add_val(doc, root, "memories", arr);
     char *json = yy_doc_to_str(doc);
     yyjson_mut_doc_free(doc);
     char *result = cbm_mcp_text_result(json, rc != CBM_STORE_OK);
     free(json);
+    free(ranked);
     cbm_store_memory_result_free(&out);
+    cbm_store_memory_result_free(&gout);
     free(project);
     free((char *)query.user);
     free((char *)query.task);
@@ -5235,9 +5296,16 @@ static char *handle_memories_inspect(cbm_mcp_server_t *srv, const char *args) {
     char *project = cbm_mcp_get_string_arg(args, "project");
     if (!project)
         return cbm_mcp_text_result("project is required", true);
-    cbm_store_t *store = resolve_memory_store(srv, project, false);
+    char *scope = cbm_mcp_get_string_arg(args, "scope");
+    bool is_global = scope && strcmp(scope, "global") == 0;
+    free(scope);
+    /* scope='global' inspects the cross-project store (scope_project=NULL rows);
+     * otherwise the per-project store. The SQL below binds the matching scope. */
+    cbm_store_t *store = is_global ? resolve_global_memory_store(srv, false)
+                                   : resolve_memory_store(srv, project, false);
     if (!store) {
-        char *_err = build_project_list_error("project not found or not indexed");
+        char *_err = build_project_list_error(
+            is_global ? "no global memories yet" : "project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
         free(_err);
         free(project);
@@ -5250,7 +5318,7 @@ static char *handle_memories_inspect(cbm_mcp_server_t *srv, const char *args) {
                        "m.title,m.hit_count,m.last_hit_at,m.confidence,m.version,m.updated_at";
     char sql[CBM_SZ_2K];
     snprintf(sql, sizeof(sql),
-             "SELECT %s FROM memory_item m WHERE m.scope_project=?1 "
+             "SELECT %s FROM memory_item m WHERE (?1 IS NULL OR m.scope_project=?1) "
              "AND (?2 IS NULL OR m.status=?2) "
              "ORDER BY m.updated_at DESC LIMIT ?3;",
              cols);
@@ -5261,7 +5329,13 @@ static char *handle_memories_inspect(cbm_mcp_server_t *srv, const char *args) {
         free(status);
         return cbm_mcp_text_result("inspect query failed", true);
     }
-    sqlite3_bind_text(stmt, 1, project, -1, SQLITE_TRANSIENT);
+    /* Global inspect binds NULL for the project filter (matches scope_project=NULL
+     * rows); project inspect binds the project name. */
+    if (is_global) {
+        sqlite3_bind_null(stmt, 1);
+    } else {
+        sqlite3_bind_text(stmt, 1, project, -1, SQLITE_TRANSIENT);
+    }
     if (status && status[0]) {
         sqlite3_bind_text(stmt, 2, status, -1, SQLITE_TRANSIENT);
     } else {
@@ -5327,6 +5401,14 @@ static char *handle_memory_update_status(cbm_mcp_server_t *srv, const char *args
         return _res;
     }
     int rc = cbm_store_memory_update_status(store, id, project, status);
+    /* By-id ops are scope-guarded on project, so a global memory (scope_project
+     * =NULL) is NOT_FOUND in the project store. Fall back to the global store
+     * with project=NULL, which its (?4 IS NULL OR scope_project=?4) clause accepts. */
+    if (rc == CBM_STORE_NOT_FOUND) {
+        cbm_store_t *gstore = resolve_global_memory_store(srv, false);
+        if (gstore)
+            rc = cbm_store_memory_update_status(gstore, id, NULL, status);
+    }
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
@@ -5374,6 +5456,13 @@ static char *handle_memory_feedback(cbm_mcp_server_t *srv, const char *args) {
     }
     char *event_id = NULL;
     int rc = cbm_store_memory_feedback(store, id, project, feedback, note, user, &event_id);
+    /* Global-memory fallback: by-id feedback is scope-guarded, retry the global
+     * store with project=NULL when the project store reports NOT_FOUND. */
+    if (rc == CBM_STORE_NOT_FOUND) {
+        cbm_store_t *gstore = resolve_global_memory_store(srv, false);
+        if (gstore)
+            rc = cbm_store_memory_feedback(gstore, id, NULL, feedback, note, user, &event_id);
+    }
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
@@ -5434,6 +5523,17 @@ static char *handle_memory_delete(cbm_mcp_server_t *srv, const char *args) {
         rc = cbm_store_memory_delete(store, id, project, m, user);
         ok_status = "deleted";
     }
+    /* Global-memory fallback: by-id delete/restore is scope-guarded on project,
+     * so retry the global store with project=NULL on NOT_FOUND. */
+    if (rc == CBM_STORE_NOT_FOUND) {
+        cbm_store_t *gstore = resolve_global_memory_store(srv, false);
+        if (gstore) {
+            if (strcmp(m, "restore") == 0)
+                rc = cbm_store_memory_restore(gstore, id, NULL, user);
+            else
+                rc = cbm_store_memory_delete(gstore, id, NULL, m, user);
+        }
+    }
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
@@ -5458,23 +5558,31 @@ static char *handle_admin_consolidate(cbm_mcp_server_t *srv, const char *args) {
     char *project = cbm_mcp_get_string_arg(args, "project");
     if (!project)
         return cbm_mcp_text_result("project is required", true);
-    cbm_store_t *store = resolve_memory_store(srv, project, false);
+    char *scope = cbm_mcp_get_string_arg(args, "scope");
+    bool is_global = scope && strcmp(scope, "global") == 0;
+    free(scope);
+    /* scope='global' consolidates the cross-project store; pass project=NULL so
+     * the store-level filter covers all of its (scope_project=NULL) rows. */
+    const char *scope_arg = is_global ? NULL : project;
+    cbm_store_t *store = is_global ? resolve_global_memory_store(srv, false)
+                                   : resolve_memory_store(srv, project, false);
     if (!store) {
-        char *_err = build_project_list_error("project not found or not indexed");
+        char *_err = build_project_list_error(
+            is_global ? "no global memories yet" : "project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
         free(_err);
         free(project);
         return _res;
     }
     int processed = 0;
-    int rc = cbm_store_memory_consolidate(store, project, cbm_mcp_get_int_arg(args, "limit", 100),
+    int rc = cbm_store_memory_consolidate(store, scope_arg, cbm_mcp_get_int_arg(args, "limit", 100),
                                           &processed);
     /* Rebuild the FTS index with current CJK segmentation so memories indexed
      * before bigram segmentation existed become searchable in Chinese. Pass
      * skip_reindex_fts=true to skip on large stores where the rebuild is costly. */
     int reindexed = 0;
     if (!cbm_mcp_get_bool_arg(args, "skip_reindex_fts")) {
-        (void)cbm_store_memory_reindex_fts(store, project, &reindexed);
+        (void)cbm_store_memory_reindex_fts(store, scope_arg, &reindexed);
     }
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
@@ -5495,17 +5603,23 @@ static char *handle_admin_decay(cbm_mcp_server_t *srv, const char *args) {
     char *project = cbm_mcp_get_string_arg(args, "project");
     if (!project)
         return cbm_mcp_text_result("project is required", true);
-    cbm_store_t *store = resolve_memory_store(srv, project, false);
+    char *scope = cbm_mcp_get_string_arg(args, "scope");
+    bool is_global = scope && strcmp(scope, "global") == 0;
+    free(scope);
+    const char *scope_arg = is_global ? NULL : project;
+    cbm_store_t *store = is_global ? resolve_global_memory_store(srv, false)
+                                   : resolve_memory_store(srv, project, false);
     if (!store) {
-        char *_err = build_project_list_error("project not found or not indexed");
+        char *_err = build_project_list_error(
+            is_global ? "no global memories yet" : "project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
         free(_err);
         free(project);
         return _res;
     }
     int processed = 0;
-    int rc =
-        cbm_store_memory_decay(store, project, cbm_mcp_get_int_arg(args, "limit", 100), &processed);
+    int rc = cbm_store_memory_decay(store, scope_arg, cbm_mcp_get_int_arg(args, "limit", 100),
+                                    &processed);
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
@@ -5523,16 +5637,22 @@ static char *handle_memory_health(cbm_mcp_server_t *srv, const char *args) {
     char *project = cbm_mcp_get_string_arg(args, "project");
     if (!project)
         return cbm_mcp_text_result("project is required", true);
-    cbm_store_t *store = resolve_memory_store(srv, project, false);
+    char *scope = cbm_mcp_get_string_arg(args, "scope");
+    bool is_global = scope && strcmp(scope, "global") == 0;
+    free(scope);
+    const char *scope_arg = is_global ? NULL : project;
+    cbm_store_t *store = is_global ? resolve_global_memory_store(srv, false)
+                                   : resolve_memory_store(srv, project, false);
     if (!store) {
-        char *_err = build_project_list_error("project not found or not indexed");
+        char *_err = build_project_list_error(
+            is_global ? "no global memories yet" : "project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
         free(_err);
         free(project);
         return _res;
     }
     cbm_memory_health_t h = {0};
-    int rc = cbm_store_memory_health(store, project, &h);
+    int rc = cbm_store_memory_health(store, scope_arg, &h);
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
