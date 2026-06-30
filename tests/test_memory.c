@@ -1317,6 +1317,44 @@ TEST(memory_purge_expired_respects_grace) {
     return 0;
 }
 
+/* P4 red line: a code-anchored decision ADR is NEVER physically purged, even
+ * when soft-deleted past the grace window — it stays as supersede-chain head.
+ * An unanchored note in the same sweep purges normally. */
+TEST(memory_purge_spares_anchored_decision_adr) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_memory_item_t adr = {0}, note = {0};
+    adr.kind = "decision"; adr.content = "anchored decision that must survive purge";
+    adr.scope_project = "test-proj"; adr.status = "candidate";
+    note.kind = "fact"; note.content = "unanchored note that should purge normally";
+    note.scope_project = "test-proj"; note.status = "candidate";
+    char *id_adr = NULL, *id_note = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &adr, &id_adr) == CBM_STORE_OK);
+    ASSERT(cbm_store_memory_append_candidate(s, &note, &id_note) == CBM_STORE_OK);
+    /* Anchor the decision to a code symbol (memory_edge only; no graph needed). */
+    ASSERT(cbm_store_memory_link_code(s, id_adr, "proj.mod.func", "user") == CBM_STORE_OK);
+    /* Soft delete both and backdate past any grace. */
+    ASSERT(cbm_store_memory_delete(s, id_adr, "test-proj", "soft", NULL) == CBM_STORE_OK);
+    ASSERT(cbm_store_memory_delete(s, id_note, "test-proj", "soft", NULL) == CBM_STORE_OK);
+    sqlite3_stmt *st = NULL;
+    ASSERT(sqlite3_prepare_v2(cbm_store_get_db(s),
+        "UPDATE memory_item SET deleted_at=1000 WHERE id IN (?1,?2);", -1, &st, NULL) == SQLITE_OK);
+    sqlite3_bind_text(st, 1, id_adr, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 2, id_note, -1, SQLITE_TRANSIENT);
+    ASSERT(sqlite3_step(st) == SQLITE_DONE);
+    sqlite3_finalize(st);
+    int purged = 0;
+    int64_t grace = 24LL * 60 * 60 * 1000;
+    ASSERT(cbm_store_memory_purge_expired(s, "test-proj", grace, &purged) == CBM_STORE_OK);
+    /* Only the unanchored note is purged; the anchored decision survives. */
+    ASSERT(purged == 1);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_item WHERE kind='decision'") == 1);
+    ASSERT(scalar_int(s, "SELECT COUNT(*) FROM memory_item WHERE kind='fact'") == 0);
+    free(id_adr); free(id_note);
+    cbm_store_close(s);
+    return 0;
+}
+
 TEST(memory_purge_mode_deletes_source_events) {
     cbm_store_t *s = cbm_store_open_memory();
     ASSERT(s != NULL);
@@ -1623,6 +1661,7 @@ int main(void) {
     RUN(memory_soft_delete_hides_from_retrieve);
     RUN(memory_restore_undeletes);
     RUN(memory_purge_expired_respects_grace);
+    RUN(memory_purge_spares_anchored_decision_adr);
     RUN(memory_purge_mode_deletes_source_events);
     RUN(memory_hard_delete_keeps_source_events);
     RUN(memory_delete_scope_guard);

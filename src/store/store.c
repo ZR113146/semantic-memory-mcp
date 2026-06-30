@@ -4180,14 +4180,24 @@ int cbm_store_memory_purge_expired(cbm_store_t *s, const char *project, int64_t 
      * cutoff FIRST (finalize the read cursor), then delete in one batch txn —
      * mirrors the v3 migration's collect-then-act to avoid a cursor-vs-write
      * SQLITE_BUSY on commit. Expired soft-deletes are always full purges
-     * (source events go too): the grace window was the user's undo chance. */
+     * (source events go too): the grace window was the user's undo chance.
+     *
+     * P4 RED LINE: a code-anchored decision/constraint/lesson ADR is NEVER
+     * physically purged — even soft-deleted, even past grace. It stays as the
+     * head of a supersede chain so a future branch-revival can still read the
+     * original rejection rationale ([[memory-lifecycle-architecture]]). Such an
+     * item simply remains soft-deleted (hidden from recall) rather than erased.
+     * Unanchored notes and non-ADR kinds purge normally. */
     char **ids = NULL;
     char **srcs = NULL;
     int count = 0, cap = 0;
     sqlite3_stmt *sel = NULL;
-    const char *sel_sql = "SELECT id, source_event_ids FROM memory_item "
-                          "WHERE deleted_at IS NOT NULL AND deleted_at <= ?1 "
-                          "AND (?2 IS NULL OR scope_project=?2);";
+    const char *sel_sql =
+        "SELECT id, source_event_ids FROM memory_item m "
+        "WHERE deleted_at IS NOT NULL AND deleted_at <= ?1 "
+        "AND (?2 IS NULL OR scope_project=?2) "
+        "AND NOT (kind IN ('decision','constraint','lesson') AND EXISTS("
+        "  SELECT 1 FROM memory_edge e WHERE e.src_id=m.id AND e.type='about_code'));";
     if (sqlite3_prepare_v2(s->db, sel_sql, CBM_NOT_FOUND, &sel, NULL) != SQLITE_OK) {
         store_set_error_sqlite(s, "memory_purge_select");
         return CBM_STORE_ERR;
