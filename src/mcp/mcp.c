@@ -4922,7 +4922,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
      * NOTE (P4 groundwork): the confidence written here must stay a LIVE value a
      * later falsification (memory_feedback/supersede) can pull down — it is a
      * write-time snapshot, not a frozen constant. */
-    if (item_id) {
+    if (item_id && about_code_n > 0) {
         cbm_store_t *graph = resolve_store(srv, project);
         sqlite3 *graph_db = graph ? cbm_store_get_db(graph) : NULL;
         if (graph_db) {
