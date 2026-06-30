@@ -457,17 +457,27 @@ static const tool_def_t TOOLS[] = {
      "\"content\":{\"type\":\"string\",\"description\":\"Plain text, NEVER JSON-wrapped. For "
      "kind=decision use the four sections [Decision]/[Context]/[Rejected alternatives]/[Anchors]. "
      "Convert relative dates to absolute. Required for decision/lesson/constraint.\"},"
+     "\"about_code\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Code "
+     "symbols this memory is about, as fully-qualified names (e.g. "
+     "proj.src.mod.func). Anchors the memory to the graph: drives graph-derived "
+     "confidence/reusability and recall boost. Strongly recommended for decision/constraint.\"},"
+     "\"supersedes\":{\"type\":\"string\",\"description\":\"item_id of an earlier ADR this one "
+     "replaces (e.g. when a decision is reversed or a dropped branch is revived). The old memory "
+     "is kept as history; pass this instead of editing/deleting it.\"},"
      "\"entity_key\":{\"type\":\"string\",\"description\":\"kebab-case name of the code entity the "
      "decision is about (e.g. ppr-engine, resolver). Reuse the same key across decisions on the "
      "same entity so they form one timeline.\"},"
      "\"importance\":{\"type\":\"number\",\"description\":\"0.9 architecture-level decision | 0.7 "
      "useful lesson | 0.5 minor fact. Do not leave at default.\"},"
      "\"reusability\":{\"type\":\"number\",\"description\":\"How reusable across future tasks "
-     "(0-1). Tune, don't default.\"},"
+     "(0-1). When about_code is given the graph computes this; a value you pass is read as an "
+     "OFFSET from 0.5 (>0.5 = more reusable than the graph can see). Leave at 0.5 to trust the "
+     "graph.\"},"
      "\"specificity\":{\"type\":\"number\",\"description\":\"Lower = tied to one file/moment, "
      "higher = general principle (0-1).\"},"
-     "\"confidence\":{\"type\":\"number\",\"description\":\"Certainty the memory is correct "
-     "(0-1)\"},"
+     "\"confidence\":{\"type\":\"number\",\"description\":\"Certainty the memory is correct (0-1). "
+     "When about_code is given the graph computes this from symbol degree; a value you pass is "
+     "read as an OFFSET from 0.5. Leave at 0.5 to trust the graph.\"},"
      "\"predicate\":{\"type\":\"string\",\"description\":\"Relation verb, e.g. 'decides' for a "
      "decision\"},"
      "\"payload\":{},\"type\":{\"type\":\"string\"},\"source\":{\"type\":\"string\"},"
@@ -4356,6 +4366,43 @@ static void free_anchor_qns(char **qns, size_t n) {
     free(qns);
 }
 
+/* P3-d structure dimension (HELPER, advice only — never rejects, never requires
+ * exact format). For a decision-class memory, do a deliberately LOOSE check for
+ * ADR structure elements (CN or EN keywords, order/format ignored) and return a
+ * gentle nudge string, or NULL when no advice is warranted. Two cases earn a
+ * nudge: (1) substantial content with NO recognizable structure element at all;
+ * (2) has a decision element but is missing the "rejected alternatives" part —
+ * the most valuable and most-often-omitted ADR section. Short content is left
+ * alone. Returns a static string (not owned by caller). */
+static const char *memory_structure_advice(const char *kind, const char *content) {
+    if (!kind || !content) {
+        return NULL;
+    }
+    if (strcmp(kind, "decision") != 0 && strcmp(kind, "constraint") != 0) {
+        return NULL;
+    }
+    if (strlen(content) < 80) {
+        return NULL; /* too short to expect full structure */
+    }
+    bool has_decision = strstr(content, "决策") || strstr(content, "Decision") ||
+                        strstr(content, "decision") || strstr(content, "[Decision]");
+    bool has_context = strstr(content, "背景") || strstr(content, "Context") ||
+                       strstr(content, "context");
+    bool has_rejected = strstr(content, "否决") || strstr(content, "替代") ||
+                        strstr(content, "Rejected") || strstr(content, "alternative") ||
+                        strstr(content, "Alternative");
+    bool any_structure = has_decision || has_context || has_rejected;
+    if (!any_structure) {
+        return "no recognizable ADR structure: consider stating the Decision, its "
+               "Context, and the Rejected alternatives so the rationale survives.";
+    }
+    if (!has_rejected) {
+        return "missing 'Rejected alternatives': recording what you DIDN'T choose and "
+               "why is the most valuable part of an ADR for a future reader.";
+    }
+    return NULL;
+}
+
 /* Phantom-name guard (db-split fallout): an earlier buggy list_projects handed
  * callers the sidecar filename "<project>-memory"; passed back as a project it
  * makes cbm_memory_db_path re-append "-memory.db" → a spurious
@@ -4600,6 +4647,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     char *predicate = memory_arg_string_dup(adoc, "predicate");
     char *payload = memory_arg_raw_dup(adoc, "payload");
     char *content = memory_arg_string_dup(adoc, "content");
+    char *supersedes = memory_arg_string_dup(adoc, "supersedes");
     char *context_json = memory_arg_raw_dup(adoc, "context");
     double confidence = memory_arg_double(adoc, "confidence", 0.5);
     double importance = memory_arg_positive_double(adoc, "importance", 0.5);
@@ -4644,6 +4692,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         free(predicate);
         free(payload);
         free(content);
+        free(supersedes);
         free(context_json);
         free_anchor_qns(about_code_qns, about_code_n);
         return cbm_mcp_text_result("project and payload are required", true);
@@ -4720,6 +4769,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         free(predicate);
         free(payload);
         free(content);
+        free(supersedes);
         free(context_json);
         free_anchor_qns(about_code_qns, about_code_n);
         return result;
@@ -4741,6 +4791,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         free(predicate);
         free(payload);
         free(content);
+        free(supersedes);
         free(context_json);
         free_anchor_qns(about_code_qns, about_code_n);
         return _res;
@@ -4773,6 +4824,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         free(predicate);
         free(payload);
         free(content);
+        free(supersedes);
         free(context_json);
         free_anchor_qns(about_code_qns, about_code_n);
         return cbm_mcp_text_result("failed to begin memory transaction", true);
@@ -4792,6 +4844,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         free(predicate);
         free(payload);
         free(content);
+        free(supersedes);
         free(context_json);
         free_anchor_qns(about_code_qns, about_code_n);
         return cbm_mcp_text_result("failed to append memory event", true);
@@ -4815,6 +4868,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     item.specificity = specificity;
     item.status = "candidate";
     item.version = 1;
+    item.supersedes = supersedes; /* P3-d: NULL unless this ADR replaces an earlier one */
     item.source_event_ids = source_ids;
     char *item_id = NULL;
     int item_rc = cbm_store_memory_append_candidate(store, &item, &item_id);
@@ -4838,6 +4892,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         free(predicate);
         free(payload);
         free(content);
+        free(supersedes);
         free(context_json);
         free_anchor_qns(about_code_qns, about_code_n);
         return cbm_mcp_text_result("failed to append memory candidate", true);
@@ -4910,6 +4965,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         free(predicate);
         free(payload);
         free(content);
+        free(supersedes);
         free(context_json);
         free_anchor_qns(about_code_qns, about_code_n);
         return cbm_mcp_text_result("failed to commit memory transaction", true);
@@ -4946,6 +5002,11 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
             "confidence/reusability or recall anchor-boost. If it concerns specific code, "
             "pass about_code=[\"<qualified_name>\", ...] so it anchors to the graph.");
     }
+    /* P3-d structure dimension: loose ADR-structure nudge (advice only). */
+    const char *struct_advice = memory_structure_advice(kind, content);
+    if (struct_advice) {
+        yyjson_mut_obj_add_str(doc, root, "structure_advice", struct_advice);
+    }
     yyjson_mut_obj_add_bool(doc, root, "maintained", maint.consolidated || maint.decayed);
     if (maint.consolidated) {
         yyjson_mut_obj_add_int(doc, root, "consolidated", maint.consolidate_count);
@@ -4975,6 +5036,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     free(predicate);
     free(payload);
     free(content);
+    free(supersedes);
     free(context_json);
     free_anchor_qns(about_code_qns, about_code_n);
     return result;
