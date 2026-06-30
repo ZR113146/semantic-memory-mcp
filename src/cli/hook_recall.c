@@ -155,9 +155,13 @@ static const char *hr_memory_label(yyjson_val *m) {
  * SessionStart reminder, which gets buried as the transcript grows. Recording
  * stays the agent's judgment call (never automatic): this only reminds. */
 static const char HR_WRITE_GUIDANCE[] =
-    "\n[codebase-memory] If this turn yields a durable decision, constraint, or "
-    "preference worth long-term recall, call the `events` tool to persist it. "
-    "You judge what's worth keeping — skip transient or speculative details.";
+    "\n[codebase-memory] Persisting durable knowledge is part of your job here, "
+    "not an optional extra. If this turn produced a reusable decision, "
+    "constraint, preference, or lesson worth recalling later, call the `events` "
+    "tool now to record it — don't wait to be asked. Route user profile / "
+    "preferences / cross-project lessons with scope='global'; project-specific "
+    "rationale stays project-scoped. You judge what clears the bar: skip "
+    "transient, speculative, or trivially-derivable details.";
 
 /* Parse the MCP envelope returned by cbm_mcp_handle_tool and, if it is a
  * successful memories_retrieve result, format a compact additionalContext

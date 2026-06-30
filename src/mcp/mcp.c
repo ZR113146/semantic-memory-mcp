@@ -451,8 +451,13 @@ static const tool_def_t TOOLS[] = {
      "per-project). This is the path-derived name WITH its drive/path prefix (e.g. "
      "D-semantic-memory-mcp, not semantic-memory-mcp). If unsure, call list_projects "
      "first — a wrong name is rejected, never silently treated as an empty project.\"},"
+     "\"scope\":{\"type\":\"string\",\"description\":\"'project' (default) or 'global'. 'global' "
+     "stores the memory project-independently (scope_project=NULL) in a cross-project store that "
+     "is visible from every project — for user profile/preferences and cross-project lessons. "
+     "project is still required as anchor/audit context even when scope='global'.\"},"
      "\"kind\":{\"type\":\"string\",\"description\":\"Controlled vocabulary: decision | lesson | "
-     "constraint | fact | todo | reference. Use 'decision' for code-change rationale.\"},"
+     "constraint | preference | fact | todo | reference. Use 'decision' for code-change rationale, "
+     "'preference' for user/profile preferences.\"},"
      "\"summary\":{\"type\":\"string\",\"description\":\"One independent sentence stating the "
      "conclusion. MUST differ from content and read like a query someone would ask. Required for "
      "decision/lesson/constraint.\"},"
@@ -1351,6 +1356,11 @@ static char *handle_list_projects(cbm_mcp_server_t *srv, const char *args) {
         const char *name = entry->name;
         size_t len = strlen(name);
         if (!is_project_db_file(name, len)) {
+            continue;
+        }
+        /* The global memory sidecar (__global__-memory.db) is a cross-project
+         * store, not an indexable project — never list it as one. */
+        if (strcmp(name, CBM_GLOBAL_MEMORY_PROJECT MEM_DB_SUFFIX) == 0) {
             continue;
         }
         char full_path[CBM_SZ_2K];
