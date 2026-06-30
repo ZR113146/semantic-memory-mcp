@@ -2359,7 +2359,17 @@ static void memory_meta_set_i64(cbm_store_t *s, const char *key, int64_t value) 
 
 static void memory_make_id(char *buf, size_t sz, const char *prefix) {
     static unsigned long seq = 0;
-    snprintf(buf, sz, "%s-%lld-%lu", prefix ? prefix : "mem", (long long)memory_now_ms(), ++seq);
+    /* ID uniqueness must NOT depend on wall-clock precision: memory_now_ms is
+     * second-granular (time(NULL)*1000), and `seq` resets to 0 in every CLI
+     * process, so two writes in the same wall-clock second across back-to-back
+     * CLI invocations produced IDENTICAL ids → PRIMARY KEY collision →
+     * "failed to append memory event" (intermittent, depending on whether the
+     * calls straddled a second boundary). Use the high-resolution monotonic
+     * clock (cbm_now_ns, shared QPC on Windows) for the time component so even
+     * same-second / cross-process writes get distinct ids; ++seq stays as an
+     * in-process tiebreak for two ids minted within the same ns. */
+    snprintf(buf, sz, "%s-%llu-%lu", prefix ? prefix : "mem", (unsigned long long)cbm_now_ns(),
+             ++seq);
 }
 
 static const char *memory_nonempty(const char *v, const char *fallback) {
