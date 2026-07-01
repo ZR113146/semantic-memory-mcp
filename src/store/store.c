@@ -5637,7 +5637,12 @@ static int search_where_basic(const cbm_search_params_t *params, char *where, in
         *wlen = where_append(where, where_sz, *wlen, nparams, bind_buf);
         where_bind_text(binds, bind_idx, params->project);
     }
-    if (params->label) {
+    /* Ignore an empty-string label: it is non-NULL but should behave like an
+     * omitted label (no filter), matching the BM25 query path. Without the
+     * params->label[0] guard, name_pattern/qn_pattern searches that pass
+     * label="" append `n.label = ''`, which matches no node and silently
+     * returns zero results (issue #481). */
+    if (params->label && params->label[0]) {
         snprintf(bind_buf, sizeof(bind_buf), "n.label = ?%d", *bind_idx + SKIP_ONE);
         *wlen = where_append(where, where_sz, *wlen, nparams, bind_buf);
         where_bind_text(binds, bind_idx, params->label);
@@ -5736,9 +5741,9 @@ int cbm_store_search(cbm_store_t *s, const cbm_search_params_t *params, cbm_sear
     const char *select_cols = "SELECT n.id, n.project, n.label, n.name, n.qualified_name, "
                               "n.file_path, n.start_line, n.end_line, n.properties, "
                               "(SELECT COUNT(*) FROM edges e WHERE e.target_id = n.id AND "
-                              "e.type IN ('CALLS', 'USAGE')) AS in_deg, "
+                              "e.type IN ('CALLS', 'USAGE', 'INHERITS', 'IMPLEMENTS')) AS in_deg, "
                               "(SELECT COUNT(*) FROM edges e WHERE e.source_id = n.id AND "
-                              "e.type IN ('CALLS', 'USAGE')) AS out_deg ";
+                              "e.type IN ('CALLS', 'USAGE', 'INHERITS', 'IMPLEMENTS')) AS out_deg ";
 
     char where[CBM_SZ_2K] = "";
     search_bind_t binds[ST_SEARCH_MAX_BINDS];
