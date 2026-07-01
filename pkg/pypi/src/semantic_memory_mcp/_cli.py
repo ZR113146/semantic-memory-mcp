@@ -111,7 +111,7 @@ def _version() -> str:
         from importlib.metadata import version
         return version("semantic-memory-mcp")
     except Exception:
-        return "0.9.1"
+        return "0.10.2"
 
 
 def _os_name() -> str:

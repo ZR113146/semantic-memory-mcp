@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "semantic-memory-mcp"
-version = "0.9.1"
+version = "0.10.2"
 description = "Fast code intelligence engine for AI coding agents — single static binary MCP server"
 readme = "README.md"
 license = { text = "MIT" }
