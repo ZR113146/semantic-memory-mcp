@@ -19,22 +19,6 @@ void cbm_cli_set_version(const char *ver);
 /* Get the version string. */
 const char *cbm_cli_get_version(void);
 
-/* ── CLI tool arguments (flags / --args-file / --help) ────────── */
-
-/* Convert `--flag value` / `--flag=value` / bare-boolean `--flag` arguments for
- * a tool into a JSON arguments object string, using the tool's input_schema to
- * type values (string/integer/boolean) and to collect repeated flags into
- * array-typed properties. kebab-case flags map to snake_case keys
- * (--repo-path -> repo_path). A bare `--` ends flag parsing. On error returns
- * NULL and, if err_out is non-NULL, sets *err_out to a heap message the caller
- * must free. Caller frees the returned JSON string. */
-char *cbm_cli_build_args_json(const char *tool_name, int argc, char **argv, char **err_out);
-
-/* Print per-tool help (usage + the tool's flags with type/description/required)
- * derived from its input_schema, to stdout. Returns 0 if the tool is known,
- * non-zero (and prints nothing) if it is not. */
-int cbm_cli_print_tool_help(const char *tool_name);
-
 /* ── Self-update: version comparison ──────────────────────────── */
 
 /* Compare two semver strings (e.g. "0.2.1" vs "0.2.0").
@@ -60,12 +44,6 @@ const char *cbm_find_cli(const char *name, const char *home_dir);
 
 /* Copy a file from src to dst. Returns 0 on success, -1 on error. */
 int cbm_copy_file(const char *src, const char *dst);
-
-/* Copy the running binary into the canonical install target, preserving the
- * executable bit, skipping the copy when src and dst are the same file (which
- * would otherwise truncate the running binary). Returns 0 on success or skip,
- * -1 on error. Regression surface for the install --force binary-swap bug. */
-int cbm_copy_binary_to_target(const char *src, const char *dst);
 
 /* Replace a binary file: unlinks the existing file first (handles read-only),
  * then creates a new file with the given data and permissions.
@@ -109,16 +87,6 @@ int cbm_install_editor_mcp(const char *binary_path, const char *config_path);
 /* Remove MCP server entry from Cursor/Windsurf/Gemini JSON config.
  * Returns 0 on success. */
 int cbm_remove_editor_mcp(const char *config_path);
-
-/* Install MCP server entry in OpenClaw JSON config.
- * Format: { "mcp": { "servers": { "codebase-memory-mcp":
- * { "enabled": true, "command": binary_path, "args": [] } } } }
- * Preserves existing entries. Returns 0 on success. */
-int cbm_install_openclaw_mcp(const char *binary_path, const char *config_path);
-
-/* Remove MCP server entry from OpenClaw JSON config.
- * Returns 0 on success. */
-int cbm_remove_openclaw_mcp(const char *config_path);
 
 /* Install MCP server entry in VS Code JSON config.
  * Format: { "servers": { "semantic-memory-mcp": { "type": "stdio", "command": binary_path } } }
@@ -244,13 +212,6 @@ int cbm_remove_codex_recall_hook(const char *config_path);
 int cbm_upsert_gemini_session_hooks(const char *settings_path);
 int cbm_remove_gemini_session_hooks(const char *settings_path);
 
-/* Install/remove a Claude Code SubagentStart reminder hook in settings.json.
- * Subagents spawned via the Agent tool do not fire SessionStart, so this is the
- * channel that gives them the same code-discovery guidance. Non-blocking; the
- * hook injects context via JSON additionalContext. Returns 0 on success. */
-int cbm_upsert_claude_subagent_hooks(const char *settings_path);
-int cbm_remove_claude_subagent_hooks(const char *settings_path);
-
 /* ── PATH management ──────────────────────────────────────────── */
 
 /* Append an export PATH line to the given rc file.
@@ -312,7 +273,6 @@ int cbm_config_delete(cbm_config_t *cfg, const char *key);
 /* Well-known config keys */
 #define CBM_CONFIG_AUTO_INDEX "auto_index"
 #define CBM_CONFIG_AUTO_INDEX_LIMIT "auto_index_limit"
-#define CBM_CONFIG_UI_LANG "ui-lang"
 
 /* ── Subcommands (wired from main.c) ─────────────────────────── */
 

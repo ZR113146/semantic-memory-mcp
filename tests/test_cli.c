@@ -718,83 +718,6 @@ TEST(cli_gemini_mcp_install) {
     PASS();
 }
 
-TEST(cli_openclaw_mcp_install_uses_nested_servers) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-openclaw-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/.openclaw/openclaw.json", tmpdir);
-
-    int rc = cbm_install_openclaw_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    ASSERT_EQ(rc, 0);
-
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "\"mcp\"") != NULL);
-    ASSERT(strstr(data, "\"servers\"") != NULL);
-    ASSERT(strstr(data, "\"enabled\": true") != NULL);
-    ASSERT(strstr(data, "\"command\": \"/usr/local/bin/codebase-memory-mcp\"") != NULL);
-    ASSERT(strstr(data, "\"args\": []") != NULL);
-    ASSERT(strstr(data, "\"mcpServers\"") == NULL);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-TEST(cli_openclaw_mcp_preserves_existing_config) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-openclaw-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char dir[512];
-    snprintf(dir, sizeof(dir), "%s/.openclaw", tmpdir);
-    test_mkdirp(dir);
-
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/openclaw.json", dir);
-    write_test_file(configpath,
-                    "{\"theme\":\"dark\",\"mcp\":{\"servers\":{\"other\":{\"command\":\"x\"}}}}");
-
-    int rc = cbm_install_openclaw_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
-    ASSERT_EQ(rc, 0);
-
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "theme") != NULL);
-    ASSERT(strstr(data, "other") != NULL);
-    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
-    ASSERT(strstr(data, "\"mcpServers\"") == NULL);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-TEST(cli_openclaw_mcp_uninstall_uses_nested_servers) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-openclaw-mcp-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char configpath[512];
-    snprintf(configpath, sizeof(configpath), "%s/.openclaw/openclaw.json", tmpdir);
-
-    ASSERT_EQ(cbm_install_openclaw_mcp("/usr/local/bin/codebase-memory-mcp", configpath), 0);
-    ASSERT_EQ(cbm_remove_openclaw_mcp(configpath), 0);
-
-    const char *data = read_test_file(configpath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "\"mcp\"") != NULL);
-    ASSERT(strstr(data, "\"servers\"") != NULL);
-    ASSERT(strstr(data, "\"codebase-memory-mcp\"") == NULL);
-    ASSERT(strstr(data, "\"mcpServers\"") == NULL);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
 /* ═══════════════════════════════════════════════════════════════════
  *  VS Code MCP config tests
  * ═══════════════════════════════════════════════════════════════════ */
@@ -1100,82 +1023,6 @@ TEST(cli_copy_file_source_not_found) {
     ASSERT(rc != 0);
 
     rmdir(tmpdir);
-    PASS();
-}
-
-/* #472: install --force must copy the freshly-built binary to the target and
- * make it executable — previously it re-signed whatever was already there. */
-TEST(cli_install_copies_binary_to_target_issue472) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-binswap-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char src[512], dst[512];
-    snprintf(src, sizeof(src), "%s/new-build", tmpdir);
-    snprintf(dst, sizeof(dst), "%s/installed", tmpdir);
-
-    write_test_file(src, "fresh build bytes");
-
-    /* Target does not exist yet → must be created with the source content. */
-    int rc = cbm_copy_binary_to_target(src, dst);
-    ASSERT_EQ(rc, 0);
-
-    const char *data = read_test_file(dst);
-    ASSERT_STR_EQ(data, "fresh build bytes");
-
-#ifndef _WIN32
-    /* The exec bit is set via chmod, which is POSIX-only; on Windows it is not
-     * meaningful and MinGW stat() derives it from the file extension. */
-    struct stat st;
-    ASSERT_EQ(stat(dst, &st), 0);
-    ASSERT((st.st_mode & S_IXUSR) != 0); /* executable bit set */
-#endif
-
-    /* Overwrite an existing (stale) target with new content. */
-    write_test_file(dst, "STALE");
-    write_test_file(src, "upgraded build bytes");
-    rc = cbm_copy_binary_to_target(src, dst);
-    ASSERT_EQ(rc, 0);
-    data = read_test_file(dst);
-    ASSERT_STR_EQ(data, "upgraded build bytes");
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-/* #472: copying the running binary onto itself must NOT truncate it. */
-TEST(cli_install_same_file_guard_issue472) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-samefile-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char path[512];
-    snprintf(path, sizeof(path), "%s/self", tmpdir);
-    write_test_file(path, "must survive self-copy");
-
-    int rc = cbm_copy_binary_to_target(path, path);
-    ASSERT_EQ(rc, 0); /* skipped, not failed */
-
-    const char *data = read_test_file(path);
-    ASSERT_STR_EQ(data, "must survive self-copy"); /* intact, not zeroed */
-
-#ifndef _WIN32
-    /* Distinct path strings resolving to the same inode (a symlink — exactly
-     * what a non-canonical cbm_detect_self_path vs the hardcoded target can
-     * produce) must also be detected as same-file and skipped, not truncated. */
-    char link[512];
-    snprintf(link, sizeof(link), "%s/self-link", tmpdir);
-    if (symlink(path, link) == 0) {
-        rc = cbm_copy_binary_to_target(link, path);
-        ASSERT_EQ(rc, 0);
-        data = read_test_file(path);
-        ASSERT_STR_EQ(data, "must survive self-copy"); /* still intact via symlink */
-    }
-#endif
-
-    test_rmdir_r(tmpdir);
     PASS();
 }
 
@@ -1789,75 +1636,6 @@ TEST(cli_gemini_session_hook_parity) {
     ASSERT_EQ(cbm_remove_gemini_session_hooks(cfg), 0);
     d = read_test_file(cfg);
     ASSERT_NULL(strstr(d, "SessionStart"));
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-/* Claude SubagentStart reminder: subagents spawned via the Agent tool do not
- * fire SessionStart, so this hook is their code-discovery channel. Verify the
- * install shape, idempotent re-install, and clean removal. */
-TEST(cli_claude_subagent_hook) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-subhook-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char cfg[512];
-    snprintf(cfg, sizeof(cfg), "%s/settings.json", tmpdir);
-
-    ASSERT_EQ(cbm_upsert_claude_subagent_hooks(cfg), 0);
-    const char *d = read_test_file(cfg);
-    ASSERT_NOT_NULL(d);
-    ASSERT(strstr(d, "SubagentStart") != NULL);
-    ASSERT(strstr(d, "\"*\"") != NULL);                 /* match-all matcher */
-    ASSERT(strstr(d, "cbm-subagent-reminder") != NULL); /* points at the hook script */
-
-    /* Idempotent: a second upsert must not duplicate our entry. */
-    ASSERT_EQ(cbm_upsert_claude_subagent_hooks(cfg), 0);
-    d = read_test_file(cfg);
-    ASSERT_NOT_NULL(d);
-    int count = 0;
-    for (const char *p = d; (p = strstr(p, "cbm-subagent-reminder")) != NULL; p++)
-        count++;
-    ASSERT_EQ(count, 1);
-
-    ASSERT_EQ(cbm_remove_claude_subagent_hooks(cfg), 0);
-    d = read_test_file(cfg);
-    ASSERT_NULL(strstr(d, "SubagentStart"));
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-/* A user's own catch-all ("*") SubagentStart hook must survive CMM install and
- * uninstall: ownership is keyed on the command, not just the "*" matcher. */
-TEST(cli_claude_subagent_hook_preserves_user_entry) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-subuser-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char cfg[512];
-    snprintf(cfg, sizeof(cfg), "%s/settings.json", tmpdir);
-    /* Pre-existing user SubagentStart hook, also matcher "*", different command. */
-    write_test_file(
-        cfg, "{\"hooks\":{\"SubagentStart\":[{\"matcher\":\"*\","
-             "\"hooks\":[{\"type\":\"command\",\"command\":\"echo user-subagent-hook\"}]}]}}");
-
-    /* Install CMM's hook: the user's "*" entry must remain, ours added alongside. */
-    ASSERT_EQ(cbm_upsert_claude_subagent_hooks(cfg), 0);
-    const char *d = read_test_file(cfg);
-    ASSERT_NOT_NULL(d);
-    ASSERT(strstr(d, "echo user-subagent-hook") != NULL); /* user's hook untouched */
-    ASSERT(strstr(d, "cbm-subagent-reminder") != NULL);   /* ours added */
-
-    /* Remove CMM's hook: the user's entry must still be intact, ours gone. */
-    ASSERT_EQ(cbm_remove_claude_subagent_hooks(cfg), 0);
-    d = read_test_file(cfg);
-    ASSERT_NOT_NULL(d);
-    ASSERT(strstr(d, "echo user-subagent-hook") != NULL); /* user's hook preserved */
-    ASSERT_NULL(strstr(d, "cbm-subagent-reminder"));      /* only ours removed */
 
     test_rmdir_r(tmpdir);
     PASS();
@@ -2971,96 +2749,6 @@ TEST(replace_binary_creates_new_file) {
 #endif /* _WIN32 */
 
 /* ═══════════════════════════════════════════════════════════════════
- *  CLI tool-argument flags / per-tool --help (#680)
- * ═══════════════════════════════════════════════════════════════════ */
-
-/* A plain `--flag value` pair maps to a string property by schema type. */
-TEST(cli_build_args_json_string_flag_issue680) {
-    char *err = NULL;
-    char *argv[] = {"--repo-path", "/x"};
-    char *json = cbm_cli_build_args_json("index_repository", 2, argv, &err);
-    ASSERT_NOT_NULL(json);
-    ASSERT_NULL(err);
-    ASSERT(strstr(json, "\"repo_path\":\"/x\"") != NULL);
-    free(json);
-    PASS();
-}
-
-/* An integer-typed property serializes as a JSON NUMBER, not a quoted string. */
-TEST(cli_build_args_json_integer_flag_issue680) {
-    char *err = NULL;
-    char *argv[] = {"--limit", "100"};
-    char *json = cbm_cli_build_args_json("search_graph", 2, argv, &err);
-    ASSERT_NOT_NULL(json);
-    ASSERT(strstr(json, "\"limit\":100") != NULL);
-    ASSERT(strstr(json, "\"limit\":\"100\"") == NULL);
-    free(json);
-    PASS();
-}
-
-/* A bare boolean flag (no value) becomes true. */
-TEST(cli_build_args_json_bare_boolean_issue680) {
-    char *err = NULL;
-    char *argv[] = {"--exclude-entry-points"};
-    char *json = cbm_cli_build_args_json("search_graph", 1, argv, &err);
-    ASSERT_NOT_NULL(json);
-    ASSERT(strstr(json, "\"exclude_entry_points\":true") != NULL);
-    free(json);
-    PASS();
-}
-
-/* A repeated array-typed flag accumulates into a JSON array. */
-TEST(cli_build_args_json_repeated_array_issue680) {
-    char *err = NULL;
-    char *argv[] = {"--semantic-query", "send", "--semantic-query", "publish"};
-    char *json = cbm_cli_build_args_json("search_graph", 4, argv, &err);
-    ASSERT_NOT_NULL(json);
-    ASSERT(strstr(json, "\"semantic_query\":[\"send\",\"publish\"]") != NULL);
-    free(json);
-    PASS();
-}
-
-/* kebab-case flag names map to snake_case JSON keys. */
-TEST(cli_build_args_json_kebab_to_snake_issue680) {
-    char *err = NULL;
-    char *argv[] = {"--name-pattern", "Foo.*"};
-    char *json = cbm_cli_build_args_json("search_graph", 2, argv, &err);
-    ASSERT_NOT_NULL(json);
-    ASSERT(strstr(json, "\"name_pattern\":\"Foo.*\"") != NULL);
-    free(json);
-    PASS();
-}
-
-/* `--key=value` form splits on the FIRST `=`; value may contain spaces/dashes. */
-TEST(cli_build_args_json_key_equals_value_issue680) {
-    char *err = NULL;
-    char *argv[] = {"--repo-path=/a b"};
-    char *json = cbm_cli_build_args_json("index_repository", 1, argv, &err);
-    ASSERT_NOT_NULL(json);
-    ASSERT(strstr(json, "\"repo_path\":\"/a b\"") != NULL);
-    free(json);
-    PASS();
-}
-
-/* A non-`--` positional is an error: returns NULL and sets *err_out. */
-TEST(cli_build_args_json_bad_positional_errors_issue680) {
-    char *err = NULL;
-    char *argv[] = {"foo"};
-    char *json = cbm_cli_build_args_json("search_graph", 1, argv, &err);
-    ASSERT_NULL(json);
-    ASSERT_NOT_NULL(err);
-    free(err);
-    PASS();
-}
-
-/* Per-tool --help returns 0 for a known tool, -1 for an unknown one. */
-TEST(cli_print_tool_help_issue680) {
-    ASSERT_EQ(cbm_cli_print_tool_help("index_repository"), 0);
-    ASSERT_EQ(cbm_cli_print_tool_help("nope_not_a_tool"), -1);
-    PASS();
-}
-
-/* ═══════════════════════════════════════════════════════════════════
  *  Suite definition
  * ═══════════════════════════════════════════════════════════════════ */
 
@@ -3099,9 +2787,6 @@ SUITE(cli) {
     RUN_TEST(cli_editor_mcp_preserves_others);
     RUN_TEST(cli_editor_mcp_uninstall);
     RUN_TEST(cli_gemini_mcp_install);
-    RUN_TEST(cli_openclaw_mcp_install_uses_nested_servers);
-    RUN_TEST(cli_openclaw_mcp_preserves_existing_config);
-    RUN_TEST(cli_openclaw_mcp_uninstall_uses_nested_servers);
 
     /* VS Code MCP (2 tests — install_test.go) */
     RUN_TEST(cli_vscode_mcp_install);
@@ -3139,10 +2824,6 @@ SUITE(cli) {
     /* Full lifecycle (1 test — cli_test.go) */
     RUN_TEST(cli_install_and_uninstall);
 
-    /* Binary swap on install --force (#472) */
-    RUN_TEST(cli_install_copies_binary_to_target_issue472);
-    RUN_TEST(cli_install_same_file_guard_issue472);
-
     /* YAML parser (7 unit tests) */
     RUN_TEST(cli_yaml_parse_simple);
     RUN_TEST(cli_yaml_parse_nested);
@@ -3162,8 +2843,6 @@ SUITE(cli) {
     RUN_TEST(cli_codex_recall_hook);
     RUN_TEST(cli_remove_indexes_spares_memory_db);
     RUN_TEST(cli_gemini_session_hook_parity);
-    RUN_TEST(cli_claude_subagent_hook);
-    RUN_TEST(cli_claude_subagent_hook_preserves_user_entry);
     RUN_TEST(cli_detect_agents_finds_gemini);
     RUN_TEST(cli_detect_agents_finds_zed);
     RUN_TEST(cli_detect_agents_finds_antigravity);
@@ -3228,14 +2907,4 @@ SUITE(cli) {
     RUN_TEST(replace_binary_overwrites_readonly);
     RUN_TEST(replace_binary_creates_new_file);
 #endif
-
-    /* CLI tool-argument flags / per-tool --help (#680) */
-    RUN_TEST(cli_build_args_json_string_flag_issue680);
-    RUN_TEST(cli_build_args_json_integer_flag_issue680);
-    RUN_TEST(cli_build_args_json_bare_boolean_issue680);
-    RUN_TEST(cli_build_args_json_repeated_array_issue680);
-    RUN_TEST(cli_build_args_json_kebab_to_snake_issue680);
-    RUN_TEST(cli_build_args_json_key_equals_value_issue680);
-    RUN_TEST(cli_build_args_json_bad_positional_errors_issue680);
-    RUN_TEST(cli_print_tool_help_issue680);
 }

@@ -11,12 +11,7 @@
  *      RPC dispatch, transport limits, receive deadline, clean shutdown.
  */
 #include "../src/foundation/compat.h"
-#include "../src/foundation/compat_fs.h"
 #include "../src/foundation/compat_thread.h"
-#include "../src/foundation/log.h"
-#include "../src/foundation/platform.h"
-#include "../src/cli/cli.h"
-#include "../src/ui/http_server.h"
 #include "test_framework.h"
 #include "test_helpers.h"
 #include "ui/httpd.h"
@@ -25,9 +20,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifndef _WIN32
-#include <sys/stat.h>
-#endif
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -44,18 +36,6 @@ typedef int th_sock_t;
 #define th_sock_close close
 #define TH_SOCK_BAD (-1)
 #endif
-
-static char httpd_log_buf[8192];
-
-static void httpd_capture_log(const char *line) {
-    size_t used = strlen(httpd_log_buf);
-    size_t avail = sizeof(httpd_log_buf) - used;
-    if (avail <= 1)
-        return;
-    int n = snprintf(httpd_log_buf + used, avail, "%s\n", line ? line : "");
-    if (n < 0 || (size_t)n >= avail)
-        httpd_log_buf[sizeof(httpd_log_buf) - 1] = '\0';
-}
 
 /* ── Raw-socket test client ───────────────────────────────────── */
 
@@ -332,41 +312,6 @@ TEST(httpd_path_match_matrix) {
     PASS();
 }
 
-TEST(httpd_resolves_bare_binary_path_from_path) {
-#ifdef _WIN32
-    PASS();
-#else
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cbm_httpd_bin_XXXXXX");
-    char *td = cbm_mkdtemp(tmpdir);
-    ASSERT_NOT_NULL(td);
-
-    char exe[512];
-    snprintf(exe, sizeof(exe), "%s/codebase-memory-mcp", td);
-    FILE *f = fopen(exe, "w");
-    ASSERT_NOT_NULL(f);
-    fputs("#!/bin/sh\nexit 0\n", f);
-    fclose(f);
-    ASSERT_EQ(chmod(exe, 0755), 0);
-
-    char *old_path = getenv("PATH") ? strdup(getenv("PATH")) : NULL;
-    cbm_setenv("PATH", td, 1);
-
-    char resolved[1024];
-    ASSERT_TRUE(
-        cbm_http_server_resolve_binary_path("codebase-memory-mcp", resolved, sizeof(resolved)));
-    ASSERT_STR_EQ(resolved, exe);
-
-    if (old_path) {
-        cbm_setenv("PATH", old_path, 1);
-        free(old_path);
-    } else {
-        cbm_unsetenv("PATH");
-    }
-    PASS();
-#endif
-}
-
 /* ── Transport integration (listener only) ────────────────────── */
 
 TEST(httpd_listen_ephemeral_port) {
@@ -562,61 +507,6 @@ TEST(ui_server_browse_traversal_probe) {
     PASS();
 }
 
-TEST(ui_server_ui_config_detects_zh_accept_language) {
-    th_server_t ts;
-    ASSERT_EQ(th_server_start(&ts), 0);
-
-    char resp[4096];
-    int n = th_http(cbm_http_server_port(ts.srv),
-                    "GET /api/ui-config HTTP/1.1\r\n"
-                    "Accept-Language: zh-CN,zh;q=0.9,en;q=0.8\r\n"
-                    "\r\n",
-                    resp, sizeof(resp));
-    ASSERT_TRUE(n > 0);
-    ASSERT_EQ(th_status(resp), 200);
-    ASSERT_NOT_NULL(strstr(resp, "\"lang\":\"zh\""));
-
-    th_server_stop(&ts);
-    PASS();
-}
-
-TEST(ui_server_ui_config_prefers_config_lang) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cbm_httpd_cfg_XXXXXX");
-    char *td = cbm_mkdtemp(tmpdir);
-    ASSERT_NOT_NULL(td);
-
-    char *old_home = getenv("HOME") ? strdup(getenv("HOME")) : NULL;
-    cbm_setenv("HOME", td, 1);
-
-    char cache_dir[1024];
-    snprintf(cache_dir, sizeof(cache_dir), "%s", cbm_resolve_cache_dir());
-    cbm_config_t *cfg = cbm_config_open(cache_dir);
-    ASSERT_NOT_NULL(cfg);
-    ASSERT_EQ(cbm_config_set(cfg, CBM_CONFIG_UI_LANG, "zh"), 0);
-    cbm_config_close(cfg);
-
-    th_server_t ts;
-    ASSERT_EQ(th_server_start(&ts), 0);
-
-    char resp[4096];
-    int n = th_http(cbm_http_server_port(ts.srv),
-                    "GET /api/ui-config HTTP/1.1\r\n"
-                    "Accept-Language: en-US,en;q=0.9\r\n"
-                    "\r\n",
-                    resp, sizeof(resp));
-    ASSERT_TRUE(n > 0);
-    ASSERT_EQ(th_status(resp), 200);
-    ASSERT_NOT_NULL(strstr(resp, "\"lang\":\"zh\""));
-
-    th_server_stop(&ts);
-    if (old_home) {
-        cbm_setenv("HOME", old_home, 1);
-        free(old_home);
-    }
-    PASS();
-}
-
 TEST(ui_server_slow_request_hits_deadline) {
     th_server_t ts;
     ASSERT_EQ(th_server_start(&ts), 0);
@@ -642,35 +532,6 @@ TEST(ui_server_slow_request_hits_deadline) {
     ASSERT_EQ(th_status(resp2), 404);
 
     th_server_stop(&ts);
-    PASS();
-}
-
-TEST(ui_server_access_log_redacts_query) {
-    httpd_log_buf[0] = '\0';
-    CBMLogLevel prev_level = cbm_log_get_level();
-    cbm_log_set_level(CBM_LOG_DEBUG);
-    cbm_log_set_format(CBM_LOG_FORMAT_TEXT);
-    cbm_log_set_sink_ex(httpd_capture_log, CBM_LOG_SINK_REPLACE);
-
-    th_server_t ts;
-    ASSERT_EQ(th_server_start(&ts), 0);
-    char resp[4096];
-    int n = th_http(cbm_http_server_port(ts.srv),
-                    "GET /definitely/not/here?token=secret HTTP/1.1\r\n\r\n", resp, sizeof(resp));
-    ASSERT_GT(n, 0);
-    ASSERT_EQ(th_status(resp), 404);
-    th_server_stop(&ts);
-
-    cbm_log_set_sink(NULL);
-    cbm_log_set_level(prev_level);
-
-    ASSERT_NOT_NULL(strstr(httpd_log_buf, "msg=http.request"));
-    ASSERT_NOT_NULL(strstr(httpd_log_buf, "component=graph_ui"));
-    ASSERT_NOT_NULL(strstr(httpd_log_buf, "method=GET"));
-    ASSERT_NOT_NULL(strstr(httpd_log_buf, "path=/definitely/not/here"));
-    ASSERT_NOT_NULL(strstr(httpd_log_buf, "status=404"));
-    ASSERT_NULL(strstr(httpd_log_buf, "token"));
-    ASSERT_NULL(strstr(httpd_log_buf, "secret"));
     PASS();
 }
 
@@ -701,7 +562,6 @@ SUITE(httpd) {
     RUN_TEST(httpd_query_param_decode);
     RUN_TEST(httpd_query_param_edge_cases);
     RUN_TEST(httpd_path_match_matrix);
-    RUN_TEST(httpd_resolves_bare_binary_path_from_path);
 
     /* Transport */
     RUN_TEST(httpd_listen_ephemeral_port);
@@ -717,9 +577,6 @@ SUITE(httpd) {
     RUN_TEST(ui_server_encoded_slash_not_routed);
     RUN_TEST(ui_server_nul_in_target_rejected);
     RUN_TEST(ui_server_browse_traversal_probe);
-    RUN_TEST(ui_server_ui_config_detects_zh_accept_language);
-    RUN_TEST(ui_server_ui_config_prefers_config_lang);
     RUN_TEST(ui_server_slow_request_hits_deadline);
-    RUN_TEST(ui_server_access_log_redacts_query);
     RUN_TEST(ui_server_stop_joins_cleanly);
 }
