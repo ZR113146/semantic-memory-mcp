@@ -114,7 +114,7 @@ static void file_error_set(artifact_file_error_t *out, const char *err, int err_
     }
 }
 
-/* Build path: <repo>/.codebase-memory/<name> into caller-owned buf. */
+/* Build path: <repo>/.semantic-memory/<name> into caller-owned buf. */
 static bool artifact_path(char *buf, size_t bufsz, const char *repo_path, const char *name) {
     int n = snprintf(buf, bufsz, "%s/%s/%s", repo_path, CBM_ARTIFACT_DIR, name);
     return n >= 0 && (size_t)n < bufsz;
@@ -444,7 +444,7 @@ int cbm_artifact_export(const char *db_path, const char *repo_path, const char *
         return artifact_export_fail("validate_args", NULL, "missing_argument", 0);
     }
 
-    /* Ensure .codebase-memory/ directory exists */
+    /* Ensure .semantic-memory/ directory exists */
     char art_dir[CBM_SZ_4K];
     int dir_len = snprintf(art_dir, sizeof(art_dir), "%s/%s", repo_path, CBM_ARTIFACT_DIR);
     if (dir_len < 0 || (size_t)dir_len >= sizeof(art_dir)) {
