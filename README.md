@@ -3,7 +3,7 @@
 [![GitHub Release](https://img.shields.io/github/v/release/ZR113146/semantic-memory-mcp?style=flat&color=blue)](https://github.com/ZR113146/semantic-memory-mcp/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![CI](https://img.shields.io/github/actions/workflow/status/ZR113146/semantic-memory-mcp/dry-run.yml?label=CI)](https://github.com/ZR113146/semantic-memory-mcp/actions/workflows/dry-run.yml)
-[![Tests](https://img.shields.io/badge/tests-5604_passing-brightgreen)](https://github.com/ZR113146/semantic-memory-mcp)
+[![Tests](https://img.shields.io/badge/tests-5585_passing-brightgreen)](https://github.com/ZR113146/semantic-memory-mcp)
 [![Languages](https://img.shields.io/badge/languages-158-orange)](https://github.com/ZR113146/semantic-memory-mcp)
 [![Hybrid LSP](https://img.shields.io/badge/Hybrid_LSP-9_languages-blue)](#hybrid-lsp)
 [![Agents](https://img.shields.io/badge/agents-11-purple)](https://github.com/ZR113146/semantic-memory-mcp)
@@ -16,7 +16,7 @@
 
 **The fastest and most efficient code intelligence engine for AI coding agents.** Full-indexes an average repository in milliseconds, the Linux kernel (28M LOC, 75K files) in 3 minutes. Answers structural queries in under 1ms. Ships as a single static binary for macOS, Linux, and Windows — download, run `install`, done.
 
-High-quality parsing through [tree-sitter](https://tree-sitter.github.io/tree-sitter/) AST analysis across all 158 languages, enhanced with [**Hybrid LSP** semantic type resolution](#hybrid-lsp) for Python, TypeScript / JavaScript / JSX / TSX, PHP, C#, Go, C, C++, Java, Kotlin, and Rust — producing a persistent knowledge graph of functions, classes, call chains, HTTP routes, and cross-service links, plus a [**self-maintaining long-term memory**](#long-term-memory) that recalls prior decisions automatically. 21 MCP tools. Zero dependencies. Plug and play across 11 coding agents.
+High-quality parsing through [tree-sitter](https://tree-sitter.github.io/tree-sitter/) AST analysis across all 158 languages, enhanced with [**Hybrid LSP** semantic type resolution](#hybrid-lsp) for Python, TypeScript / JavaScript / JSX / TSX, PHP, C#, Go, C, C++, Java, Kotlin, and Rust — producing a persistent knowledge graph of functions, classes, call chains, HTTP routes, and cross-service links, plus a [**self-maintaining long-term memory**](#long-term-memory) that recalls prior decisions automatically. 25 MCP tools. Zero dependencies. Plug and play across 11 coding agents.
 
 > **Research** — The design and benchmarks behind this project are described in the preprint [*Codebase-Memory: Tree-Sitter-Based Knowledge Graphs for LLM Code Exploration via MCP*](https://arxiv.org/abs/2603.27277) (arXiv:2603.27277). Evaluated across 31 real-world repositories: 83% answer quality, 10× fewer tokens, 2.1× fewer tool calls vs. file-by-file exploration.
 
@@ -37,7 +37,7 @@ High-quality parsing through [tree-sitter](https://tree-sitter.github.io/tree-si
 - **11 agents, one command** — `install` auto-detects Claude Code, Codex CLI, Gemini CLI, Zed, OpenCode, Antigravity, Aider, KiloCode, VS Code, OpenClaw, and Kiro — configures MCP entries, instruction files, and pre-tool hooks for each.
 - **Built-in graph visualization** — 3D interactive UI at `localhost:9749` (optional UI binary variant).
 - **Infrastructure-as-code indexing** — Dockerfiles, Kubernetes manifests, and Kustomize overlays indexed as graph nodes with cross-references. `Resource` nodes for K8s kinds, `Module` nodes for Kustomize overlays with `IMPORTS` edges to referenced resources.
-- **21 MCP tools** — search, trace, architecture, impact analysis, Cypher queries, dead code detection, cross-service HTTP linking, self-maintaining long-term memory, and more.
+- **25 MCP tools** — search, trace, architecture, impact analysis, Cypher queries, dead code detection, cross-service HTTP linking, self-maintaining long-term memory, and more.
 
 ## Quick Start
 
@@ -146,7 +146,7 @@ Removes all agent configs, skills, hooks, and instructions. Does not remove the 
 - **Self-maintaining long-term memory**: a SQLite-backed memory subsystem that learns across sessions. Write events via `events`; retrieve with `memories_retrieve`; manage with `memories_inspect`, `memory_update_status`, `memory_feedback`, and `memory_delete` (soft / hard / purge / restore + retention sweep). Candidates are consolidated (dedup, 768-d embeddings, evidence edges), decayed, and conflict-adjudicated automatically on the hot path — no manual admin calls needed. Optional [auto-recall hook](#long-term-memory) surfaces relevant memories on every prompt. See [Long-Term Memory](#long-term-memory).
 - **Louvain community detection**: Discovers functional modules by clustering call edges
 - **Git diff impact mapping**: `detect_changes` maps uncommitted changes to affected symbols with risk classification
-- **Call graph**: Resolves function calls across files and packages (import-aware, type-inferred)
+- **Call graph**: Resolves function calls across files and packages (import-aware, type-inferred), with Hybrid LSP semantic resolution across 11 languages for dense, high-fidelity `CALLS` edges
 - **Dead code detection**: Finds functions with zero callers, excluding entry points
 - **Cypher-like queries**: `MATCH (f:Function)-[:CALLS]->(g) WHERE f.name = 'main' RETURN g.name`
 
@@ -370,7 +370,7 @@ Add to `~/.claude/.mcp.json` (global) or project `.mcp.json`:
 }
 ```
 
-Restart your agent. Verify with `/mcp` — you should see `semantic-memory-mcp` with 21 tools.
+Restart your agent. Verify with `/mcp` — you should see `semantic-memory-mcp` with 25 tools.
 
 </details>
 
@@ -596,7 +596,7 @@ Also supported (not yet benchmarked): Ada, Agda, Apex, Assembly (NASM), Astro, A
 ```
 src/
   main.c              Entry point (MCP stdio server + CLI + install/update/config)
-  mcp/                MCP server (21 tools, JSON-RPC 2.0, session detection, auto-index)
+  mcp/                MCP server (25 tools, JSON-RPC 2.0, session detection, auto-index)
   cli/                Install/uninstall/update/config (10 agents, hooks, instructions)
   store/              SQLite graph storage (nodes, edges, traversal, search, Louvain)
   pipeline/           Multi-pass indexing (structure → definitions → calls → HTTP links → config → tests)
