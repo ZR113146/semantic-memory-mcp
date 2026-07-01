@@ -11,7 +11,8 @@
 #include "pipeline/pipeline.h"
 #include "pipeline/pipeline_internal.h"
 #include "store/store.h"
-#include <yyjson/yyjson.h> // properties-JSON validity (oversized-props regression)
+#include "git/git_context.h"
+#include "foundation/dump_verify.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -272,6 +273,75 @@ TEST(pipeline_structure_nodes) {
     PASS();
 }
 
+/* Issue #516: an ADR stored via manage_adr (project_summaries) must survive a
+ * full re-index. A full re-index deletes the DB and rebuilds it from the graph
+ * buffer, which writes an empty project_summaries table; the fix captures the
+ * ADR before the delete and restores it after the rebuild. Reproduce-first:
+ * index, store an ADR, force a full re-index by adding files, assert the ADR
+ * is still present and unchanged. */
+TEST(pipeline_adr_survives_full_reindex) {
+    char tmp[256];
+    snprintf(tmp, sizeof(tmp), "/tmp/cbm_adr_XXXXXX");
+    if (!cbm_mkdtemp(tmp)) {
+        FAIL("failed to create temp dir");
+    }
+
+    char db_path[512];
+    snprintf(db_path, sizeof(db_path), "%s/test.db", tmp);
+
+    /* Initial index with a single source file. */
+    char path[512];
+    snprintf(path, sizeof(path), "%s/main.py", tmp);
+    FILE *f = fopen(path, "w");
+    ASSERT_NOT_NULL(f);
+    fprintf(f, "def foo():\n    pass\n");
+    fclose(f);
+
+    cbm_pipeline_t *p1 = cbm_pipeline_new(tmp, db_path, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(p1);
+    ASSERT_EQ(cbm_pipeline_run(p1), 0);
+    const char *project = cbm_pipeline_project_name(p1);
+    char project_copy[256];
+    snprintf(project_copy, sizeof(project_copy), "%s", project);
+    cbm_pipeline_free(p1);
+
+    /* Store an ADR. */
+    const char *adr_text = "# Decision\nWe chose X over Y.";
+    cbm_store_t *s1 = cbm_store_open_path(db_path);
+    ASSERT_NOT_NULL(s1);
+    ASSERT_EQ(cbm_store_adr_store(s1, project_copy, adr_text), CBM_STORE_OK);
+    cbm_store_close(s1);
+
+    /* Force a full re-index: add enough files to exceed the incremental
+     * threshold so the DB is deleted and rebuilt. */
+    for (int i = 0; i < 4; i++) {
+        snprintf(path, sizeof(path), "%s/extra%d.py", tmp, i);
+        f = fopen(path, "w");
+        ASSERT_NOT_NULL(f);
+        fprintf(f, "def g%d():\n    return %d\n", i, i);
+        fclose(f);
+    }
+
+    cbm_pipeline_t *p2 = cbm_pipeline_new(tmp, db_path, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(p2);
+    ASSERT_EQ(cbm_pipeline_run(p2), 0);
+    cbm_pipeline_free(p2);
+
+    /* The ADR must still be present and unchanged. */
+    cbm_store_t *s2 = cbm_store_open_path(db_path);
+    ASSERT_NOT_NULL(s2);
+    cbm_adr_t adr = {0};
+    int rc = cbm_store_adr_get(s2, project_copy, &adr);
+    ASSERT_EQ(rc, CBM_STORE_OK);
+    ASSERT_NOT_NULL(adr.content);
+    ASSERT_STR_EQ(adr.content, adr_text);
+    cbm_store_adr_free(&adr);
+    cbm_store_close(s2);
+
+    rm_rf(tmp);
+    PASS();
+}
+
 TEST(pipeline_structure_edges) {
     if (setup_test_repo() != 0) {
         FAIL("failed to create temp dir");
@@ -301,6 +371,93 @@ TEST(pipeline_structure_edges) {
 
     ASSERT_GTE(cf_count, 3); /* project->main.go, pkg->service.go, util->helper.go */
     ASSERT_GTE(cd_count, 1); /* project->pkg (pkg->util may merge on some platforms) */
+    PASS();
+}
+
+TEST(pipeline_branch_root_structure) {
+    if (setup_test_repo() != 0) {
+        FAIL("failed to create temp dir");
+    }
+
+    char db_path[512];
+    snprintf(db_path, sizeof(db_path), "%s/test_branch_root.db", g_tmpdir);
+
+    cbm_pipeline_t *p = cbm_pipeline_new(g_tmpdir, db_path, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(p);
+    int rc = cbm_pipeline_run(p);
+    ASSERT_EQ(rc, 0);
+
+    cbm_store_t *s = cbm_store_open_path(db_path);
+    ASSERT_NOT_NULL(s);
+    const char *project = cbm_pipeline_project_name(p);
+
+    char branch_qn[1024];
+    snprintf(branch_qn, sizeof(branch_qn), "%s.__branch__.working-tree", project);
+
+    cbm_node_t project_node = {0};
+    cbm_node_t branch_node = {0};
+    cbm_node_t root_file_node = {0};
+    cbm_node_t root_folder_node = {0};
+    rc = cbm_store_find_node_by_qn(s, project, project, &project_node);
+    ASSERT_EQ(rc, CBM_STORE_OK);
+    rc = cbm_store_find_node_by_qn(s, project, branch_qn, &branch_node);
+    ASSERT_EQ(rc, CBM_STORE_OK);
+    ASSERT_STR_EQ(branch_node.label, "Branch");
+    ASSERT_STR_EQ(branch_node.name, "working-tree");
+    ASSERT_NOT_NULL(strstr(branch_node.properties_json, "\"is_git\":false"));
+    char *root_folder_qn = cbm_pipeline_fqn_folder(project, "pkg");
+    char *root_file_qn = cbm_pipeline_fqn_compute(project, "main.go", "__file__");
+    ASSERT_NOT_NULL(root_folder_qn);
+    ASSERT_NOT_NULL(root_file_qn);
+    rc = cbm_store_find_node_by_qn(s, project, root_folder_qn, &root_folder_node);
+    ASSERT_EQ(rc, CBM_STORE_OK);
+    rc = cbm_store_find_node_by_qn(s, project, root_file_qn, &root_file_node);
+    ASSERT_EQ(rc, CBM_STORE_OK);
+
+    cbm_edge_t *has_branch = NULL;
+    int has_branch_count = 0;
+    rc = cbm_store_find_edges_by_source_type(s, project_node.id, "HAS_BRANCH", &has_branch,
+                                             &has_branch_count);
+    ASSERT_EQ(rc, CBM_STORE_OK);
+    ASSERT_EQ(has_branch_count, 1);
+    ASSERT_EQ(has_branch[0].target_id, branch_node.id);
+
+    cbm_edge_t *project_files = NULL;
+    int project_file_count = 0;
+    rc = cbm_store_find_edges_by_source_type(s, project_node.id, "CONTAINS_FILE", &project_files,
+                                             &project_file_count);
+    ASSERT_EQ(rc, CBM_STORE_OK);
+    ASSERT_EQ(project_file_count, 0);
+
+    cbm_edge_t *branch_files = NULL;
+    int branch_file_count = 0;
+    rc = cbm_store_find_edges_by_source_type(s, branch_node.id, "CONTAINS_FILE", &branch_files,
+                                             &branch_file_count);
+    ASSERT_EQ(rc, CBM_STORE_OK);
+    ASSERT_EQ(branch_file_count, 1);
+    ASSERT_EQ(branch_files[0].target_id, root_file_node.id);
+
+    cbm_edge_t *branch_folders = NULL;
+    int branch_folder_count = 0;
+    rc = cbm_store_find_edges_by_source_type(s, branch_node.id, "CONTAINS_FOLDER", &branch_folders,
+                                             &branch_folder_count);
+    ASSERT_EQ(rc, CBM_STORE_OK);
+    ASSERT_EQ(branch_folder_count, 1);
+    ASSERT_EQ(branch_folders[0].target_id, root_folder_node.id);
+
+    cbm_store_free_edges(has_branch, has_branch_count);
+    cbm_store_free_edges(project_files, project_file_count);
+    cbm_store_free_edges(branch_files, branch_file_count);
+    cbm_store_free_edges(branch_folders, branch_folder_count);
+    cbm_node_free_fields(&project_node);
+    cbm_node_free_fields(&branch_node);
+    cbm_node_free_fields(&root_file_node);
+    cbm_node_free_fields(&root_folder_node);
+    free(root_folder_qn);
+    free(root_file_qn);
+    cbm_store_close(s);
+    cbm_pipeline_free(p);
+    teardown_test_repo();
     PASS();
 }
 
@@ -652,6 +809,100 @@ TEST(pipeline_calls_resolution) {
 
     cbm_store_close(s);
     cbm_pipeline_free(p);
+    teardown_test_repo();
+    PASS();
+}
+
+/* True iff a CALLS edge exists from a node named src_name to a node named
+ * tgt_name. Used to assert cross-file call resolution survives a reindex. */
+static bool cross_file_call_exists(cbm_store_t *s, const char *project, const char *src_name,
+                                   const char *tgt_name) {
+    cbm_node_t *srcs = NULL;
+    cbm_node_t *tgts = NULL;
+    int sc = 0;
+    int tc = 0;
+    cbm_store_find_nodes_by_name(s, project, src_name, &srcs, &sc);
+    cbm_store_find_nodes_by_name(s, project, tgt_name, &tgts, &tc);
+    bool found = false;
+    for (int i = 0; i < sc && !found; i++) {
+        cbm_edge_t *edges = NULL;
+        int ec = 0;
+        cbm_store_find_edges_by_source_type(s, srcs[i].id, "CALLS", &edges, &ec);
+        for (int j = 0; j < ec && !found; j++) {
+            for (int k = 0; k < tc; k++) {
+                if (edges[j].target_id == tgts[k].id) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if (edges) {
+            cbm_store_free_edges(edges, ec);
+        }
+    }
+    if (srcs) {
+        cbm_store_free_nodes(srcs, sc);
+    }
+    if (tgts) {
+        cbm_store_free_nodes(tgts, tc);
+    }
+    return found;
+}
+
+/* Regression: incremental re-index of an edited file must NOT drop inbound
+ * cross-file CALLS edges whose source lives in an UNCHANGED file.
+ *
+ * Repro: Serve() (pkg/service.go) CALLS Help() (pkg/util/helper.go). Editing
+ * helper.go purges Help's node; before the fix the cascade deleted the
+ * Serve->Help edge and never regenerated it (helper.go's callers are not
+ * re-parsed), so the edge silently vanished on every edit and the incremental
+ * graph diverged from a full reindex. */
+TEST(pipeline_incremental_preserves_cross_file_calls) {
+    if (setup_test_repo() != 0) {
+        FAIL("failed to create temp dir");
+    }
+
+    char db_path[512];
+    snprintf(db_path, sizeof(db_path), "%s/test_incr_calls.db", g_tmpdir);
+
+    /* 1. Full index. */
+    cbm_pipeline_t *p1 = cbm_pipeline_new(g_tmpdir, db_path, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(p1);
+    ASSERT_EQ(cbm_pipeline_run(p1), 0);
+    const char *project = cbm_pipeline_project_name(p1);
+
+    cbm_store_t *s1 = cbm_store_open_path(db_path);
+    ASSERT_NOT_NULL(s1);
+    int calls_before = cbm_store_count_edges_by_type(s1, project, "CALLS");
+    ASSERT_GTE(calls_before, 2); /* main->Serve and Serve->Help at minimum */
+    ASSERT_TRUE(cross_file_call_exists(s1, project, "Serve", "Help"));
+    cbm_store_close(s1);
+    cbm_pipeline_free(p1);
+
+    /* 2. Edit the callee's file so the incremental classifier marks it changed
+     *    (mtime+size differ). Help's symbol + qualified name are unchanged. */
+    char helper[512];
+    snprintf(helper, sizeof(helper), "%s/pkg/util/helper.go", g_tmpdir);
+    ASSERT_EQ(th_append_file(helper, "\n// incremental regression marker\n"), 0);
+
+    /* 3. Re-run on the SAME db_path → auto-routes to incremental re-index. */
+    cbm_pipeline_t *p2 = cbm_pipeline_new(g_tmpdir, db_path, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(p2);
+    ASSERT_EQ(cbm_pipeline_run(p2), 0);
+
+    /* 4. The inbound cross-file CALLS edge must survive and the total CALLS
+     *    count must not regress. (Before the fix: Serve->Help is dropped.)
+     *    NOTE: query with p2's project name — p1 (and the `project` pointer it
+     *    owned) was freed above; p1 and p2 derive the same name from g_tmpdir. */
+    const char *project2 = cbm_pipeline_project_name(p2);
+    cbm_store_t *s2 = cbm_store_open_path(db_path);
+    ASSERT_NOT_NULL(s2);
+    int calls_after = cbm_store_count_edges_by_type(s2, project2, "CALLS");
+    ASSERT_EQ(calls_after, calls_before);
+    ASSERT_TRUE(cross_file_call_exists(s2, project2, "Serve", "Help"));
+    cbm_store_close(s2);
+    cbm_pipeline_free(p2);
+
     teardown_test_repo();
     PASS();
 }
@@ -1187,6 +1438,63 @@ TEST(usages_no_duplicate_calls) {
     PASS();
 }
 
+TEST(calls_edge_carries_call_site_line) {
+    /* Regression guard for #503: a CALLS edge must persist the source line of
+     * the call site in its JSON props as "line":N. Helper() is invoked on
+     * line 8 (1-based) of the source below. */
+    const char *go_source = "package mypkg\n"
+                            "\n"
+                            "func Helper() string {\n"
+                            "\treturn \"ok\"\n"
+                            "}\n"
+                            "\n"
+                            "func Main() {\n"
+                            "\tHelper()\n"
+                            "}\n";
+
+    if (setup_usages_repo("mypkg/main.go", go_source, "go.mod", "module testmod\ngo 1.21\n") != 0) {
+        FAIL("failed to create temp dir");
+    }
+
+    char db_path[512];
+    snprintf(db_path, sizeof(db_path), "%s/test_call_line.db", g_usages_tmpdir);
+
+    cbm_pipeline_t *p = cbm_pipeline_new(g_usages_tmpdir, db_path, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(p);
+    ASSERT_EQ(cbm_pipeline_run(p), 0);
+
+    cbm_store_t *s = cbm_store_open_path(db_path);
+    ASSERT_NOT_NULL(s);
+    const char *project = cbm_pipeline_project_name(p);
+
+    cbm_edge_t *call_edges = NULL;
+    int call_count = 0;
+    cbm_store_find_edges_by_type(s, project, "CALLS", &call_edges, &call_count);
+
+    bool found_line = false;
+    for (int i = 0; i < call_count; i++) {
+        cbm_node_t src = {0}, tgt = {0};
+        if (cbm_store_find_node_by_id(s, call_edges[i].source_id, &src) == CBM_STORE_OK &&
+            cbm_store_find_node_by_id(s, call_edges[i].target_id, &tgt) == CBM_STORE_OK) {
+            if (strcmp(src.name, "Main") == 0 && strcmp(tgt.name, "Helper") == 0) {
+                ASSERT_NOT_NULL(call_edges[i].properties_json);
+                ASSERT_TRUE(strstr(call_edges[i].properties_json, "\"line\":8}") != NULL);
+                found_line = true;
+            }
+        }
+        cbm_node_free_fields(&src);
+        cbm_node_free_fields(&tgt);
+    }
+    if (call_edges)
+        cbm_store_free_edges(call_edges, call_count);
+    ASSERT_TRUE(found_line);
+
+    cbm_store_close(s);
+    cbm_pipeline_free(p);
+    teardown_usages_repo();
+    PASS();
+}
+
 TEST(usages_kotlin_creates_edges) {
     /* Port of TestPassUsagesKotlinCreatesEdges.
      * Kotlin source with callback reference → USAGE edge. */
@@ -1521,10 +1829,10 @@ TEST(pipeline_go_type_classification) {
     ASSERT_EQ(ic, 2);
     cbm_store_free_nodes(ifaces, ic);
 
-    /* Should have 1 Class node (Config struct) */
+    /* Should have 1 Struct node (Config struct) */
     cbm_node_t *cls = NULL;
     int cc = 0;
-    cbm_store_find_nodes_by_label(s, proj, "Class", &cls, &cc);
+    cbm_store_find_nodes_by_label(s, proj, "Struct", &cls, &cc);
     ASSERT_EQ(cc, 1);
     ASSERT_STR_EQ(cls[0].name, "Config");
     cbm_store_free_nodes(cls, cc);
@@ -1568,7 +1876,7 @@ TEST(pipeline_go_grouped_types) {
 
     cbm_node_t *cls = NULL;
     int cc = 0;
-    cbm_store_find_nodes_by_label(s, proj, "Class", &cls, &cc);
+    cbm_store_find_nodes_by_label(s, proj, "Struct", &cls, &cc);
     ASSERT_EQ(cc, 2); /* Request, Response */
     cbm_store_free_nodes(cls, cc);
 
@@ -2081,7 +2389,7 @@ TEST(pipeline_docstring_go_class) {
 
     bool found_docstring = false;
     for (int i = 0; i < nc; i++) {
-        if (strcmp(nodes[i].label, "Class") == 0 && nodes[i].properties_json &&
+        if (strcmp(nodes[i].label, "Struct") == 0 && nodes[i].properties_json &&
             strstr(nodes[i].properties_json, "docstring") &&
             strstr(nodes[i].properties_json, "MyStruct is documented")) {
             found_docstring = true;
@@ -2142,6 +2450,132 @@ TEST(project_name_drive_letter_case_insensitive_issue394) {
     snprintf(buf2, sizeof(buf2), "%s", "d:\\proj\\sub");
     cbm_normalize_path_sep(buf2);
     ASSERT_STR_EQ(buf2, "D:/proj/sub");
+    PASS();
+}
+
+static const char *test_null_dev(void) {
+#ifdef _WIN32
+    return "NUL";
+#else
+    return "/dev/null";
+#endif
+}
+
+static bool git_available(void) {
+    char cmd[128];
+    snprintf(cmd, sizeof(cmd), "git --version >%s 2>&1", test_null_dev());
+    int rc = system(cmd);
+    return rc == 0;
+}
+
+static int run_cmd(const char *cmd) {
+    return system(cmd);
+}
+
+TEST(git_context_non_git_path) {
+    char *tmp = th_mktempdir("cbm_gitctx_nongit");
+    ASSERT_NOT_NULL(tmp);
+
+    cbm_git_context_t ctx = {0};
+    ASSERT_EQ(cbm_git_context_resolve(tmp, &ctx), 0);
+    ASSERT_FALSE(ctx.is_git);
+    ASSERT_TRUE(ctx.root_exists);
+
+    char *qn = cbm_git_context_branch_qn("proj", &ctx);
+    ASSERT_NOT_NULL(qn);
+    ASSERT_STR_EQ(qn, "proj.__branch__.working-tree");
+    free(qn);
+
+    char json[1024];
+    ASSERT_GT(cbm_git_context_props_json(&ctx, json, sizeof(json)), 0);
+    ASSERT_NOT_NULL(strstr(json, "\"is_git\":false"));
+    ASSERT_NOT_NULL(strstr(json, "\"root_exists\":true"));
+
+    char long_value[1200];
+    memset(long_value, 'a', sizeof(long_value) - 1);
+    long_value[sizeof(long_value) - 1] = '\0';
+    cbm_git_context_t long_ctx = {
+        .root_exists = true,
+        .canonical_root = long_value,
+    };
+    char small_json[64];
+    ASSERT_EQ(cbm_git_context_props_json(&long_ctx, small_json, sizeof(small_json)), 0);
+
+    cbm_git_context_free(&ctx);
+    th_rmtree(tmp);
+    PASS();
+}
+
+TEST(git_context_linked_worktree) {
+    if (!git_available()) {
+        FAIL("git unavailable");
+    }
+
+    char *tmp = th_mktempdir("cbm_gitctx_repo");
+    ASSERT_NOT_NULL(tmp);
+
+    char repo[512], wt[512], cmd[2048];
+    int n = snprintf(repo, sizeof(repo), "%s/repo with space", tmp);
+    ASSERT_TRUE(n > 0 && n < (int)sizeof(repo));
+    n = snprintf(wt, sizeof(wt), "%s/wt with space", tmp);
+    ASSERT_TRUE(n > 0 && n < (int)sizeof(wt));
+    ASSERT_EQ(th_mkdir_p(repo), 0);
+
+    const char *null_dev = test_null_dev();
+    snprintf(cmd, sizeof(cmd), "git -C \"%s\" init >%s 2>&1", repo, null_dev);
+    ASSERT_EQ(run_cmd(cmd), 0);
+    snprintf(cmd, sizeof(cmd), "git -C \"%s\" checkout -b main >%s 2>&1", repo, null_dev);
+    ASSERT_EQ(run_cmd(cmd), 0);
+    ASSERT_EQ(th_write_file(TH_PATH(repo, "file.txt"), "hello\n"), 0);
+    snprintf(cmd, sizeof(cmd), "git -C \"%s\" add file.txt >%s 2>&1", repo, null_dev);
+    ASSERT_EQ(run_cmd(cmd), 0);
+    snprintf(cmd, sizeof(cmd),
+             "git -C \"%s\" -c user.name=\"CBM Test\" -c user.email=\"cbm@example.invalid\" "
+             "commit -m \"initial\" >%s 2>&1",
+             repo, null_dev);
+    ASSERT_EQ(run_cmd(cmd), 0);
+    snprintf(cmd, sizeof(cmd), "git -C \"%s\" worktree add -b feature/git-context \"%s\" >%s 2>&1",
+             repo, wt, null_dev);
+    ASSERT_EQ(run_cmd(cmd), 0);
+
+    cbm_git_context_t main_ctx = {0};
+    cbm_git_context_t wt_ctx = {0};
+    ASSERT_EQ(cbm_git_context_resolve(repo, &main_ctx), 0);
+    ASSERT_EQ(cbm_git_context_resolve(wt, &wt_ctx), 0);
+
+    ASSERT_TRUE(main_ctx.is_git);
+    ASSERT_FALSE(main_ctx.is_worktree);
+    ASSERT_TRUE(wt_ctx.is_git);
+    ASSERT_TRUE(wt_ctx.is_worktree);
+    ASSERT_STR_EQ(main_ctx.canonical_root, wt_ctx.canonical_root);
+    ASSERT_NOT_NULL(wt_ctx.branch);
+    ASSERT_STR_EQ(wt_ctx.branch, "feature/git-context");
+    ASSERT_STR_EQ(wt_ctx.branch_slug, "feature-git-context");
+    ASSERT_NOT_NULL(wt_ctx.head_sha);
+
+    char *qn = cbm_git_context_branch_qn("proj", &wt_ctx);
+    ASSERT_NOT_NULL(qn);
+    ASSERT_STR_EQ(qn, "proj.__branch__.feature-git-context");
+    free(qn);
+
+    char json[2048];
+    ASSERT_GT(cbm_git_context_props_json(&wt_ctx, json, sizeof(json)), 0);
+    ASSERT_NOT_NULL(strstr(json, "\"is_git\":true"));
+    ASSERT_NOT_NULL(strstr(json, "\"is_worktree\":true"));
+    ASSERT_NOT_NULL(strstr(json, "\"branch\":\"feature/git-context\""));
+
+    cbm_git_context_free(&main_ctx);
+    cbm_git_context_free(&wt_ctx);
+
+    snprintf(cmd, sizeof(cmd), "git -C \"%s\" checkout --detach HEAD >%s 2>&1", repo, null_dev);
+    ASSERT_EQ(run_cmd(cmd), 0);
+    cbm_git_context_t detached_ctx = {0};
+    ASSERT_EQ(cbm_git_context_resolve(repo, &detached_ctx), 0);
+    ASSERT_TRUE(detached_ctx.is_detached);
+    ASSERT_STR_EQ(detached_ctx.branch_slug, "detached");
+    cbm_git_context_free(&detached_ctx);
+
+    th_rmtree(tmp);
     PASS();
 }
 
@@ -5666,6 +6100,48 @@ TEST(pipeline_complexity_transitive_loop_depth) {
     PASS();
 }
 
+/* Regression for #334: the plausibility gate compares committed (extracted)
+ * node count against persisted rows. committed_nodes must be captured BEFORE
+ * cbm_gbuf_dump_to_sqlite frees the gbuf node index — otherwise it reads 0 and
+ * the gate is silently inert. Drives the real pipeline (not a synthetic count)
+ * and asserts committed_nodes is populated and matches what was persisted. */
+TEST(pipeline_committed_counts_match_persisted) {
+    if (setup_test_repo() != 0) {
+        FAIL("failed to create temp dir");
+    }
+
+    char db_path[512];
+    snprintf(db_path, sizeof(db_path), "%s/committed_test.db", g_tmpdir);
+
+    cbm_pipeline_t *p = cbm_pipeline_new(g_tmpdir, db_path, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(p);
+    int rc = cbm_pipeline_run(p);
+    ASSERT_EQ(rc, 0);
+
+    int committed_nodes = -1;
+    int committed_edges = -1;
+    cbm_pipeline_get_committed_counts(p, &committed_nodes, &committed_edges);
+
+    cbm_store_t *s = cbm_store_open_path(db_path);
+    ASSERT_NOT_NULL(s);
+    const char *project = cbm_pipeline_project_name(p);
+    int persisted_nodes = cbm_store_count_nodes(s, project);
+    cbm_store_close(s);
+
+    /* The bug captured committed_nodes after the node index was freed → 0. */
+    ASSERT_GT(committed_nodes, 0);
+    /* A faithful full dump persists exactly what it committed. */
+    ASSERT_EQ(committed_nodes, persisted_nodes);
+    /* The gate must NOT flag a healthy full index as degraded. */
+    ASSERT_FALSE(cbm_dump_verify_is_degraded(committed_nodes, persisted_nodes,
+                                             CBM_DUMP_VERIFY_DEFAULT_RATIO,
+                                             CBM_DUMP_VERIFY_MIN_FLOOR));
+
+    cbm_pipeline_free(p);
+    teardown_test_repo();
+    PASS();
+}
+
 SUITE(pipeline) {
     /* Index lock */
     RUN_TEST(pipeline_lock_try_acquire);
@@ -5684,7 +6160,10 @@ SUITE(pipeline) {
     RUN_TEST(store_bulk_persistence);
     /* Integration: structure pass */
     RUN_TEST(pipeline_structure_nodes);
+    RUN_TEST(pipeline_committed_counts_match_persisted);
+    RUN_TEST(pipeline_adr_survives_full_reindex);
     RUN_TEST(pipeline_structure_edges);
+    RUN_TEST(pipeline_branch_root_structure);
     RUN_TEST(pipeline_project_name_derived);
     RUN_TEST(pipeline_fast_mode);
     /* Definitions pass */
@@ -5697,6 +6176,7 @@ SUITE(pipeline) {
     RUN_TEST(pipeline_complexity_transitive_loop_depth);
     /* Calls pass */
     RUN_TEST(pipeline_calls_resolution);
+    RUN_TEST(pipeline_incremental_preserves_cross_file_calls);
     /* Git history pass */
     RUN_TEST(githistory_is_trackable);
     RUN_TEST(githistory_compute_coupling);
@@ -5712,6 +6192,7 @@ SUITE(pipeline) {
     /* Usages pass (full pipeline integration) */
     RUN_TEST(usages_creates_edges);
     RUN_TEST(usages_no_duplicate_calls);
+    RUN_TEST(calls_edge_carries_call_site_line);
     RUN_TEST(usages_kotlin_creates_edges);
     RUN_TEST(usages_kotlin_no_duplicate_calls);
     /* Language integration tests */
@@ -5735,6 +6216,8 @@ SUITE(pipeline) {
     /* Project name */
     RUN_TEST(project_name_from_path);
     RUN_TEST(project_name_drive_letter_case_insensitive_issue394);
+    RUN_TEST(git_context_non_git_path);
+    RUN_TEST(git_context_linked_worktree);
     RUN_TEST(project_name_uniqueness);
     /* Git diff helpers */
     RUN_TEST(gitdiff_parse_range_with_count);

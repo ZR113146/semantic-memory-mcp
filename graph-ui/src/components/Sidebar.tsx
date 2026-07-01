@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { GraphNode } from "../lib/types";
+import { useUiMessages } from "../lib/i18n";
 
 interface SidebarProps {
   nodes: GraphNode[];
@@ -105,6 +106,7 @@ function TreeItem({ dir, depth, onSelect, selectedPath }: {
 }
 
 export function Sidebar({ nodes, onSelectPath, selectedPath }: SidebarProps) {
+  const t = useUiMessages();
   const [search, setSearch] = useState("");
   const tree = useMemo(() => flattenSingleChild(buildFileTree(nodes)), [nodes]);
 
@@ -122,7 +124,7 @@ export function Sidebar({ nodes, onSelectPath, selectedPath }: SidebarProps) {
         <div className="relative">
           <input
             type="text"
-            placeholder="Search..."
+            placeholder={t.graph.search}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full bg-white/[0.04] border border-white/[0.06] rounded-lg px-3 py-1.5 text-[12px] text-foreground placeholder-foreground/25 outline-none focus:border-primary/40 focus:bg-white/[0.06] transition-all"
@@ -134,7 +136,9 @@ export function Sidebar({ nodes, onSelectPath, selectedPath }: SidebarProps) {
         <div className="py-1">
           {filtered ? (
             filtered.length === 0 ? (
-              <p className="text-foreground/20 text-[12px] px-4 py-6 text-center">No matches</p>
+              <p className="text-foreground/20 text-[12px] px-4 py-6 text-center">
+                {t.common.noMatches}
+              </p>
             ) : (
               filtered.map((n) => (
                 <button
@@ -160,7 +164,7 @@ export function Sidebar({ nodes, onSelectPath, selectedPath }: SidebarProps) {
             onClick={() => onSelectPath("", new Set())}
             className="w-full px-3 py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.07] text-[11px] text-foreground/40 font-medium transition-all"
           >
-            Clear selection
+            {t.graph.clearSelection}
           </button>
         </div>
       )}

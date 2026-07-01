@@ -9,8 +9,31 @@ int tf_fail_count = 0;
 int tf_skip_count = 0;
 
 #include "test_framework.h"
-#include "test_helpers.h"
 #include <sqlite3.h>
+#include <stdbool.h>
+#include <string.h>
+
+static int g_suite_argc = 0;
+static char **g_suite_argv = NULL;
+
+static bool suite_requested(const char *name) {
+    if (g_suite_argc <= 1) {
+        return true;
+    }
+    for (int i = 1; i < g_suite_argc; i++) {
+        if (strcmp(g_suite_argv[i], name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+#define RUN_SELECTED_SUITE(name)      \
+    do {                              \
+        if (suite_requested(#name)) { \
+            RUN_SUITE(name);          \
+        }                             \
+    } while (0)
 
 /* Forward declarations of suite functions */
 extern void suite_arena(void);
@@ -40,6 +63,7 @@ extern void suite_graph_buffer(void);
 extern void suite_registry(void);
 extern void suite_pipeline(void);
 extern void suite_fqn(void);
+extern void suite_route_canon(void);
 extern void suite_path_alias(void);
 extern void suite_watcher(void);
 extern void suite_lz4(void);
@@ -98,169 +122,168 @@ extern void suite_grammar_probe_g(void);
 extern void suite_incremental(void);
 extern void suite_simhash(void);
 extern void suite_stack_overflow(void);
+extern void suite_dump_verify(void);
+extern void suite_dump_verify_io(void);
 
 /* Free the main thread's thread-local node-type bitset cache before exit so
  * LeakSanitizer (Linux x64) doesn't report it. Worker threads free their own
  * caches at thread teardown (pass_parallel.c). */
 extern void cbm_kind_in_set_free_cache(void);
 
-int main(void) {
-    printf("\n  semantic-memory-mcp  C test suite\n");
-
-    /* Sweep temp dirs leaked by tests that crashed or forgot to th_cleanup().
-     * Run at startup so a previous run's leftovers are cleared even if that
-     * run died abnormally (a crash/signal skips atexit). Also register it
-     * via atexit so a clean run leaves nothing behind on the way out. */
-    th_sweep_temp_leftovers();
-    atexit(th_sweep_temp_leftovers);
+int main(int argc, char **argv) {
+    g_suite_argc = argc;
+    g_suite_argv = argv;
+    printf("\n  codebase-memory-mcp  C test suite\n");
 
     /* Foundation */
-    RUN_SUITE(arena);
-    RUN_SUITE(hash_table);
-    RUN_SUITE(dyn_array);
-    RUN_SUITE(str_intern);
-    RUN_SUITE(log);
-    RUN_SUITE(str_util);
-    RUN_SUITE(platform);
+    RUN_SELECTED_SUITE(arena);
+    RUN_SELECTED_SUITE(hash_table);
+    RUN_SELECTED_SUITE(dyn_array);
+    RUN_SELECTED_SUITE(str_intern);
+    RUN_SELECTED_SUITE(log);
+    RUN_SELECTED_SUITE(str_util);
+    RUN_SELECTED_SUITE(platform);
+    RUN_SELECTED_SUITE(dump_verify);
 
     /* Existing C code regression tests */
-    RUN_SUITE(ac);
-    RUN_SUITE(extraction);
-    RUN_SUITE(extraction_inheritance);
-    RUN_SUITE(extraction_imports);
-    RUN_SUITE(grammar_regression);
-    RUN_SUITE(grammar_labels);
-    RUN_SUITE(grammar_imports);
+    RUN_SELECTED_SUITE(ac);
+    RUN_SELECTED_SUITE(extraction);
+    RUN_SELECTED_SUITE(extraction_inheritance);
+    RUN_SELECTED_SUITE(extraction_imports);
+    RUN_SELECTED_SUITE(grammar_regression);
+    RUN_SELECTED_SUITE(grammar_labels);
+    RUN_SELECTED_SUITE(grammar_imports);
 
     /* Store (M5) */
-    RUN_SUITE(store_nodes);
-    RUN_SUITE(store_edges);
-    RUN_SUITE(store_search);
-    RUN_SUITE(store_bulk);
-    RUN_SUITE(store_pragmas);
-    RUN_SUITE(store_checkpoint);
+    RUN_SELECTED_SUITE(store_nodes);
+    RUN_SELECTED_SUITE(store_edges);
+    RUN_SELECTED_SUITE(store_search);
+    RUN_SELECTED_SUITE(store_bulk);
+    RUN_SELECTED_SUITE(store_pragmas);
+    RUN_SELECTED_SUITE(store_checkpoint);
+    RUN_SELECTED_SUITE(dump_verify_io);
 
     /* Cypher (M6) */
-    RUN_SUITE(cypher);
+    RUN_SELECTED_SUITE(cypher);
 
     /* MCP Server (M9) */
-    RUN_SUITE(mcp);
+    RUN_SELECTED_SUITE(mcp);
 
     /* Discover (M2) */
-    RUN_SUITE(language);
-    RUN_SUITE(userconfig);
-    RUN_SUITE(gitignore);
-    RUN_SUITE(discover);
+    RUN_SELECTED_SUITE(language);
+    RUN_SELECTED_SUITE(userconfig);
+    RUN_SELECTED_SUITE(gitignore);
+    RUN_SELECTED_SUITE(discover);
 
     /* Graph Buffer (M7) */
-    RUN_SUITE(graph_buffer);
+    RUN_SELECTED_SUITE(graph_buffer);
 
     /* Pipeline (M8) */
-    RUN_SUITE(registry);
-    RUN_SUITE(pipeline);
-    RUN_SUITE(fqn);
-    RUN_SUITE(path_alias);
+    RUN_SELECTED_SUITE(registry);
+    RUN_SELECTED_SUITE(pipeline);
+    RUN_SELECTED_SUITE(fqn);
+    RUN_SELECTED_SUITE(route_canon);
+    RUN_SELECTED_SUITE(path_alias);
 
     /* Watcher (M10) */
-    RUN_SUITE(watcher);
+    RUN_SELECTED_SUITE(watcher);
 
     /* LZ4 + zstd + SQLite writer */
-    RUN_SUITE(lz4);
-    RUN_SUITE(zstd);
-    RUN_SUITE(sqlite_writer);
+    RUN_SELECTED_SUITE(lz4);
+    RUN_SELECTED_SUITE(zstd);
+    RUN_SELECTED_SUITE(sqlite_writer);
 
     /* Persistent artifact export/import */
-    RUN_SUITE(artifact);
+    RUN_SELECTED_SUITE(artifact);
 
     /* LSP resolvers */
-    RUN_SUITE(scope);
-    RUN_SUITE(type_rep);
-    RUN_SUITE(go_lsp);
-    RUN_SUITE(c_lsp);
-    RUN_SUITE(php_lsp);
-    RUN_SUITE(cs_lsp);
-    RUN_SUITE(cs_lsp_bench);
-    RUN_SUITE(py_lsp);
-    RUN_SUITE(kotlin_lsp);
-    RUN_SUITE(rust_lsp);
-    RUN_SUITE(py_lsp_bench);
-    RUN_SUITE(py_lsp_stress);
-    RUN_SUITE(py_lsp_scale);
-    RUN_SUITE(ts_lsp);
-    RUN_SUITE(java_lsp);
-    RUN_SUITE(java_lsp_coverage);
+    RUN_SELECTED_SUITE(scope);
+    RUN_SELECTED_SUITE(type_rep);
+    RUN_SELECTED_SUITE(go_lsp);
+    RUN_SELECTED_SUITE(c_lsp);
+    RUN_SELECTED_SUITE(php_lsp);
+    RUN_SELECTED_SUITE(cs_lsp);
+    RUN_SELECTED_SUITE(cs_lsp_bench);
+    RUN_SELECTED_SUITE(py_lsp);
+    RUN_SELECTED_SUITE(kotlin_lsp);
+    RUN_SELECTED_SUITE(rust_lsp);
+    RUN_SELECTED_SUITE(py_lsp_bench);
+    RUN_SELECTED_SUITE(py_lsp_stress);
+    RUN_SELECTED_SUITE(py_lsp_scale);
+    RUN_SELECTED_SUITE(ts_lsp);
+    RUN_SELECTED_SUITE(java_lsp);
+    RUN_SELECTED_SUITE(java_lsp_coverage);
 
     /* Architecture + ADR + Louvain */
-    RUN_SUITE(store_arch);
+    RUN_SELECTED_SUITE(store_arch);
 
     /* HTTP link */
 
     /* Traces helpers */
-    RUN_SUITE(traces);
+    RUN_SELECTED_SUITE(traces);
 
     /* Config link */
-    RUN_SUITE(configlink);
+    RUN_SELECTED_SUITE(configlink);
 
     /* Infrastructure scanning */
-    RUN_SUITE(infrascan);
+    RUN_SELECTED_SUITE(infrascan);
 
     /* CLI (install, update, config) */
-    RUN_SUITE(cli);
+    RUN_SELECTED_SUITE(cli);
 
     /* System info + worker pool (parallelism) */
-    RUN_SUITE(system_info);
-    RUN_SUITE(worker_pool);
+    RUN_SELECTED_SUITE(system_info);
+    RUN_SELECTED_SUITE(worker_pool);
 
     /* Parallel pipeline */
-    RUN_SUITE(parallel);
+    RUN_SELECTED_SUITE(parallel);
 
     /* mem + arena + slab integration */
-    RUN_SUITE(mem);
+    RUN_SELECTED_SUITE(mem);
 
     /* UI (config, embedded assets, layout) */
-    RUN_SUITE(ui);
+    RUN_SELECTED_SUITE(ui);
 
     /* UI HTTP server (transport + routing) */
-    RUN_SUITE(httpd);
+    RUN_SELECTED_SUITE(httpd);
 
     /* Security defenses */
-    RUN_SUITE(security);
+    RUN_SELECTED_SUITE(security);
 
     /* YAML parser */
-    RUN_SUITE(yaml);
+    RUN_SELECTED_SUITE(yaml);
 
     /* SimHash / SIMILAR_TO */
-    RUN_SUITE(simhash);
+    RUN_SELECTED_SUITE(simhash);
 
     /* Stack overflow regression (GitHub #199) */
-    RUN_SUITE(stack_overflow);
+    RUN_SELECTED_SUITE(stack_overflow);
 
     /* Integration (end-to-end) */
-    RUN_SUITE(integration);
+    RUN_SELECTED_SUITE(integration);
 
     /* Per-language graph contracts (node/edge types, attribution, no-crash) */
-    RUN_SUITE(lang_contract);
-    RUN_SUITE(edge_imports);
-    RUN_SUITE(edge_structural);
-    RUN_SUITE(lsp_resolution_probe);
-    RUN_SUITE(node_creation_probe);
-    RUN_SUITE(edge_types_probe);
-    RUN_SUITE(convergence_probe);
-    RUN_SUITE(matrix_known_classes);
-    RUN_SUITE(matrix_new_constructs);
-    RUN_SUITE(grammar_probe_a);
-    RUN_SUITE(grammar_probe_b);
-    RUN_SUITE(grammar_probe_c);
-    RUN_SUITE(grammar_probe_d);
-    RUN_SUITE(grammar_probe_e);
-    RUN_SUITE(grammar_probe_f);
-    RUN_SUITE(grammar_probe_g);
+    RUN_SELECTED_SUITE(lang_contract);
+    RUN_SELECTED_SUITE(edge_imports);
+    RUN_SELECTED_SUITE(edge_structural);
+    RUN_SELECTED_SUITE(lsp_resolution_probe);
+    RUN_SELECTED_SUITE(node_creation_probe);
+    RUN_SELECTED_SUITE(edge_types_probe);
+    RUN_SELECTED_SUITE(convergence_probe);
+    RUN_SELECTED_SUITE(matrix_known_classes);
+    RUN_SELECTED_SUITE(matrix_new_constructs);
+    RUN_SELECTED_SUITE(grammar_probe_a);
+    RUN_SELECTED_SUITE(grammar_probe_b);
+    RUN_SELECTED_SUITE(grammar_probe_c);
+    RUN_SELECTED_SUITE(grammar_probe_d);
+    RUN_SELECTED_SUITE(grammar_probe_e);
+    RUN_SELECTED_SUITE(grammar_probe_f);
+    RUN_SELECTED_SUITE(grammar_probe_g);
 
-    RUN_SUITE(incremental);
+    RUN_SELECTED_SUITE(incremental);
 
     /* Release process-lifetime caches so LeakSanitizer reports no leaks. */
     cbm_kind_in_set_free_cache();
     sqlite3_shutdown();
-
     TEST_SUMMARY();
 }

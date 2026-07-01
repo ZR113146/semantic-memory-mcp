@@ -112,7 +112,8 @@ FOUNDATION_SRCS = \
     src/foundation/compat_regex.c \
     src/foundation/mem.c \
     src/foundation/diagnostics.c \
-    src/foundation/profile.c
+    src/foundation/profile.c \
+    src/foundation/dump_verify.c
 
 # Existing extraction C code (compiled from current location)
 EXTRACTION_SRCS = \
@@ -219,6 +220,9 @@ TRACES_SRCS = src/traces/traces.c
 # Watcher module (new)
 WATCHER_SRCS = src/watcher/watcher.c
 
+# Git context module (new)
+GIT_SRCS = src/git/git_context.c
+
 # CLI module (new)
 CLI_SRCS = src/cli/cli.c src/cli/progress_sink.c src/cli/hook_augment.c src/cli/hook_recall.c
 
@@ -279,7 +283,7 @@ TRE_CFLAGS = -std=c11 -g -O1 -w -Ivendored/tre
 YYJSON_SRC = vendored/yyjson/yyjson.c
 
 # All production sources
-PROD_SRCS = $(FOUNDATION_SRCS) $(STORE_SRCS) $(CYPHER_SRCS) $(MCP_SRCS) $(DISCOVER_SRCS) $(GRAPH_BUFFER_SRCS) $(PIPELINE_SRCS) $(SIMHASH_SRCS) $(SEMANTIC_SRCS) $(TRACES_SRCS) $(WATCHER_SRCS) $(CLI_SRCS) $(UI_SRCS) $(YYJSON_SRC)
+PROD_SRCS = $(FOUNDATION_SRCS) $(STORE_SRCS) $(CYPHER_SRCS) $(MCP_SRCS) $(DISCOVER_SRCS) $(GRAPH_BUFFER_SRCS) $(PIPELINE_SRCS) $(SIMHASH_SRCS) $(SEMANTIC_SRCS) $(TRACES_SRCS) $(WATCHER_SRCS) $(GIT_SRCS) $(CLI_SRCS) $(UI_SRCS) $(YYJSON_SRC)
 EXISTING_C_SRCS = $(EXTRACTION_SRCS) $(LSP_SRCS) $(TS_RUNTIME_SRC) \
                   $(GRAMMAR_SRCS) $(AC_LZ4_SRCS) $(ZSTD_SRCS) $(SQLITE_WRITER_SRC)
 
@@ -293,7 +297,8 @@ TEST_FOUNDATION_SRCS = \
     tests/test_str_intern.c \
     tests/test_log.c \
     tests/test_str_util.c \
-    tests/test_platform.c
+    tests/test_platform.c \
+    tests/test_dump_verify.c
 
 TEST_EXTRACTION_SRCS = \
     tests/test_extraction.c \
@@ -311,7 +316,8 @@ TEST_STORE_SRCS = \
     tests/test_store_arch.c \
     tests/test_store_bulk.c \
     tests/test_store_pragmas.c \
-    tests/test_store_checkpoint.c
+    tests/test_store_checkpoint.c \
+    tests/test_dump_verify_io.c
 
 TEST_CYPHER_SRCS = \
     tests/test_cypher.c
@@ -327,7 +333,7 @@ TEST_DISCOVER_SRCS = \
 
 TEST_GRAPH_BUFFER_SRCS = tests/test_graph_buffer.c
 
-TEST_PIPELINE_SRCS = tests/test_registry.c tests/test_pipeline.c tests/test_fqn.c tests/test_path_alias.c tests/test_configlink.c tests/test_infrascan.c tests/test_worker_pool.c tests/test_parallel.c
+TEST_PIPELINE_SRCS = tests/test_registry.c tests/test_pipeline.c tests/test_fqn.c tests/test_route_canon.c tests/test_path_alias.c tests/test_configlink.c tests/test_infrascan.c tests/test_worker_pool.c tests/test_parallel.c
 
 TEST_WATCHER_SRCS = tests/test_watcher.c
 
@@ -390,7 +396,65 @@ TEST_SIMHASH_SRCS = tests/test_simhash.c
 
 TEST_STACK_OVERFLOW_SRCS = tests/test_stack_overflow.c
 
-ALL_TEST_SRCS = $(TEST_FOUNDATION_SRCS) $(TEST_EXTRACTION_SRCS) $(TEST_STORE_SRCS) $(TEST_CYPHER_SRCS) $(TEST_MCP_SRCS) $(TEST_DISCOVER_SRCS) $(TEST_GRAPH_BUFFER_SRCS) $(TEST_PIPELINE_SRCS) $(TEST_WATCHER_SRCS) $(TEST_LZ4_SRCS) $(TEST_ZSTD_SRCS) $(TEST_ARTIFACT_SRCS) $(TEST_SQLITE_WRITER_SRCS) $(TEST_GO_LSP_SRCS) $(TEST_C_LSP_SRCS) $(TEST_PHP_LSP_SRCS) $(TEST_CS_LSP_SRCS) $(TEST_CS_LSP_BENCH_SRCS) $(TEST_SCOPE_SRCS) $(TEST_TYPE_REP_SRCS) $(TEST_PY_LSP_SRCS) $(TEST_PY_LSP_BENCH_SRCS) $(TEST_PY_LSP_STRESS_SRCS) $(TEST_PY_LSP_SCALE_SRCS) $(TEST_TS_LSP_SRCS) $(TEST_JAVA_LSP_SRCS) $(TEST_KOTLIN_LSP_SRCS) $(TEST_RUST_LSP_SRCS) $(TEST_TRACES_SRCS) $(TEST_CLI_SRCS) $(TEST_MEM_SRCS) $(TEST_UI_SRCS) $(TEST_HTTPD_SRCS) $(TEST_SECURITY_SRCS) $(TEST_YAML_SRCS) $(TEST_SIMHASH_SRCS) $(TEST_STACK_OVERFLOW_SRCS) $(TEST_INTEGRATION_SRCS)
+# Cumulative BUG-REPRODUCTION suite (separate runner, NOT in ALL_TEST_SRCS).
+# These cases are RED by design (one open bug each) — see tests/repro/repro_main.c.
+# Kept out of the gating `make test` so `ci-ok` stays green; run via `make test-repro`.
+TEST_REPRO_SRCS = \
+    tests/repro/repro_main.c \
+    tests/repro/repro_extraction.c \
+    tests/repro/repro_issue495.c \
+    tests/repro/repro_issue521.c \
+    tests/repro/repro_issue382.c \
+    tests/repro/repro_issue408.c \
+    tests/repro/repro_issue56.c \
+    tests/repro/repro_issue480.c \
+    tests/repro/repro_issue571.c \
+    tests/repro/repro_issue523.c \
+    tests/repro/repro_issue546.c \
+    tests/repro/repro_issue627.c \
+    tests/repro/repro_issue514.c \
+    tests/repro/repro_issue510.c \
+    tests/repro/repro_issue557.c \
+    tests/repro/repro_issue520.c \
+    tests/repro/repro_issue333.c \
+    tests/repro/repro_issue570.c \
+    tests/repro/repro_issue409.c \
+    tests/repro/repro_issue431.c \
+    tests/repro/repro_issue607.c \
+    tests/repro/repro_issue403.c \
+    tests/repro/repro_issue434.c \
+    tests/repro/repro_issue471.c \
+    tests/repro/repro_issue221.c \
+    tests/repro/repro_issue548.c \
+    tests/repro/repro_new_ts_class_field_arrow.c \
+    tests/repro/repro_new_py_tuple_unpack.c \
+    tests/repro/repro_new_cypher_limit_zero.c \
+    tests/repro/repro_issue363.c \
+    tests/repro/repro_issue581.c \
+    tests/repro/repro_invariant_calls.c \
+    tests/repro/repro_invariant_graph.c \
+    tests/repro/repro_invariant_breadth.c \
+    tests/repro/repro_invariant_enclosing_parity.c \
+    tests/repro/repro_invariant_lsp_rescue.c \
+    tests/repro/repro_invariant_discovery_fqn.c \
+    tests/repro/repro_grammar_core.c \
+    tests/repro/repro_grammar_scripting.c \
+    tests/repro/repro_grammar_functional.c \
+    tests/repro/repro_grammar_systems.c \
+    tests/repro/repro_grammar_web.c \
+    tests/repro/repro_grammar_config.c \
+    tests/repro/repro_grammar_build.c \
+    tests/repro/repro_grammar_shells.c \
+    tests/repro/repro_grammar_scientific.c \
+    tests/repro/repro_grammar_markup.c \
+    tests/repro/repro_grammar_misc.c \
+    tests/repro/repro_lsp_c_cpp.c \
+    tests/repro/repro_lsp_go_py.c \
+    tests/repro/repro_lsp_ts.c \
+    tests/repro/repro_lsp_java_cs.c \
+    tests/repro/repro_lsp_kt_php_rust.c
+
+ALL_TEST_SRCS =$(TEST_FOUNDATION_SRCS) $(TEST_EXTRACTION_SRCS) $(TEST_STORE_SRCS) $(TEST_CYPHER_SRCS) $(TEST_MCP_SRCS) $(TEST_DISCOVER_SRCS) $(TEST_GRAPH_BUFFER_SRCS) $(TEST_PIPELINE_SRCS) $(TEST_WATCHER_SRCS) $(TEST_LZ4_SRCS) $(TEST_ZSTD_SRCS) $(TEST_ARTIFACT_SRCS) $(TEST_SQLITE_WRITER_SRCS) $(TEST_GO_LSP_SRCS) $(TEST_C_LSP_SRCS) $(TEST_PHP_LSP_SRCS) $(TEST_CS_LSP_SRCS) $(TEST_CS_LSP_BENCH_SRCS) $(TEST_SCOPE_SRCS) $(TEST_TYPE_REP_SRCS) $(TEST_PY_LSP_SRCS) $(TEST_PY_LSP_BENCH_SRCS) $(TEST_PY_LSP_STRESS_SRCS) $(TEST_PY_LSP_SCALE_SRCS) $(TEST_TS_LSP_SRCS) $(TEST_JAVA_LSP_SRCS) $(TEST_KOTLIN_LSP_SRCS) $(TEST_RUST_LSP_SRCS) $(TEST_TRACES_SRCS) $(TEST_CLI_SRCS) $(TEST_MEM_SRCS) $(TEST_UI_SRCS) $(TEST_HTTPD_SRCS) $(TEST_SECURITY_SRCS) $(TEST_YAML_SRCS) $(TEST_SIMHASH_SRCS) $(TEST_STACK_OVERFLOW_SRCS) $(TEST_INTEGRATION_SRCS)
 
 
 # ── Build directories ────────────────────────────────────────────
@@ -414,7 +478,7 @@ PP_OBJ_TEST = $(BUILD_DIR)/preprocessor.o
 
 # ── Targets ──────────────────────────────────────────────────────
 
-.PHONY: test test-foundation test-tsan cbm cbm-with-ui frontend embed clean-c lint lint-tidy lint-cppcheck lint-format security
+.PHONY: test test-repro test-foundation test-tsan cbm cbm-with-ui frontend embed clean-c lint lint-tidy lint-cppcheck lint-format security
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -505,6 +569,20 @@ $(BUILD_DIR)/test-runner: $(ALL_TEST_SRCS) $(PROD_SRCS) $(EXTRACTION_SRCS) $(AC_
 
 test: $(BUILD_DIR)/test-runner
 	cd $(CURDIR) && $(BUILD_DIR)/test-runner
+
+# ── Cumulative bug-reproduction runner (RED by design, non-gating) ──
+# Mirrors test-runner's link line but uses repro_main.c (own main + counters)
+# and TEST_REPRO_SRCS instead of ALL_TEST_SRCS. Exits non-zero while any bug is
+# still reproduced (the expected state); bug-repro.yml surfaces it as a board.
+$(BUILD_DIR)/test-repro-runner: $(TEST_REPRO_SRCS) $(PROD_SRCS) $(EXTRACTION_SRCS) $(AC_LZ4_SRCS) $(ZSTD_SRCS) $(SQLITE_WRITER_SRC) $(OBJS_VENDORED_TEST) | $(BUILD_DIR)
+	$(CC) $(CFLAGS_TEST) -Itests -o $@ \
+		$(TEST_REPRO_SRCS) $(PROD_SRCS) \
+		$(EXTRACTION_SRCS) $(AC_LZ4_SRCS) $(ZSTD_SRCS) $(SQLITE_WRITER_SRC) \
+		$(OBJS_VENDORED_TEST) \
+		$(LDFLAGS_TEST)
+
+test-repro: $(BUILD_DIR)/test-repro-runner
+	cd $(CURDIR) && $(BUILD_DIR)/test-repro-runner
 
 # ── TSan full test ───────────────────────────────────────────────
 

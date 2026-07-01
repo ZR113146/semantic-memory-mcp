@@ -630,7 +630,7 @@ TEST(rust_struct) {
                                CBM_LANG_RUST, "t", "point.rs");
     ASSERT_NOT_NULL(r);
     ASSERT_FALSE(r->has_error);
-    ASSERT(has_def(r, "Class", "Point"));
+    ASSERT(has_def(r, "Struct", "Point"));
     ASSERT(has_def(r, "Method", "new"));
     cbm_free_result(r);
     PASS();
@@ -655,7 +655,7 @@ TEST(go_struct) {
                                CBM_LANG_GO, "t", "server.go");
     ASSERT_NOT_NULL(r);
     ASSERT_FALSE(r->has_error);
-    ASSERT(has_def(r, "Class", "Server"));
+    ASSERT(has_def(r, "Struct", "Server"));
     ASSERT(has_def(r, "Method", "Start"));
     cbm_free_result(r);
     PASS();
@@ -1787,6 +1787,87 @@ TEST(wolfram_caller_attribution) {
     PASS();
 }
 
+/* Issue #438: a C function_definition has no `name` field — the name lives in the
+ * declarator chain. Calls inside a C function must be attributed to the enclosing
+ * function, not the module. Pre-fix, enclosing_func_qn fell back to the module QN. */
+TEST(c_caller_attribution) {
+    CBMFileResult *r = extract("int helper(int x) { return x; }\n"
+                               "int caller(void) { return helper(1); }\n",
+                               CBM_LANG_C, "t", "main.c");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+    ASSERT_GT(r->calls.count, 0);
+    int saw_helper = 0;
+    for (int i = 0; i < r->calls.count; i++) {
+        if (strcmp(r->calls.items[i].callee_name, "helper") == 0) {
+            saw_helper = 1;
+            /* enclosing_func_qn must be the function, NOT empty and NOT the module QN. */
+            ASSERT_NOT_NULL(r->calls.items[i].enclosing_func_qn);
+            ASSERT_FALSE(strcmp(r->calls.items[i].enclosing_func_qn, "") == 0);
+            ASSERT_FALSE(strcmp(r->calls.items[i].enclosing_func_qn, "t.main") == 0);
+        }
+    }
+    ASSERT(saw_helper);
+    cbm_free_result(r);
+    PASS();
+}
+
+/* adc8304 (the dedup refactor bundled into #463) re-pointed the C/C++ enclosing-
+ * function resolver at the canonical declarator walker: qualified names (Foo::bar)
+ * now resolve via resolve_qualified_name(), and `type_identifier` was dropped from
+ * the terminal-name set. These guard that out-of-line C++ method / ctor / dtor
+ * definitions still attribute their inner calls to the enclosing function, not the
+ * module — i.e. that the dedup did not reintroduce the #438 regression on the
+ * qualified-declarator path. Module QN for "m.cpp" under prefix "t" is "t.m". */
+TEST(cpp_out_of_line_method_caller_attribution) {
+    CBMFileResult *r = extract("struct Foo { void bar(); };\n"
+                               "int helper(int x) { return x; }\n"
+                               "void Foo::bar() { helper(1); }\n",
+                               CBM_LANG_CPP, "t", "m.cpp");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+    ASSERT_GT(r->calls.count, 0);
+    int saw_helper = 0;
+    for (int i = 0; i < r->calls.count; i++) {
+        if (strcmp(r->calls.items[i].callee_name, "helper") == 0) {
+            saw_helper = 1;
+            /* enclosing must be the out-of-line method, NOT empty and NOT the module. */
+            ASSERT_NOT_NULL(r->calls.items[i].enclosing_func_qn);
+            ASSERT_FALSE(strcmp(r->calls.items[i].enclosing_func_qn, "") == 0);
+            ASSERT_FALSE(strcmp(r->calls.items[i].enclosing_func_qn, "t.m") == 0);
+        }
+    }
+    ASSERT(saw_helper);
+    cbm_free_result(r);
+    PASS();
+}
+
+/* Out-of-line constructor (Foo::Foo) and destructor (Foo::~Foo) exercise the
+ * identifier and destructor_name branches of resolve_qualified_name(). A call
+ * inside either must attribute to that special member, not the module. */
+TEST(cpp_out_of_line_ctor_dtor_caller_attribution) {
+    CBMFileResult *r = extract("struct Foo { Foo(); ~Foo(); };\n"
+                               "int helper(int x) { return x; }\n"
+                               "Foo::Foo() { helper(1); }\n"
+                               "Foo::~Foo() { helper(2); }\n",
+                               CBM_LANG_CPP, "t", "m.cpp");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+    ASSERT_GT(r->calls.count, 0);
+    int helper_calls = 0;
+    for (int i = 0; i < r->calls.count; i++) {
+        if (strcmp(r->calls.items[i].callee_name, "helper") == 0) {
+            helper_calls++;
+            ASSERT_NOT_NULL(r->calls.items[i].enclosing_func_qn);
+            ASSERT_FALSE(strcmp(r->calls.items[i].enclosing_func_qn, "") == 0);
+            ASSERT_FALSE(strcmp(r->calls.items[i].enclosing_func_qn, "t.m") == 0);
+        }
+    }
+    ASSERT(helper_calls >= 1);
+    cbm_free_result(r);
+    PASS();
+}
+
 /* --- Wolfram parse (simple assignment) --- */
 TEST(wolfram_parse) {
     CBMFileResult *r = extract("x = 42;\ny = x + 1;\n", CBM_LANG_WOLFRAM, "t", "simple.wl");
@@ -2015,6 +2096,20 @@ TEST(python_calls) {
     ASSERT_FALSE(r->has_error);
     /* Python unified extraction produces calls — verify at least some exist */
     ASSERT_GT(r->calls.count, 0);
+    cbm_free_result(r);
+    PASS();
+}
+
+TEST(python_iris_classMethodValue) {
+    CBMFileResult *r = extract(
+        "import iris\n"
+        "iris_obj = iris.cls('%Library.ObjectScript')\n"
+        "def call_bfs(n):\n"
+        "    return iris_obj.classMethodValue('Graph.KG.TraversalBFS', 'BFSFastJson', n)\n",
+        CBM_LANG_PYTHON, "t", "store.py");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+    ASSERT(has_call(r, "Graph.KG.TraversalBFS.BFSFastJson"));
     cbm_free_result(r);
     PASS();
 }
@@ -2631,6 +2726,101 @@ TEST(extract_java_method_annotations_issue382) {
     PASS();
 }
 
+/* Find an in-body call by its raw callee text; returns the call or NULL. */
+static const CBMCall *find_call_by_callee(CBMFileResult *r, const char *callee) {
+    for (int i = 0; i < r->calls.count; i++) {
+        if (r->calls.items[i].callee_name && strcmp(r->calls.items[i].callee_name, callee) == 0) {
+            return &r->calls.items[i];
+        }
+    }
+    return NULL;
+}
+
+/* Reproduce-first: Java module QN must derive from the CONTAINING DIRECTORY, not
+ * the filename stem, so a top-level class `Outer` in `Outer.java` is `t.Outer`,
+ * NOT the doubled `t.Outer.Outer`. The nested method def QN must also equal the
+ * QN the textual calls-enclosing path records for an in-body call (the
+ * lsp_resolve join keys on exact caller_qn == enclosing_func_qn equality). */
+TEST(extract_java_no_double_class_qn) {
+    CBMFileResult *r = extract("class Outer {\n"
+                               "    int helper(int x) { return x + 2; }\n"
+                               "    class Inner {\n"
+                               "        int run(int v) { return helper(v); }\n"
+                               "    }\n"
+                               "}\n",
+                               CBM_LANG_JAVA, "t", "Outer.java");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+
+    /* Module QN is the directory (root) → just the project. */
+    ASSERT_NOT_NULL(r->module_qn);
+    ASSERT_STR_EQ(r->module_qn, "t");
+
+    /* No def QN anywhere may double the top-level class name. */
+    for (int i = 0; i < r->defs.count; i++) {
+        const char *qn = r->defs.items[i].qualified_name;
+        if (qn) {
+            ASSERT_EQ(strstr(qn, "Outer.Outer"), NULL);
+        }
+    }
+
+    /* The nested class and its method carry the single-form QN. */
+    const CBMDefinition *outer = find_def_by_name(r, "Outer");
+    ASSERT_NOT_NULL(outer);
+    ASSERT_STR_EQ(outer->qualified_name, "t.Outer");
+
+    const CBMDefinition *run = find_def_by_name(r, "run");
+    ASSERT_NOT_NULL(run);
+    ASSERT_STR_EQ(run->qualified_name, "t.Outer.Inner.run");
+
+    /* The in-body call to helper() must be attributed to the SAME QN as the
+     * method def — this is the equality the LSP cross-resolution join relies on
+     * for nested classes (the lsp_outer_dispatch repro). */
+    const CBMCall *call = find_call_by_callee(r, "helper");
+    ASSERT_NOT_NULL(call);
+    ASSERT_NOT_NULL(call->enclosing_func_qn);
+    ASSERT_STR_EQ(call->enclosing_func_qn, run->qualified_name);
+
+    cbm_free_result(r);
+    PASS();
+}
+
+/* Reproduce-first: Go module QN must derive from the CONTAINING DIRECTORY
+ * (package), not the filename stem, so a type/method in `myapp/db/conn.go`
+ * belongs to module `proj.myapp.db` and is NOT polluted with the `.conn.`
+ * filename segment. */
+TEST(extract_go_no_filename_in_module_qn) {
+    CBMFileResult *r = extract("package db\n\n"
+                               "type Conn struct{}\n\n"
+                               "func (c *Conn) Query() {}\n",
+                               CBM_LANG_GO, "proj", "myapp/db/conn.go");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+
+    /* Module is the directory `myapp/db`, NOT `myapp/db/conn`. */
+    ASSERT_NOT_NULL(r->module_qn);
+    ASSERT_STR_EQ(r->module_qn, "proj.myapp.db");
+
+    /* The type and method QNs must not contain the filename segment `.conn.`. */
+    const CBMDefinition *conn = find_def_by_name(r, "Conn");
+    ASSERT_NOT_NULL(conn);
+    ASSERT_STR_EQ(conn->qualified_name, "proj.myapp.db.Conn");
+
+    /* Go method nodes keep a FLAT QN (module + name) with a separate
+     * parent_class link to the receiver type — the QN must carry the
+     * directory-based module and NOT the `.conn.` filename segment. */
+    const CBMDefinition *query = find_def_by_name(r, "Query");
+    ASSERT_NOT_NULL(query);
+    ASSERT_STR_EQ(query->qualified_name, "proj.myapp.db.Query");
+    ASSERT_EQ(strstr(query->qualified_name, ".conn."), NULL);
+    /* The method's parent_class must match the type node QN (for DEFINES_METHOD). */
+    ASSERT_NOT_NULL(query->parent_class);
+    ASSERT_STR_EQ(query->parent_class, "proj.myapp.db.Conn");
+
+    cbm_free_result(r);
+    PASS();
+}
+
 /* Issue #213: large TS files were indexed as a File node with zero children. */
 TEST(extract_large_ts_has_functions_issue213) {
     enum { NFUNCS = 4000 };
@@ -2815,12 +3005,126 @@ TEST(complexity_access_depth_and_params) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+ * Perl call-graph noise (#459 follow-up)
+ * ═══════════════════════════════════════════════════════════════════ */
+
+/* Count calls whose callee_name is exactly `name` (has_call is substring). */
+static int count_calls_exact(CBMFileResult *r, const char *name) {
+    int n = 0;
+    for (int i = 0; i < r->calls.count; i++) {
+        if (r->calls.items[i].callee_name && strcmp(r->calls.items[i].callee_name, name) == 0)
+            n++;
+    }
+    return n;
+}
+
+/* (b) A dotted config string must never be extracted as a callee. */
+TEST(extract_perl_config_string_not_a_callee) {
+    CBMFileResult *r = extract("package C;\n"
+                               "sub run {\n"
+                               "  my $cfg = { \"log4perl.appender.File.utf8\" => 1 };\n"
+                               "  helper();\n"
+                               "}\n"
+                               "sub helper { return 1; }\n"
+                               "1;\n",
+                               CBM_LANG_PERL, "t", "app.pl");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+    /* No callee may contain a '.' (config/string tokens are rejected). */
+    for (int i = 0; i < r->calls.count; i++) {
+        ASSERT_TRUE(strchr(r->calls.items[i].callee_name, '.') == NULL);
+    }
+    /* (d) The genuine intra-file function call is still extracted. */
+    ASSERT_TRUE(count_calls_exact(r, "helper") >= 1);
+    cbm_free_result(r);
+    PASS();
+}
+
+/* (a) A Perl builtin call is extracted as a non-method callee. Suppression of
+ *     the resulting CALLS edge happens in the resolver (see test_registry.c /
+ *     end-to-end); extraction itself keeps the bare builtin token. */
+TEST(extract_perl_builtin_call_is_function_not_method) {
+    CBMFileResult *r = extract("package B;\n"
+                               "sub run {\n"
+                               "  my @x;\n"
+                               "  push @x, 1;\n"
+                               "  keys %h;\n"
+                               "}\n"
+                               "1;\n",
+                               CBM_LANG_PERL, "t", "b.pl");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+    /* push / keys are extracted (they are valid identifiers) ... */
+    ASSERT_TRUE(has_call(r, "push"));
+    /* ... and crucially are NOT flagged as method calls. */
+    for (int i = 0; i < r->calls.count; i++) {
+        ASSERT_FALSE(r->calls.items[i].is_method);
+    }
+    cbm_free_result(r);
+    PASS();
+}
+
+/* (c) An arrow/method call is extracted with is_method=true so the resolver
+ *     can suppress generic short-name matching for it. */
+TEST(extract_perl_method_call_flags_is_method) {
+    CBMFileResult *r = extract("package M;\n"
+                               "sub run {\n"
+                               "  my $self = shift;\n"
+                               "  $self->commit();\n"
+                               "  $dbh->commit();\n"
+                               "  helper();\n"
+                               "}\n"
+                               "sub helper { return 1; }\n"
+                               "1;\n",
+                               CBM_LANG_PERL, "t", "m.pl");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+    /* Every "commit" call is a method call (is_method set). */
+    int commit_calls = 0;
+    for (int i = 0; i < r->calls.count; i++) {
+        if (strcmp(r->calls.items[i].callee_name, "commit") == 0) {
+            commit_calls++;
+            ASSERT_TRUE(r->calls.items[i].is_method);
+        }
+        /* The genuine function call is NOT a method. */
+        if (strcmp(r->calls.items[i].callee_name, "helper") == 0) {
+            ASSERT_FALSE(r->calls.items[i].is_method);
+        }
+    }
+    ASSERT_TRUE(commit_calls >= 1);
+    /* (d) genuine intra-file function call still extracted. */
+    ASSERT_TRUE(count_calls_exact(r, "helper") >= 1);
+    cbm_free_result(r);
+    PASS();
+}
+
+/* Other languages must be unaffected: a JS method call never sets is_method
+ * (the flag is Perl-only). */
+TEST(extract_non_perl_method_call_not_flagged_is_method) {
+    CBMFileResult *r =
+        extract("function run(o){ o.commit(); helper(); }\n", CBM_LANG_JAVASCRIPT, "t", "x.js");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+    for (int i = 0; i < r->calls.count; i++) {
+        ASSERT_FALSE(r->calls.items[i].is_method);
+    }
+    cbm_free_result(r);
+    PASS();
+}
+
+/* ═══════════════════════════════════════════════════════════════════
  * Suite
  * ═══════════════════════════════════════════════════════════════════ */
 
 SUITE(extraction) {
     /* Initialize extraction library */
     cbm_init();
+
+    /* Perl call-graph noise (#459 follow-up) */
+    RUN_TEST(extract_perl_config_string_not_a_callee);
+    RUN_TEST(extract_perl_builtin_call_is_function_not_method);
+    RUN_TEST(extract_perl_method_call_flags_is_method);
+    RUN_TEST(extract_non_perl_method_call_not_flagged_is_method);
 
     /* R box-module imports + member calls */
     RUN_TEST(extract_r_box_use_imports_issue218);
@@ -2963,6 +3267,9 @@ SUITE(extraction) {
     RUN_TEST(wolfram_function_extended);
     RUN_TEST(wolfram_call);
     RUN_TEST(wolfram_caller_attribution);
+    RUN_TEST(c_caller_attribution);
+    RUN_TEST(cpp_out_of_line_method_caller_attribution);
+    RUN_TEST(cpp_out_of_line_ctor_dtor_caller_attribution);
     RUN_TEST(wolfram_parse);
     RUN_TEST(wolfram_import);
     RUN_TEST(wolfram_nested_def);
@@ -2986,6 +3293,7 @@ SUITE(extraction) {
 
     /* Cross-cutting */
     RUN_TEST(python_calls);
+    RUN_TEST(python_iris_classMethodValue);
     RUN_TEST(go_calls);
     RUN_TEST(python_imports);
     RUN_TEST(js_imports);
@@ -3034,6 +3342,8 @@ SUITE(extraction) {
     RUN_TEST(js_index_module_qn_not_collide_with_folder);
     RUN_TEST(python_regular_module_qn_unchanged);
     RUN_TEST(extract_java_method_annotations_issue382);
+    RUN_TEST(extract_java_no_double_class_qn);
+    RUN_TEST(extract_go_no_filename_in_module_qn);
     RUN_TEST(extract_large_ts_has_functions_issue213);
 
     /* Per-function complexity metrics (Tier A) */

@@ -29,6 +29,11 @@ interface GraphTabProps {
   project: string | null;
 }
 
+export function formatGraphLimitNotice(data: GraphData | null): string | null {
+  if (!data || data.total_nodes <= data.nodes.length) return null;
+  return `Showing ${data.nodes.length.toLocaleString()} of ${data.total_nodes.toLocaleString()} nodes. Use filters to narrow.`;
+}
+
 export function GraphTab({ project }: GraphTabProps) {
   const { data, loading, error, fetchOverview } = useGraphData();
   const [highlightedIds, setHighlightedIds] = useState<Set<number> | null>(null);
@@ -38,6 +43,7 @@ export function GraphTab({ project }: GraphTabProps) {
   const [showLabels, setShowLabels] = useState(true);
   const [leftWidth, setLeftWidth] = useState(() => loadWidth("cbm-left-w", 260));
   const [rightWidth, setRightWidth] = useState(() => loadWidth("cbm-right-w", 280));
+  const limitNotice = formatGraphLimitNotice(data);
 
   /* Filter state — all enabled by default */
   const [enabledLabels, setEnabledLabels] = useState<Set<string>>(new Set());
@@ -281,6 +287,9 @@ export function GraphTab({ project }: GraphTabProps) {
             <p className="text-white/25 mt-0.5">
               filtered from {data.nodes.length.toLocaleString()}
             </p>
+          )}
+          {limitNotice && (
+            <p className="text-amber-300/80 mt-0.5">{limitNotice}</p>
           )}
           {highlightedIds && highlightedIds.size > 0 && (
             <p className="text-cyan-400/50 mt-0.5">

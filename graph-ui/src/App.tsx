@@ -3,16 +3,17 @@ import { GraphTab } from "./components/GraphTab";
 import { StatsTab } from "./components/StatsTab";
 import { ControlTab } from "./components/ControlTab";
 import type { TabId } from "./lib/types";
-
-const TABS: { id: TabId; label: string }[] = [
-  { id: "graph", label: "Graph" },
-  { id: "stats", label: "Projects" },
-  { id: "control", label: "Control" },
-];
+import { useUiMessages } from "./lib/i18n";
 
 export function App() {
+  const t = useUiMessages();
   const [activeTab, setActiveTab] = useState<TabId>("stats");
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
+  const tabs: { id: TabId; label: string }[] = [
+    { id: "graph", label: t.tabs.graph },
+    { id: "stats", label: t.tabs.projects },
+    { id: "control", label: t.tabs.control },
+  ];
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground">
@@ -28,17 +29,17 @@ export function App() {
 
           {/* Tabs inline in header */}
           <nav className="flex items-center gap-0.5">
-            {TABS.map((t) => (
+            {tabs.map((tab) => (
               <button
-                key={t.id}
-                onClick={() => setActiveTab(t.id)}
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
                 className={`px-3 py-1 rounded-md text-[12px] font-medium transition-all ${
-                  activeTab === t.id
+                  activeTab === tab.id
                     ? "bg-primary/15 text-primary"
                     : "text-muted-foreground hover:text-foreground hover:bg-white/[0.04]"
                 }`}
               >
-                {t.label}
+                {tab.label}
               </button>
             ))}
           </nav>
@@ -46,7 +47,9 @@ export function App() {
 
         {selectedProject && (
           <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-white/[0.04] border border-border/30">
-            <span className="text-[10px] text-foreground/30 uppercase tracking-wider">Graph</span>
+            <span className="text-[10px] text-foreground/30 uppercase tracking-wider">
+              {t.graph.selectedLabel}
+            </span>
             <span className="text-[11px] text-primary font-mono truncate max-w-[300px]">
               {selectedProject}
             </span>

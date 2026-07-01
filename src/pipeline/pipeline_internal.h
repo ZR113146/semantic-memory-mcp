@@ -25,6 +25,14 @@
 /* Route node QN buffer size (must fit __route__METHOD__/full/url/path) */
 #define CBM_ROUTE_QN_SIZE 768
 
+/* Canonicalize route-path parameter placeholders (":id", "{id}", "<id>",
+ * "${...}") to a single "{}" token so that client call sites and server
+ * handlers rendezvous on the same Route QN regardless of framework syntax.
+ * Parameter names are intentionally discarded ("/u/{id}" and "/u/{slug}" both
+ * canonicalize to "/u/{}"). The result never exceeds the input length, so
+ * out_sz >= strlen(in) + 1 always suffices. Returns out. */
+const char *cbm_route_canon_path(const char *in, char *out, size_t out_sz);
+
 /* Time unit conversions */
 #define CBM_NS_PER_SEC 1000000000LL
 #define CBM_US_PER_SEC 1000000LL
@@ -532,6 +540,9 @@ int cbm_pipeline_run_incremental(cbm_pipeline_t *p, const char *db_path, cbm_fil
 /* Pipeline accessors for incremental use */
 const char *cbm_pipeline_repo_path(const cbm_pipeline_t *p);
 atomic_int *cbm_pipeline_cancelled_ptr(cbm_pipeline_t *p);
+/* Record committed graph size (#334 gate axis) from the incremental path,
+ * which cannot see the opaque cbm_pipeline struct. Call before the dump. */
+void cbm_pipeline_set_committed_counts(cbm_pipeline_t *p, int nodes, int edges);
 
 /* Parse a gRPC stub call "<service-stub>.<method>" into the canonical proto
  * service name + method. Returns true ONLY when a recognized gRPC stub/client

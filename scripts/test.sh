@@ -75,4 +75,10 @@ echo "=== Step 5: parent-death watchdog regression (#406/#407) ==="
 $ARCH_PREFIX make -j"$NPROC" -f Makefile.cbm cbm $MAKE_ARGS
 bash "$ROOT/tests/test_parent_watchdog.sh"
 
+# Step 6: security-strings URL allow-list regression. The MSYS2 CLANG64 toolchain
+# bakes its package-tracker URL into the static Windows .exe; the binary string
+# audit must allow-list it (Windows-only — Linux smoke never saw it).
+echo "=== Step 6: security-strings allow-list regression ==="
+bash "$ROOT/tests/test_security_strings_allowlist.sh"
+
 echo "=== All tests passed ==="

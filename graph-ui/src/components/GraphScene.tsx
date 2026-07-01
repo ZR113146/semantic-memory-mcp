@@ -45,6 +45,8 @@ function CameraAnimator({ target }: { target: CameraTarget | null }) {
 /* ── Idle auto-rotation ──────────────────────────────────── */
 
 const IDLE_TIMEOUT_MS = 60_000;
+export const GRAPH_CANVAS_DPR: [number, number] = [1, 1.5];
+export const GRAPH_COMPOSER_MULTISAMPLING = 0;
 
 function IdleAutoRotate({
   controlsRef,
@@ -108,8 +110,12 @@ export function GraphScene({
     <Canvas
       camera={{ position: [0, 0, 800], fov: 50, near: 0.1, far: 100000 }}
       style={{ background: "#06090f" }}
-      dpr={[1, 2]}
-      gl={{ antialias: true, alpha: false }}
+      dpr={GRAPH_CANVAS_DPR}
+      gl={{
+        antialias: false,
+        alpha: false,
+        powerPreference: "high-performance",
+      }}
     >
       <color attach="background" args={["#06090f"]} />
       <ambientLight intensity={0.5} />
@@ -176,7 +182,7 @@ export function GraphScene({
       <CameraAnimator target={cameraTarget} />
       <IdleAutoRotate controlsRef={controlsRef} />
 
-      <EffectComposer>
+      <EffectComposer multisampling={GRAPH_COMPOSER_MULTISAMPLING}>
         <Bloom
           luminanceThreshold={0.3}
           luminanceSmoothing={0.7}

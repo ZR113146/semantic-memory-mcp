@@ -236,6 +236,7 @@ typedef struct {
     int loop_depth;                     // enclosing loop nesting at the call site
     int branch_depth;                   // enclosing branch nesting at the call site
     int start_line;                     // 1-based source line of the call (for def range-match)
+    bool is_method;                     // Perl-only: arrow/method call ($obj->m). Default false.
 } CBMCall;
 
 typedef struct {
@@ -583,7 +584,6 @@ void cbm_channels_push(CBMChannelArray *arr, CBMArena *a, CBMChannel ch);
 // --- Sub-extractor entry points ---
 
 void cbm_extract_definitions(CBMExtractCtx *ctx);
-void cbm_extract_calls(CBMExtractCtx *ctx);
 void cbm_extract_imports(CBMExtractCtx *ctx);
 void cbm_extract_usages(CBMExtractCtx *ctx);
 void cbm_extract_semantic(CBMExtractCtx *ctx);
@@ -597,5 +597,18 @@ void cbm_extract_unified(CBMExtractCtx *ctx);
 
 // K8s / Kustomize semantic extractor (called when language is CBM_LANG_K8S or CBM_LANG_KUSTOMIZE).
 void cbm_extract_k8s(CBMExtractCtx *ctx);
+
+// --- Label predicates ---
+
+// True when `label` names a TYPE-LIKE container definition — a node that can own
+// methods/fields, be a base/embedded type, satisfy/declare an interface, and be a
+// target of name→type resolution. The canonical set is:
+//   Class, Struct, Interface, Enum, Type, Trait.
+// Single source of truth for every type-resolution / registry-seeding /
+// INHERITS·IMPLEMENTS / LSP-type-registrar consumer, so adding a new type-like
+// label (e.g. "Struct" for Rust/Go/Swift/D structs) updates them all at once
+// instead of scattering `|| strcmp(label,"Struct")==0` across the tree.
+// `label` may be NULL (returns false). Defined in helpers.c.
+bool cbm_label_is_type_like(const char *label);
 
 #endif // CBM_H

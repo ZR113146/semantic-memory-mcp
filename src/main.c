@@ -228,6 +228,65 @@ static bool cli_strip_flag(int *argc, char **argv, const char *flag) {
     return false;
 }
 
+/* Portable "is fd a terminal?" — _isatty on Windows, isatty on POSIX. */
+#ifdef _WIN32
+#define cli_isatty(fd) _isatty(fd)
+#else
+#define cli_isatty(fd) isatty(fd)
+#endif
+
+enum { CLI_SLURP_CHUNK = 4096 };
+
+/* Read an open stream fully into a heap, NUL-terminated string. Caller frees.
+ * Returns NULL on allocation failure. Reads binary-clean (UTF-8 JSON, no shell
+ * quoting needed). */
+static char *cli_slurp_stream(FILE *f) {
+    size_t cap = CLI_SLURP_CHUNK;
+    size_t len = 0;
+    char *buf = malloc(cap);
+    if (!buf) {
+        return NULL;
+    }
+    char tmp[CLI_SLURP_CHUNK];
+    size_t n;
+    while ((n = fread(tmp, 1, sizeof(tmp), f)) > 0) {
+        if (len + n + 1 > cap) {
+            while (len + n + 1 > cap) {
+                cap *= 2;
+            }
+            char *nb = realloc(buf, cap);
+            if (!nb) {
+                free(buf);
+                return NULL;
+            }
+            buf = nb;
+        }
+        memcpy(buf + len, tmp, n);
+        len += n;
+    }
+    buf[len] = '\0';
+    return buf;
+}
+
+/* Slurp a file path into a heap, NUL-terminated string. Caller frees. */
+static char *cli_slurp_file(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        return NULL;
+    }
+    char *s = cli_slurp_stream(f);
+    (void)fclose(f);
+    return s;
+}
+
+/* True if the first non-whitespace byte of s is '{' (raw-JSON detection). */
+static bool cli_first_nonspace_is_brace(const char *s) {
+    while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') {
+        s++;
+    }
+    return *s == '{';
+}
+
 static int run_cli(int argc, char **argv) {
     if (argc < MAIN_MIN_ARGC) {
         (void)fprintf(stderr, CLI_USAGE);
@@ -243,7 +302,70 @@ static int run_cli(int argc, char **argv) {
     }
 
     const char *tool_name = argv[0];
-    const char *args_json = argc >= MAIN_CLI_ARGC ? argv[SKIP_ONE] : "{}";
+    int rem_argc = argc - SKIP_ONE; /* args following the tool name */
+    char **rem_argv = argv + SKIP_ONE;
+
+    /* --help / -h : print per-tool help (from the tool's input_schema) and exit
+     * before any server work. */
+    for (int i = 0; i < rem_argc; i++) {
+        if (strcmp(rem_argv[i], "--help") == 0 || strcmp(rem_argv[i], "-h") == 0) {
+            if (cbm_cli_print_tool_help(tool_name) != 0) {
+                (void)fprintf(stderr, "error: unknown tool '%s'\n", tool_name);
+                return SKIP_ONE;
+            }
+            return 0;
+        }
+    }
+
+    /* Resolve the JSON arguments. Precedence: --args-file, then raw JSON
+     * (back-compat), then --flags, then piped stdin, then empty {}. */
+    char *heap_args = NULL; /* freed before return when set */
+    const char *args_json = "{}";
+
+    int args_file_idx = -1;
+    for (int i = 0; i < rem_argc; i++) {
+        if (strcmp(rem_argv[i], "--args-file") == 0) {
+            args_file_idx = i;
+            break;
+        }
+    }
+
+    if (args_file_idx >= 0) {
+        if (args_file_idx + SKIP_ONE >= rem_argc) {
+            (void)fprintf(stderr, "error: --args-file requires a path argument\n");
+            return SKIP_ONE;
+        }
+        const char *path = rem_argv[args_file_idx + SKIP_ONE];
+        heap_args = cli_slurp_file(path);
+        if (!heap_args) {
+            (void)fprintf(stderr, "error: cannot read args file '%s'\n", path);
+            return SKIP_ONE;
+        }
+        args_json = heap_args;
+    } else if (rem_argc >= SKIP_ONE && cli_first_nonspace_is_brace(rem_argv[0])) {
+        /* raw-JSON back-compat: cli <tool> '{"k":"v"}' */
+        args_json = rem_argv[0];
+    } else if (rem_argc >= SKIP_ONE && strncmp(rem_argv[0], "--", 2) == 0) {
+        /* flag form: cli <tool> --flag value --bare-bool ... */
+        char *err = NULL;
+        heap_args = cbm_cli_build_args_json(tool_name, rem_argc, rem_argv, &err);
+        if (!heap_args) {
+            (void)fprintf(stderr, "error: %s\n", err ? err : "invalid arguments");
+            free(err);
+            return SKIP_ONE;
+        }
+        args_json = heap_args;
+    } else if (!cli_isatty(0)) {
+        /* piped stdin (UTF-8 clean, no shell quoting): cli <tool> < args.json */
+        heap_args = cli_slurp_stream(stdin);
+        if (heap_args && heap_args[0]) {
+            args_json = heap_args;
+        } else {
+            free(heap_args);
+            heap_args = NULL;
+            args_json = "{}";
+        }
+    }
 
     if (progress) {
         cbm_progress_sink_init(stderr);
@@ -274,6 +396,7 @@ static int run_cli(int argc, char **argv) {
     if (progress) {
         cbm_progress_sink_fini();
     }
+    free(heap_args);
     return exit_code;
 }
 
@@ -434,7 +557,7 @@ int main(int argc, char **argv) {
                                       * No more untracked heap blind spots. */
     /* Store binary path for subprocess spawning + hook log sink */
     cbm_http_server_set_binary_path(argv[0]);
-    cbm_log_set_sink(cbm_ui_log_append);
+    cbm_log_set_sink_ex(cbm_ui_log_append, CBM_LOG_SINK_TEE);
     cbm_log_info("server.start", "version", CBM_VERSION);
     cbm_diag_start(); /* starts if CBM_DIAGNOSTICS=1 */
 

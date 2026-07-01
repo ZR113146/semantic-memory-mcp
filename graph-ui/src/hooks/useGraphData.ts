@@ -9,9 +9,11 @@ interface UseGraphDataResult {
   fetchDetail: (project: string, centerNode: string) => void;
 }
 
-async function fetchLayout(
+export const GRAPH_RENDER_NODE_LIMIT = 2000;
+
+export async function fetchLayout(
   project: string,
-  maxNodes = 50000,
+  maxNodes = GRAPH_RENDER_NODE_LIMIT,
 ): Promise<GraphData> {
   const params = new URLSearchParams({ project, max_nodes: String(maxNodes) });
   const res = await fetch(`/api/layout?${params}`);
@@ -33,7 +35,7 @@ export function useGraphData(): UseGraphDataResult {
     setLoading(true);
     setError(null);
     try {
-      const result = await fetchLayout(project, 50000);
+      const result = await fetchLayout(project);
       setData(result);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to fetch layout");
@@ -48,7 +50,7 @@ export function useGraphData(): UseGraphDataResult {
       setError(null);
       try {
         /* TODO: detail level with center_node filtering */
-        const result = await fetchLayout(project, 50000);
+        const result = await fetchLayout(project);
         setData(result);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to fetch layout");

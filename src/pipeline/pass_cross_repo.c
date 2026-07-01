@@ -10,6 +10,7 @@
  * get a CROSS_* edge so the link is visible from either side.
  */
 #include "pipeline/pass_cross_repo.h"
+#include "pipeline/pipeline_internal.h" // cbm_route_canon_path
 #include "foundation/constants.h"
 #include "foundation/log.h"
 #include "foundation/platform.h"
@@ -283,10 +284,13 @@ static int match_http_routes(cbm_store_t *src_store, const char *src_project,
             continue;
         }
 
-        /* Build the expected Route QN in the target project */
+        /* Build the expected Route QN in the target project (param-canonicalized
+         * so client url_path matches the server handler regardless of framework
+         * placeholder syntax). */
         char route_qn[CR_QN_BUF];
-        snprintf(route_qn, sizeof(route_qn), "__route__%s__%s", method[0] ? method : "ANY",
-                 url_path);
+        char cpath[CBM_SZ_256];
+        const char *curl = cbm_route_canon_path(url_path, cpath, sizeof(cpath));
+        snprintf(route_qn, sizeof(route_qn), "__route__%s__%s", method[0] ? method : "ANY", curl);
 
         char handler_name[CBM_SZ_256] = {0};
         char handler_file[CBM_SZ_512] = {0};
@@ -295,7 +299,7 @@ static int match_http_routes(cbm_store_t *src_store, const char *src_project,
                                handler_file, sizeof(handler_file));
         if (handler_id == 0) {
             /* Try without method (ANY) */
-            snprintf(route_qn, sizeof(route_qn), "__route__ANY__%s", url_path);
+            snprintf(route_qn, sizeof(route_qn), "__route__ANY__%s", curl);
             handler_id = find_route_handler(tgt_store, route_qn, handler_name, sizeof(handler_name),
                                             handler_file, sizeof(handler_file));
         }

@@ -264,6 +264,68 @@ TEST(resolve_same_module) {
     PASS();
 }
 
+/* A package/namespace-qualified callee whose bare name is defined in several
+ * places must resolve to the package named in the call — not collapse onto a
+ * single winner. Regression for qualified cross-file calls (e.g. Perl
+ * Foo::Bar::sub()) where the same sub name exists in multiple packages. */
+TEST(resolve_qualified_disambiguates_same_name) {
+    cbm_registry_t *r = cbm_registry_new();
+    cbm_registry_add(r, "save", "proj.lib.App.Alpha.save", "Function");
+    cbm_registry_add(r, "save", "proj.lib.App.Beta.save", "Function");
+    cbm_registry_add(r, "save", "proj.lib.App.Gamma.save", "Function");
+
+    /* Each fully-qualified call routes to its own package. */
+    cbm_resolution_t a =
+        cbm_registry_resolve(r, "App::Alpha::save", "proj.lib.App.Caller", NULL, NULL, 0);
+    ASSERT_STR_EQ(a.qualified_name, "proj.lib.App.Alpha.save");
+    ASSERT_STR_EQ(a.strategy, "qualified_suffix");
+
+    cbm_resolution_t b =
+        cbm_registry_resolve(r, "App::Beta::save", "proj.lib.App.Caller", NULL, NULL, 0);
+    ASSERT_STR_EQ(b.qualified_name, "proj.lib.App.Beta.save");
+
+    cbm_resolution_t g =
+        cbm_registry_resolve(r, "App::Gamma::save", "proj.lib.App.Caller", NULL, NULL, 0);
+    ASSERT_STR_EQ(g.qualified_name, "proj.lib.App.Gamma.save");
+
+    /* The dotted callee form (Go/Python/C#) disambiguates identically. */
+    cbm_resolution_t dotted =
+        cbm_registry_resolve(r, "App.Beta.save", "proj.lib.App.Caller", NULL, NULL, 0);
+    ASSERT_STR_EQ(dotted.qualified_name, "proj.lib.App.Beta.save");
+    ASSERT_STR_EQ(dotted.strategy, "qualified_suffix");
+
+    /* A qualified callee whose tail matches NO candidate falls through to the
+     * existing bare-name scoring (never a qualified_suffix result). */
+    cbm_resolution_t nomatch =
+        cbm_registry_resolve(r, "Other::Pkg::save", "proj.lib.App.Caller", NULL, NULL, 0);
+    ASSERT_TRUE(!nomatch.strategy || strcmp(nomatch.strategy, "qualified_suffix") != 0);
+
+    /* A bare call stays ambiguous (no qualifier → no disambiguation signal). */
+    cbm_resolution_t bare =
+        cbm_registry_resolve(r, "save", "proj.lib.App.Caller", NULL, NULL, 0);
+    ASSERT_TRUE(!bare.strategy || strcmp(bare.strategy, "qualified_suffix") != 0);
+
+    cbm_registry_free(r);
+    PASS();
+}
+
+/* When two candidates share the same qualified tail, a qualified callee is
+ * genuinely ambiguous and must fall through to bare-name scoring rather than
+ * pick arbitrarily under the high-confidence qualified_suffix strategy. */
+TEST(resolve_qualified_ambiguous_tail_falls_through) {
+    cbm_registry_t *r = cbm_registry_new();
+    cbm_registry_add(r, "run", "proj.svcA.Foo.Bar.run", "Function");
+    cbm_registry_add(r, "run", "proj.svcB.Foo.Bar.run", "Function");
+
+    /* "Foo::Bar::run" tail matches BOTH candidates → not unique → fall through. */
+    cbm_resolution_t res =
+        cbm_registry_resolve(r, "Foo::Bar::run", "proj.svcA.Caller", NULL, NULL, 0);
+    ASSERT_TRUE(!res.strategy || strcmp(res.strategy, "qualified_suffix") != 0);
+
+    cbm_registry_free(r);
+    PASS();
+}
+
 TEST(resolve_import_map) {
     cbm_registry_t *r = cbm_registry_new();
     cbm_registry_add(r, "Process", "proj.pkg.worker.Process", "Function");
@@ -626,6 +688,60 @@ TEST(fuzzy_no_import_map_passthrough) {
     PASS();
 }
 
+/* ── Perl builtin guard (#459 follow-up: call-graph noise) ───────── */
+
+TEST(perl_builtin_set_recognizes_core_builtins) {
+    /* Representative core builtins from across the sorted set. */
+    ASSERT_TRUE(cbm_perl_is_builtin("push"));
+    ASSERT_TRUE(cbm_perl_is_builtin("shift"));
+    ASSERT_TRUE(cbm_perl_is_builtin("keys"));
+    ASSERT_TRUE(cbm_perl_is_builtin("sprintf"));
+    ASSERT_TRUE(cbm_perl_is_builtin("abs"));   /* first element */
+    ASSERT_TRUE(cbm_perl_is_builtin("write")); /* last element */
+    ASSERT_TRUE(cbm_perl_is_builtin("wantarray"));
+    PASS();
+}
+
+TEST(perl_builtin_set_rejects_project_subs) {
+    /* Genuine project sub names and edge inputs must NOT be flagged. */
+    ASSERT_FALSE(cbm_perl_is_builtin("helper"));
+    ASSERT_FALSE(cbm_perl_is_builtin("process_request"));
+    ASSERT_FALSE(cbm_perl_is_builtin("Push")); /* case-sensitive */
+    ASSERT_FALSE(cbm_perl_is_builtin(""));
+    ASSERT_FALSE(cbm_perl_is_builtin(NULL));
+    PASS();
+}
+
+TEST(perl_suppress_drops_weak_builtin_and_method_matches) {
+    /* #476: a builtin/method call that landed via a WEAK short-name strategy is
+     * generic-resolver noise and must be suppressed. */
+    ASSERT_TRUE(cbm_perl_suppress_generic_match(true, false, "push", "suffix_match"));
+    ASSERT_TRUE(cbm_perl_suppress_generic_match(true, false, "keys", "unique_name"));
+    ASSERT_TRUE(cbm_perl_suppress_generic_match(true, true, "commit", "suffix_match"));
+    ASSERT_TRUE(cbm_perl_suppress_generic_match(true, true, "log", "unique_name"));
+    PASS();
+}
+
+TEST(perl_suppress_keeps_high_confidence_and_genuine_calls) {
+    /* #476: high-confidence strategies are kept so a genuine same-file/imported
+     * call to a builtin-named sub still resolves (criterion d). */
+    ASSERT_FALSE(cbm_perl_suppress_generic_match(true, false, "log", "same_module"));
+    ASSERT_FALSE(cbm_perl_suppress_generic_match(true, false, "open", "import_map"));
+    /* import_map_suffix is a genuine import resolution (conf 0.85), not a weak
+     * short-name guess — a '::'-qualified call resolved this way must be kept. */
+    ASSERT_FALSE(cbm_perl_suppress_generic_match(true, true, "Foo::Bar::m", "import_map_suffix"));
+    ASSERT_FALSE(cbm_perl_suppress_generic_match(true, true, "commit", "same_module"));
+    /* A genuine non-builtin function call is never suppressed (edge survives). */
+    ASSERT_FALSE(cbm_perl_suppress_generic_match(true, false, "helper", "suffix_match"));
+    /* Non-Perl languages are never affected. */
+    ASSERT_FALSE(cbm_perl_suppress_generic_match(false, false, "push", "suffix_match"));
+    ASSERT_FALSE(cbm_perl_suppress_generic_match(false, true, "commit", "suffix_match"));
+    /* No match (NULL/empty strategy) → nothing to suppress. */
+    ASSERT_FALSE(cbm_perl_suppress_generic_match(true, false, "push", NULL));
+    ASSERT_FALSE(cbm_perl_suppress_generic_match(true, true, "commit", ""));
+    PASS();
+}
+
 /* ── Suite ─────────────────────────────────────────────────────── */
 
 SUITE(registry) {
@@ -656,6 +772,8 @@ SUITE(registry) {
     RUN_TEST(registry_no_duplicates);
     /* Resolution */
     RUN_TEST(resolve_same_module);
+    RUN_TEST(resolve_qualified_disambiguates_same_name);
+    RUN_TEST(resolve_qualified_ambiguous_tail_falls_through);
     RUN_TEST(resolve_import_map);
     RUN_TEST(resolve_import_map_bare_function);
     RUN_TEST(resolve_unique_name);
@@ -684,4 +802,10 @@ SUITE(registry) {
     RUN_TEST(fuzzy_resolve_confidence_distance);
     RUN_TEST(fuzzy_penalty_unreachable_import);
     RUN_TEST(fuzzy_no_import_map_passthrough);
+
+    /* Perl builtin guard */
+    RUN_TEST(perl_builtin_set_recognizes_core_builtins);
+    RUN_TEST(perl_builtin_set_rejects_project_subs);
+    RUN_TEST(perl_suppress_drops_weak_builtin_and_method_matches);
+    RUN_TEST(perl_suppress_keeps_high_confidence_and_genuine_calls);
 }

@@ -19,10 +19,12 @@
 #include "ui/layout3d.h"
 #include "mcp/mcp.h"
 #include "store/store.h"
+#include "cli/cli.h"
 /* pipeline.h no longer needed — indexing runs as subprocess */
 #include "foundation/log.h"
 #include "foundation/platform.h"
 #include "foundation/compat.h"
+#include "foundation/compat_fs.h"
 #include "foundation/str_util.h"
 #include "foundation/compat_thread.h"
 
@@ -39,6 +41,7 @@
 #include <process.h>
 #include <psapi.h> /* GetProcessMemoryInfo */
 #else
+#include <sys/stat.h>
 #include <unistd.h>
 #include <sys/wait.h>
 #endif
@@ -77,6 +80,33 @@ static void update_cors(const cbm_http_req_t *req) {
                  "Access-Control-Allow-Headers: Content-Type\r\n");
     }
     snprintf(g_cors_json, sizeof(g_cors_json), "%sContent-Type: application/json\r\n", g_cors);
+}
+
+static const char *detect_ui_lang(const char *accept_language) {
+    if (accept_language && (strstr(accept_language, "zh-CN") || strstr(accept_language, "zh"))) {
+        return "zh";
+    }
+    return "en";
+}
+
+static void handle_ui_config(cbm_http_conn_t *c, const cbm_http_req_t *req) {
+    const char *lang = NULL;
+    char cache_dir[1024];
+    snprintf(cache_dir, sizeof(cache_dir), "%s", cbm_resolve_cache_dir());
+    cbm_config_t *cfg = cbm_config_open(cache_dir);
+    if (cfg) {
+        const char *pinned = cbm_config_get(cfg, CBM_CONFIG_UI_LANG, "auto");
+        if (strcmp(pinned, "zh") == 0 || strcmp(pinned, "en") == 0) {
+            lang = pinned;
+        }
+    }
+
+    char lang_buf[8];
+    snprintf(lang_buf, sizeof(lang_buf), "%s", lang ? lang : detect_ui_lang(req->accept_language));
+    if (cfg) {
+        cbm_config_close(cfg);
+    }
+    cbm_http_replyf(c, 200, g_cors_json, "{\"lang\":\"%s\"}", lang_buf);
 }
 
 /* ── Server state ─────────────────────────────────────────────── */
@@ -247,7 +277,7 @@ static void handle_logs(cbm_http_conn_t *c, const cbm_http_req_t *req) {
 #endif
 #include <signal.h>
 
-/* GET /api/processes — list semantic-memory-mcp processes via ps */
+/* GET /api/processes — list codebase-memory-mcp processes via ps */
 static void handle_processes(cbm_http_conn_t *c) {
     char buf[8192];
     int pos = 0;
@@ -396,6 +426,26 @@ static void handle_process_kill(cbm_http_conn_t *c, const cbm_http_req_t *req) {
 
 #include <dirent.h>
 
+static void append_roots_json(char *buf, size_t bufsz, int *pos) {
+    *pos += snprintf(buf + *pos, bufsz - (size_t)*pos, ",\"roots\":[");
+#ifdef _WIN32
+    DWORD drives = GetLogicalDrives();
+    int count = 0;
+    for (int i = 0; i < 26; i++) {
+        if (!(drives & (1u << i))) {
+            continue;
+        }
+        if (count++ > 0) {
+            buf[(*pos)++] = ',';
+        }
+        *pos += snprintf(buf + *pos, bufsz - (size_t)*pos, "\"%c:/\"", 'A' + i);
+    }
+#else
+    *pos += snprintf(buf + *pos, bufsz - (size_t)*pos, "\"/\"");
+#endif
+    *pos += snprintf(buf + *pos, bufsz - (size_t)*pos, "]");
+}
+
 /* GET /api/browse?path=/some/dir — list subdirectories for file picker */
 static void handle_browse(cbm_http_conn_t *c, const cbm_http_req_t *req) {
     char path[1024] = {0};
@@ -407,6 +457,12 @@ static void handle_browse(cbm_http_conn_t *c, const cbm_http_req_t *req) {
         else
             snprintf(path, sizeof(path), "/");
     }
+
+    /* The browser UI may send Windows backslash separators (e.g.
+     * "D:\projects\demo"). Normalize to forward slashes before the cbm_is_dir
+     * gate, exactly as the MCP repo_path handler and cbm_project_name_from_path
+     * already do — otherwise a real D:/ directory is rejected (#548). */
+    cbm_normalize_path_sep(path);
 
     if (!cbm_is_dir(path)) {
         cbm_http_replyf(c, 400, g_cors_json, "{\"error\":\"not a directory\"}");
@@ -459,15 +515,25 @@ static void handle_browse(cbm_http_conn_t *c, const cbm_http_req_t *req) {
     char parent[1024];
     snprintf(parent, sizeof(parent), "%s", path);
     char *last_slash = strrchr(parent, '/');
-    if (last_slash && last_slash != parent)
+    /* A Windows drive root "X:/" is its own parent (like POSIX "/"): truncating
+     * at the slash would yield the bare drive spec "X:", which the next browse
+     * resolves to the wrong directory and strands the user at the root (#548). */
+    size_t parent_len = strlen(parent);
+    bool is_drive_root = parent_len == 3 && parent[1] == ':' && parent[2] == '/';
+    if (is_drive_root) {
+        /* leave "X:/" unchanged */
+    } else if (last_slash && last_slash != parent) {
         *last_slash = '\0';
-    else
+    } else {
         snprintf(parent, sizeof(parent), "/");
+    }
 
     {
         char esc_parent[2048];
         cbm_json_escape(esc_parent, (int)sizeof(esc_parent), parent);
-        pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "],\"parent\":\"%s\"}", esc_parent);
+        pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "],\"parent\":\"%s\"", esc_parent);
+        append_roots_json(buf, sizeof(buf), &pos);
+        pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "}");
     }
     cbm_http_replyf(c, 200, g_cors_json, "%s", buf);
 }
@@ -582,9 +648,107 @@ static void handle_adr_save(cbm_http_conn_t *c, const cbm_http_req_t *req) {
 
 static char g_binary_path[1024] = {0};
 
+static bool copy_path(char *out, size_t outsz, const char *path) {
+    if (!out || outsz == 0 || !path || !path[0]) {
+        return false;
+    }
+    int n = snprintf(out, outsz, "%s", path);
+    return n > 0 && (size_t)n < outsz;
+}
+
+#ifndef _WIN32
+static bool is_executable_file(const char *path) {
+    struct stat st;
+    return path && stat(path, &st) == 0 && S_ISREG(st.st_mode) && access(path, X_OK) == 0;
+}
+
+static bool resolve_from_path(const char *name, char *out, size_t outsz) {
+    const char *path = getenv("PATH");
+    if (!name || !name[0] || strchr(name, '/') || !path || !path[0]) {
+        return false;
+    }
+
+    const char *cur = path;
+    while (*cur) {
+        const char *colon = strchr(cur, ':');
+        size_t dir_len = colon ? (size_t)(colon - cur) : strlen(cur);
+        if (dir_len > 0 && dir_len < 900) {
+            char candidate[1024];
+            int n = snprintf(candidate, sizeof(candidate), "%.*s/%s", (int)dir_len, cur, name);
+            if (n > 0 && (size_t)n < sizeof(candidate) && is_executable_file(candidate)) {
+                return copy_path(out, outsz, candidate);
+            }
+        }
+        if (!colon) {
+            break;
+        }
+        cur = colon + 1;
+    }
+    return false;
+}
+
+static bool resolve_self_executable(char *out, size_t outsz) {
+#if defined(__APPLE__)
+    char buf[1024];
+    uint32_t sz = sizeof(buf);
+    if (_NSGetExecutablePath(buf, &sz) == 0 && buf[0]) {
+        return copy_path(out, outsz, buf);
+    }
+    return false;
+#else
+    char buf[1024];
+    ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (len > 0) {
+        buf[len] = '\0';
+        return copy_path(out, outsz, buf);
+    }
+    return false;
+#endif
+}
+#else
+static bool resolve_self_executable(char *out, size_t outsz) {
+    char buf[1024];
+    DWORD n = GetModuleFileNameA(NULL, buf, (DWORD)sizeof(buf));
+    if (n > 0 && n < sizeof(buf)) {
+        return copy_path(out, outsz, buf);
+    }
+    return false;
+}
+#endif
+
+bool cbm_http_server_resolve_binary_path(const char *argv0, char *out, size_t outsz) {
+    if (!out || outsz == 0) {
+        return false;
+    }
+    out[0] = '\0';
+
+#ifndef _WIN32
+    if (argv0 && strchr(argv0, '/') && is_executable_file(argv0)) {
+        return copy_path(out, outsz, argv0);
+    }
+    if (resolve_from_path(argv0, out, outsz)) {
+        return true;
+    }
+#else
+    if (argv0 && argv0[0]) {
+        DWORD attrs = GetFileAttributesA(argv0);
+        if (attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+            return copy_path(out, outsz, argv0);
+        }
+    }
+#endif
+
+    if (resolve_self_executable(out, outsz)) {
+        return true;
+    }
+    return copy_path(out, outsz, argv0);
+}
+
 void cbm_http_server_set_binary_path(const char *path) {
     if (path) {
-        snprintf(g_binary_path, sizeof(g_binary_path), "%s", path);
+        if (!cbm_http_server_resolve_binary_path(path, g_binary_path, sizeof(g_binary_path))) {
+            g_binary_path[0] = '\0';
+        }
     }
 }
 
@@ -597,36 +761,24 @@ static void *index_thread_fn(void *arg) {
     const char *bin = g_binary_path;
     char self_path[1024] = {0};
     if (!bin[0]) {
-#ifdef _WIN32
-        GetModuleFileNameA(NULL, self_path, sizeof(self_path));
-#elif defined(__APPLE__)
-        uint32_t sz = sizeof(self_path);
-        _NSGetExecutablePath(self_path, &sz);
-#else
-        ssize_t len = readlink("/proc/self/exe", self_path, sizeof(self_path) - 1);
-        if (len > 0)
-            self_path[len] = '\0';
-#endif
-        bin = self_path[0] ? self_path : "semantic-memory-mcp";
+        cbm_http_server_resolve_binary_path(NULL, self_path, sizeof(self_path));
+        bin = self_path[0] ? self_path : "codebase-memory-mcp";
     }
 
     char log_file[256];
 
-    /* JSON-escape root_path to prevent injection via double-quotes or backslashes */
+    /* JSON-escape root_path and optional project name. */
     char escaped_path[2048];
-    {
-        const char *s = job->root_path;
-        size_t j = 0;
-        for (; *s && j < sizeof(escaped_path) - 2; s++) {
-            if (*s == '"' || *s == '\\') {
-                escaped_path[j++] = '\\';
-            }
-            escaped_path[j++] = *s;
-        }
-        escaped_path[j] = '\0';
-    }
+    cbm_json_escape(escaped_path, (int)sizeof(escaped_path), job->root_path);
+    char escaped_name[512];
+    cbm_json_escape(escaped_name, (int)sizeof(escaped_name), job->project_name);
     char json_arg[4096];
-    snprintf(json_arg, sizeof(json_arg), "{\"repo_path\":\"%s\"}", escaped_path);
+    if (job->project_name[0]) {
+        snprintf(json_arg, sizeof(json_arg), "{\"repo_path\":\"%s\",\"name\":\"%s\"}", escaped_path,
+                 escaped_name);
+    } else {
+        snprintf(json_arg, sizeof(json_arg), "{\"repo_path\":\"%s\"}", escaped_path);
+    }
 
 #ifdef _WIN32
     snprintf(log_file, sizeof(log_file), "%s\\cbm_index_%d.log",
@@ -752,7 +904,7 @@ static void *index_thread_fn(void *arg) {
     return NULL;
 }
 
-/* POST /api/index — body: {"root_path": "/abs/path"} → starts background indexing */
+/* POST /api/index — body: {"root_path": "/abs/path", "project_name": "..."} */
 static void handle_index_start(cbm_http_conn_t *c, const cbm_http_req_t *req) {
     if (req->body_len == 0 || req->body_len > 4096) {
         cbm_http_replyf(c, 400, g_cors_json, "{\"error\":\"invalid body\"}");
@@ -772,6 +924,8 @@ static void handle_index_start(cbm_http_conn_t *c, const cbm_http_req_t *req) {
         return;
     }
     const char *rpath = yyjson_get_str(v_path);
+    yyjson_val *v_project_name = yyjson_obj_get(root, "project_name");
+    const char *project_name = yyjson_is_str(v_project_name) ? yyjson_get_str(v_project_name) : "";
 
     /* Check path exists */
     if (!cbm_is_dir(rpath)) {
@@ -797,6 +951,7 @@ static void handle_index_start(cbm_http_conn_t *c, const cbm_http_req_t *req) {
 
     index_job_t *job = &g_index_jobs[slot];
     snprintf(job->root_path, sizeof(job->root_path), "%s", rpath);
+    snprintf(job->project_name, sizeof(job->project_name), "%s", project_name);
     job->error_msg[0] = '\0';
     atomic_store(&job->status, 1);
     yyjson_doc_free(doc);
@@ -865,42 +1020,6 @@ static void handle_delete_project(cbm_http_conn_t *c, const cbm_http_req_t *req)
 
     cbm_log_info("ui.project.deleted", "name", name);
     cbm_http_replyf(c, 200, g_cors_json, "{\"deleted\":true}");
-}
-
-static void handle_memory_health(cbm_http_conn_t *c, const cbm_http_req_t *req) {
-    char name[256] = {0};
-    if (!cbm_http_query_param(req->query, "project", name, (int)sizeof(name)) || name[0] == '\0') {
-        cbm_http_query_param(req->query, "name", name, (int)sizeof(name));
-    }
-    if (name[0] == '\0') {
-        cbm_http_replyf(c, 400, g_cors_json, "{\"error\":\"missing project\"}");
-        return;
-    }
-    char db_path[1024];
-    db_path_for_project(name, db_path, sizeof(db_path));
-    if (db_path[0] == '\0') {
-        cbm_http_replyf(c, 400, g_cors_json, "{\"error\":\"invalid project\"}");
-        return;
-    }
-    cbm_store_t *store = cbm_store_open_path(db_path);
-    if (!store) {
-        cbm_http_replyf(c, 404, g_cors_json, "{\"error\":\"project not found\"}");
-        return;
-    }
-    cbm_memory_health_t h = {0};
-    int rc = cbm_store_memory_health(store, name, &h);
-    cbm_store_close(store);
-    if (rc != CBM_STORE_OK) {
-        cbm_http_replyf(c, 500, g_cors_json, "{\"error\":\"memory health failed\"}");
-        return;
-    }
-    cbm_http_replyf(c, 200, g_cors_json,
-                    "{\"project\":\"%s\",\"events\":%d,\"items\":%d,\"edges\":%d,"
-                    "\"candidates\":%d,\"active\":%d,\"deprecated\":%d,\"archived\":%d,"
-                    "\"retracted\":%d,\"total_hits\":%lld,\"conflicts\":%d,\"scopes\":%d,\"hit_rate\":%.3f}",
-                    name, h.event_count, h.item_count, h.edge_count, h.candidate_count,
-                    h.active_count, h.deprecated_count, h.archived_count, h.retracted_count,
-                    (long long)h.total_hits, h.conflict_count, h.scope_count, h.hit_rate);
 }
 
 /* GET /api/project-health?name=X — checks db integrity */
@@ -1288,6 +1407,12 @@ static void dispatch_request(cbm_http_server_t *srv, cbm_http_conn_t *c,
         return;
     }
 
+    /* GET /api/ui-config → language and local UI preferences */
+    if (is_get && cbm_http_path_match(req->path, "/api/ui-config")) {
+        handle_ui_config(c, req);
+        return;
+    }
+
     /* DELETE /api/project → delete a project's .db file */
     if (is_delete && cbm_http_path_match(req->path, "/api/project*")) {
         handle_delete_project(c, req);
@@ -1300,19 +1425,13 @@ static void dispatch_request(cbm_http_server_t *srv, cbm_http_conn_t *c,
         return;
     }
 
-    /* GET /memory/health → long-term memory MVP health */
-    if (is_get && cbm_http_path_match(req->path, "/memory/health*")) {
-        handle_memory_health(c, req);
-        return;
-    }
-
-    /* GET /api/adr → fetch a project's ADR content */
+    /* GET /api/adr → get ADR for project */
     if (is_get && cbm_http_path_match(req->path, "/api/adr*")) {
         handle_adr_get(c, req);
         return;
     }
 
-    /* POST /api/adr → save a project's ADR content */
+    /* POST /api/adr → save ADR for project */
     if (is_post && cbm_http_path_match(req->path, "/api/adr")) {
         handle_adr_save(c, req);
         return;
@@ -1324,7 +1443,7 @@ static void dispatch_request(cbm_http_server_t *srv, cbm_http_conn_t *c,
         return;
     }
 
-    /* GET /api/processes → list running semantic-memory-mcp processes */
+    /* GET /api/processes → list running codebase-memory-mcp processes */
     if (is_get && cbm_http_path_match(req->path, "/api/processes")) {
         handle_processes(c);
         return;
@@ -1428,15 +1547,22 @@ void cbm_http_server_run(cbm_http_server_t *srv) {
         if (!conn)
             continue; /* timeout — re-check stop flag */
 
+        uint64_t request_start_ms = cbm_now_ms();
         cbm_http_req_t req;
         int rc = cbm_httpd_read_request(conn, &req);
         if (rc == 0) {
             dispatch_request(srv, conn, &req);
+            cbm_log_http_request("graph_ui", req.method, req.path, cbm_http_conn_status(conn),
+                                 (int64_t)(cbm_now_ms() - request_start_ms), req.body_len,
+                                 cbm_http_conn_response_bytes(conn));
             cbm_http_req_free(&req);
         } else if (rc > 0) {
             /* Parse/transport error with a known HTTP status (400/408/411/413/431).
              * No CORS reflection here — the request was never parsed. */
             cbm_http_replyf(conn, rc, "", "bad request");
+            cbm_log_http_request("graph_ui", "", "", cbm_http_conn_status(conn),
+                                 (int64_t)(cbm_now_ms() - request_start_ms), 0,
+                                 cbm_http_conn_response_bytes(conn));
         }
         cbm_httpd_conn_close(conn);
     }

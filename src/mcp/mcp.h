@@ -54,8 +54,16 @@ char *cbm_jsonrpc_format_error(int64_t id, int code, const char *message);
 /* Format an MCP tool result with text content. Returns heap-allocated JSON. */
 char *cbm_mcp_text_result(const char *text, bool is_error);
 
+/* Return true when notifications/cancelled params target the active request. */
+bool cbm_mcp_cancel_request_matches(const char *params_json, int64_t active_id,
+                                    const char *active_id_str);
+
 /* Format the tools/list response. Returns heap-allocated JSON. */
 char *cbm_mcp_tools_list(void);
+
+/* Return a tool's JSON input_schema string by name (static; do not free), or
+ * NULL if the tool is unknown. Backs the CLI flag parser + per-tool --help. */
+const char *cbm_mcp_tool_input_schema(const char *tool_name);
 
 /* Format the initialize response. params_json is the raw initialize params
  * (used for protocol version negotiation). Returns heap-allocated JSON. */

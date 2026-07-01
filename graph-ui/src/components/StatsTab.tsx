@@ -1,7 +1,8 @@
-import { useMemo, useState, useCallback, useEffect } from "react";
+import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useProjects } from "../hooks/useProjects";
 import { colorForLabel } from "../lib/colors";
+import { useUiMessages } from "../lib/i18n";
 
 interface StatsTabProps {
   onSelectProject: (project: string) => void;
@@ -10,6 +11,7 @@ interface StatsTabProps {
 /* ── Glowy health dot ───────────────────────────────────── */
 
 function HealthDot({ name }: { name: string }) {
+  const t = useUiMessages();
   const [status, setStatus] = useState<"loading" | "healthy" | "corrupt" | "missing">("loading");
   const [info, setInfo] = useState("");
 
@@ -34,9 +36,9 @@ function HealthDot({ name }: { name: string }) {
     status === "corrupt" ? "#f87171" : "#555";
 
   const label =
-    status === "healthy" ? "Database healthy" :
-    status === "missing" ? "Database missing" :
-    status === "corrupt" ? "Database unhealthy" : "Checking...";
+    status === "healthy" ? t.projects.healthHealthy :
+    status === "missing" ? t.projects.healthMissing :
+    status === "corrupt" ? t.projects.healthCorrupt : t.projects.healthChecking;
 
   return (
     <div className="group relative inline-flex items-center">
@@ -64,6 +66,7 @@ function HealthDot({ name }: { name: string }) {
 /* ── ADR button + modal ─────────────────────────────────── */
 
 function AdrButton({ project }: { project: string }) {
+  const t = useUiMessages();
   const [hasAdr, setHasAdr] = useState<boolean | null>(null);
   const [open, setOpen] = useState(false);
   const [content, setContent] = useState("");
@@ -117,13 +120,13 @@ function AdrButton({ project }: { project: string }) {
           <div className="relative bg-[#0e2028] border border-border/40 rounded-2xl p-6 w-full max-w-2xl shadow-2xl max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h3 className="text-[15px] font-semibold text-foreground/90">Architecture Decision Record</h3>
+                <h3 className="text-[15px] font-semibold text-foreground/90">{t.adr.title}</h3>
                 <p className="text-[11px] text-foreground/30 font-mono mt-0.5">{project}</p>
               </div>
               <button onClick={() => setOpen(false)} className="text-foreground/20 hover:text-foreground/50 text-[16px] p-1">×</button>
             </div>
             {updatedAt && (
-              <p className="text-[10px] text-foreground/20 mb-3">Last updated: {updatedAt}</p>
+              <p className="text-[10px] text-foreground/20 mb-3">{t.adr.lastUpdated}: {updatedAt}</p>
             )}
             <textarea
               value={content}
@@ -139,12 +142,12 @@ function AdrButton({ project }: { project: string }) {
                   }}
                   className="px-3 py-2 rounded-lg text-[12px] text-destructive/60 hover:text-destructive hover:bg-destructive/10 font-medium transition-all"
                 >
-                  Delete
+                  {t.common.delete}
                 </button>
               )}
-              <button onClick={() => setOpen(false)} className="px-4 py-2 rounded-lg text-[12px] text-foreground/40 hover:bg-white/[0.04] font-medium transition-all">Cancel</button>
+              <button onClick={() => setOpen(false)} className="px-4 py-2 rounded-lg text-[12px] text-foreground/40 hover:bg-white/[0.04] font-medium transition-all">{t.common.cancel}</button>
               <button onClick={save} disabled={saving} className="px-4 py-2 rounded-lg bg-primary/20 hover:bg-primary/30 text-primary text-[12px] font-medium transition-all disabled:opacity-30">
-                {saving ? "Saving..." : "Save"}
+                {saving ? t.common.saving : t.common.save}
               </button>
             </div>
           </div>
@@ -156,16 +159,30 @@ function AdrButton({ project }: { project: string }) {
 
 /* ── Create Index Modal ─────────────────────────────────── */
 
+function joinPath(base: string, dir: string): string {
+  if (!base || base === "/") return `/${dir}`;
+  if (/^[A-Za-z]:[\\/]?$/.test(base)) return `${base[0]}:/${dir}`;
+  const slash = base.includes("\\") && !base.includes("/") ? "\\" : "/";
+  return `${base.replace(/[\\/]+$/, "")}${slash}${dir}`;
+}
+
 function CreateIndexModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const t = useUiMessages();
   const [currentPath, setCurrentPath] = useState("");
   const [dirs, setDirs] = useState<string[]>([]);
+  const [roots, setRoots] = useState<string[]>(["/"]);
   const [parentPath, setParentPath] = useState("");
+  const [projectName, setProjectName] = useState("");
+  const [filter, setFilter] = useState("");
+  const [activeIndex, setActiveIndex] = useState(0);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const filterRef = useRef<HTMLInputElement>(null);
 
   const browse = useCallback(async (path?: string) => {
     setLoading(true);
+    setError(null);
     try {
       const q = path ? `?path=${encodeURIComponent(path)}` : "";
       const res = await fetch(`/api/browse${q}`);
@@ -173,18 +190,30 @@ function CreateIndexModal({ onClose, onCreated }: { onClose: () => void; onCreat
       if (data.error) throw new Error(data.error);
       setCurrentPath(data.path ?? "");
       setDirs((data.dirs ?? []).sort());
+      setRoots(data.roots ?? ["/"]);
       setParentPath(data.parent ?? "/");
     } catch (e) { setError(e instanceof Error ? e.message : "Browse failed"); }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { browse(); }, [browse]);
+  useEffect(() => { filterRef.current?.focus(); }, []);
 
-  const submit = async () => {
-    if (!currentPath) return;
+  const filteredDirs = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return dirs;
+    return dirs.filter((d) => d.toLowerCase().includes(q));
+  }, [dirs, filter]);
+
+  useEffect(() => { setActiveIndex(0); }, [filter, currentPath]);
+
+  const submit = async (path = currentPath) => {
+    if (!path) return;
     setSubmitting(true); setError(null);
     try {
-      const res = await fetch("/api/index", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ root_path: currentPath }) });
+      const body: { root_path: string; project_name?: string } = { root_path: path };
+      if (projectName.trim()) body.project_name = projectName.trim();
+      const res = await fetch("/api/index", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed");
       onCreated(); onClose();
@@ -192,17 +221,78 @@ function CreateIndexModal({ onClose, onCreated }: { onClose: () => void; onCreat
     finally { setSubmitting(false); }
   };
 
+  const onFilterKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIndex((i) => Math.min(i + 1, Math.max(filteredDirs.length - 1, 0)));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIndex((i) => Math.max(i - 1, 0));
+    } else if (e.key === "Enter" && filteredDirs.length > 0) {
+      e.preventDefault();
+      const dir = filteredDirs.length === 1 ? filteredDirs[0] : filteredDirs[activeIndex];
+      if (filteredDirs.length === 1) void submit(joinPath(currentPath, dir));
+      else void browse(joinPath(currentPath, dir));
+    }
+  };
+
   /* Breadcrumb segments */
-  const segments = currentPath.split("/").filter(Boolean);
+  const displayPath = currentPath.replace(/\\/g, "/");
+  const segments = displayPath.split("/").filter(Boolean);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      <div className="relative bg-[#0e2028] border border-border/40 rounded-2xl w-full max-w-lg shadow-2xl flex flex-col overflow-hidden" style={{ height: "min(70vh, 550px)" }} onClick={(e) => e.stopPropagation()}>
+      <div className="relative bg-[#0e2028] border border-border/40 rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col overflow-hidden" style={{ height: "min(82vh, 680px)" }} onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="px-5 pt-5 pb-3 shrink-0">
-          <h3 className="text-[15px] font-semibold text-foreground/90 mb-1">Select Repository Folder</h3>
-          <p className="text-[12px] text-foreground/30">Navigate to the project root and click "Index This Folder".</p>
+          <h3 className="text-[15px] font-semibold text-foreground/90 mb-1">{t.index.selectRepositoryFolder}</h3>
+          <p className="text-[12px] text-foreground/30">{t.index.instructions}</p>
+        </div>
+
+        <div className="px-5 pb-3 grid grid-cols-[1fr_220px] gap-3 shrink-0">
+          <label className="block">
+            <span className="block text-[10px] uppercase tracking-widest text-foreground/25 mb-1">{t.index.repositoryPath}</span>
+            <input
+              aria-label={t.index.repositoryPath}
+              value={currentPath}
+              onChange={(e) => setCurrentPath(e.target.value)}
+              className="w-full bg-white/[0.04] border border-white/[0.06] rounded-lg px-3 py-2 text-[12px] text-foreground font-mono outline-none focus:border-primary/40"
+            />
+          </label>
+          <label className="block">
+            <span className="block text-[10px] uppercase tracking-widest text-foreground/25 mb-1">{t.index.projectName}</span>
+            <input
+              aria-label={t.index.projectName}
+              value={projectName}
+              placeholder={t.index.projectNamePlaceholder}
+              onChange={(e) => setProjectName(e.target.value)}
+              className="w-full bg-white/[0.04] border border-white/[0.06] rounded-lg px-3 py-2 text-[12px] text-foreground outline-none focus:border-primary/40 placeholder:text-foreground/20"
+            />
+          </label>
+        </div>
+
+        <div className="px-5 pb-3 flex items-center gap-2 shrink-0">
+          <input
+            ref={filterRef}
+            value={filter}
+            placeholder={t.index.filterFolders}
+            onChange={(e) => setFilter(e.target.value)}
+            onKeyDown={onFilterKeyDown}
+            className="flex-1 bg-white/[0.04] border border-white/[0.06] rounded-lg px-3 py-2 text-[12px] text-foreground outline-none focus:border-primary/40 placeholder:text-foreground/20"
+          />
+          <div className="flex items-center gap-1">
+            {roots.map((root) => (
+              <button
+                key={root}
+                aria-label={t.index.browseRoot(root)}
+                onClick={() => browse(root)}
+                className="px-2.5 py-2 rounded-lg bg-white/[0.04] hover:bg-white/[0.07] text-[11px] text-foreground/45 font-mono transition-all"
+              >
+                {root}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Breadcrumb */}
@@ -235,19 +325,34 @@ function CreateIndexModal({ onClose, onCreated }: { onClose: () => void; onCreat
               </button>
             )}
             {loading ? (
-              <p className="text-foreground/20 text-[12px] text-center py-8">Loading...</p>
-            ) : dirs.length === 0 ? (
-              <p className="text-foreground/15 text-[12px] text-center py-8">No subdirectories</p>
+              <p className="text-foreground/20 text-[12px] text-center py-8">{t.common.loading}</p>
+            ) : filteredDirs.length === 0 ? (
+              <p className="text-foreground/15 text-[12px] text-center py-8">{t.index.noSubdirectories}</p>
             ) : (
-              dirs.map((d) => (
-                <button
+              filteredDirs.map((d, i) => (
+                <div
                   key={d}
-                  onClick={() => browse(`${currentPath}/${d}`)}
-                  className="flex items-center gap-2 w-full text-left px-3 py-1.5 rounded-lg hover:bg-white/[0.04] text-[12px] text-foreground/60 transition-colors group"
+                  className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-[12px] transition-colors group ${
+                    i === activeIndex ? "bg-white/[0.05]" : "hover:bg-white/[0.04]"
+                  }`}
                 >
-                  <span className="text-foreground/20 group-hover:text-foreground/40">📁</span>
-                  <span className="truncate">{d}</span>
-                </button>
+                  <button
+                    aria-label={t.index.browseRoot(d)}
+                    onClick={() => browse(joinPath(currentPath, d))}
+                    className="flex min-w-0 flex-1 items-center gap-2 text-left text-foreground/60"
+                  >
+                    <span className="text-foreground/20 group-hover:text-foreground/40">/</span>
+                    <span className="truncate">{d}</span>
+                  </button>
+                  <button
+                    aria-label={t.index.indexDirectory(d)}
+                    onClick={() => submit(joinPath(currentPath, d))}
+                    disabled={submitting}
+                    className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 px-2 py-1 rounded-md bg-primary/15 hover:bg-primary/25 text-primary text-[10px] font-medium transition-all disabled:opacity-30"
+                  >
+                    {t.index.indexThisFolder}
+                  </button>
+                </div>
               ))
             )}
           </div>
@@ -259,9 +364,9 @@ function CreateIndexModal({ onClose, onCreated }: { onClose: () => void; onCreat
           <div className="flex items-center justify-between">
             <p className="text-[11px] text-foreground/25 font-mono truncate max-w-[250px]">{currentPath}</p>
             <div className="flex gap-2 shrink-0">
-              <button onClick={onClose} className="px-3 py-2 rounded-lg text-[12px] text-foreground/40 hover:bg-white/[0.04] font-medium transition-all">Cancel</button>
-              <button onClick={submit} disabled={submitting || !currentPath} className="px-4 py-2 rounded-lg bg-primary/20 hover:bg-primary/30 text-primary text-[12px] font-medium transition-all disabled:opacity-30">
-                {submitting ? "Starting..." : "Index This Folder"}
+              <button onClick={onClose} className="px-3 py-2 rounded-lg text-[12px] text-foreground/40 hover:bg-white/[0.04] font-medium transition-all">{t.common.cancel}</button>
+              <button onClick={() => submit()} disabled={submitting || !currentPath} className="px-4 py-2 rounded-lg bg-primary/20 hover:bg-primary/30 text-primary text-[12px] font-medium transition-all disabled:opacity-30">
+                {submitting ? t.index.starting : t.index.indexThisFolder}
               </button>
             </div>
           </div>
@@ -274,6 +379,7 @@ function CreateIndexModal({ onClose, onCreated }: { onClose: () => void; onCreat
 /* ── Index Progress ─────────────────────────────────────── */
 
 function IndexProgress({ onDone }: { onDone: () => void }) {
+  const t = useUiMessages();
   const [jobs, setJobs] = useState<{ slot: number; status: string; path: string }[]>([]);
   useEffect(() => {
     const poll = setInterval(async () => {
@@ -293,7 +399,7 @@ function IndexProgress({ onDone }: { onDone: () => void }) {
         <div key={j.slot} className="flex items-center gap-3">
           <div className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin shrink-0" />
           <div>
-            <p className="text-[12px] text-primary font-medium">Indexing in progress</p>
+            <p className="text-[12px] text-primary font-medium">{t.projects.indexingInProgress}</p>
             <p className="text-[11px] text-foreground/30 font-mono">{j.path}</p>
           </div>
         </div>
@@ -305,6 +411,7 @@ function IndexProgress({ onDone }: { onDone: () => void }) {
 /* ── Main Stats Tab ─────────────────────────────────────── */
 
 export function StatsTab({ onSelectProject }: StatsTabProps) {
+  const t = useUiMessages();
   const { projects, loading, error, refresh } = useProjects();
   const [showModal, setShowModal] = useState(false);
   const [indexing, setIndexing] = useState(false);
@@ -319,9 +426,9 @@ export function StatsTab({ onSelectProject }: StatsTabProps) {
   }, [projects]);
 
   const deleteProject = useCallback(async (name: string) => {
-    if (!confirm(`Delete index for "${name}"?`)) return;
+    if (!confirm(t.projects.deleteConfirm(name))) return;
     try { await fetch(`/api/project?name=${encodeURIComponent(name)}`, { method: "DELETE" }); refresh(); } catch { /* */ }
-  }, [refresh]);
+  }, [refresh, t.projects]);
 
   return (
     <ScrollArea className="h-full">
@@ -329,9 +436,9 @@ export function StatsTab({ onSelectProject }: StatsTabProps) {
         {projects.length > 0 && (
           <div className="flex gap-4 mb-8">
             {[
-              { label: "Projects", value: aggregate.projects, color: "text-primary" },
-              { label: "Nodes", value: aggregate.nodes, color: "text-foreground/80" },
-              { label: "Edges", value: aggregate.edges, color: "text-foreground/80" },
+              { label: t.tabs.projects, value: aggregate.projects, color: "text-primary" },
+              { label: t.projects.nodes, value: aggregate.nodes, color: "text-foreground/80" },
+              { label: t.projects.edges, value: aggregate.edges, color: "text-foreground/80" },
             ].map((s) => (
               <div key={s.label} className="flex-1 rounded-xl border border-border/30 bg-white/[0.02] p-4">
                 <p className="text-[10px] text-foreground/25 uppercase tracking-widest mb-1">{s.label}</p>
@@ -344,10 +451,10 @@ export function StatsTab({ onSelectProject }: StatsTabProps) {
         {indexing && <IndexProgress onDone={() => { setIndexing(false); refresh(); }} />}
 
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-[15px] font-semibold text-foreground/80">Indexed Projects</h2>
+          <h2 className="text-[15px] font-semibold text-foreground/80">{t.projects.indexedProjects}</h2>
           <div className="flex items-center gap-2">
-            <button onClick={() => setShowModal(true)} className="px-3 py-1.5 rounded-lg bg-primary/15 hover:bg-primary/25 text-primary text-[12px] font-medium transition-all">+ New Index</button>
-            <button onClick={refresh} disabled={loading} className="px-3 py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.07] text-[12px] text-foreground/40 font-medium transition-all disabled:opacity-30">{loading ? "..." : "Refresh"}</button>
+            <button onClick={() => setShowModal(true)} className="px-3 py-1.5 rounded-lg bg-primary/15 hover:bg-primary/25 text-primary text-[12px] font-medium transition-all">+ {t.index.newIndex}</button>
+            <button onClick={refresh} disabled={loading} className="px-3 py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.07] text-[12px] text-foreground/40 font-medium transition-all disabled:opacity-30">{loading ? "..." : t.common.refresh}</button>
           </div>
         </div>
 
@@ -355,8 +462,8 @@ export function StatsTab({ onSelectProject }: StatsTabProps) {
 
         {!loading && projects.length === 0 && !error && (
           <div className="text-center py-20">
-            <p className="text-foreground/25 text-[13px] mb-2">No indexed projects</p>
-            <button onClick={() => setShowModal(true)} className="px-4 py-2 rounded-lg bg-primary/15 hover:bg-primary/25 text-primary text-[12px] font-medium transition-all">Index your first repository</button>
+            <p className="text-foreground/25 text-[13px] mb-2">{t.projects.noIndexedProjects}</p>
+            <button onClick={() => setShowModal(true)} className="px-4 py-2 rounded-lg bg-primary/15 hover:bg-primary/25 text-primary text-[12px] font-medium transition-all">{t.projects.indexFirstRepository}</button>
           </div>
         )}
 
@@ -376,15 +483,15 @@ export function StatsTab({ onSelectProject }: StatsTabProps) {
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
                     <AdrButton project={p.project.name} />
-                    <button onClick={() => onSelectProject(p.project.name)} className="px-3 py-1.5 rounded-lg bg-primary/15 hover:bg-primary/25 text-primary text-[12px] font-medium transition-all">View Graph</button>
-                    <button onClick={() => deleteProject(p.project.name)} className="px-2 py-1.5 rounded-lg hover:bg-destructive/10 text-foreground/20 hover:text-destructive text-[12px] transition-all" title="Delete index">✕</button>
+                    <button onClick={() => onSelectProject(p.project.name)} className="px-3 py-1.5 rounded-lg bg-primary/15 hover:bg-primary/25 text-primary text-[12px] font-medium transition-all">{t.projects.viewGraph}</button>
+                    <button onClick={() => deleteProject(p.project.name)} className="px-2 py-1.5 rounded-lg hover:bg-destructive/10 text-foreground/20 hover:text-destructive text-[12px] transition-all" title={t.projects.deleteTitle}>✕</button>
                   </div>
                 </div>
                 {p.schema && (
                   <>
                     <div className="flex gap-6 text-[12px] text-foreground/30 mb-3">
-                      <span><strong className="text-foreground/55 tabular-nums">{totalNodes.toLocaleString()}</strong> nodes</span>
-                      <span><strong className="text-foreground/55 tabular-nums">{totalEdges.toLocaleString()}</strong> edges</span>
+                      <span><strong className="text-foreground/55 tabular-nums">{totalNodes.toLocaleString()}</strong> {t.projects.nodes}</span>
+                      <span><strong className="text-foreground/55 tabular-nums">{totalEdges.toLocaleString()}</strong> {t.projects.edges}</span>
                     </div>
                     <div className="flex flex-wrap gap-1">
                       {p.schema.node_labels?.map((l) => (
