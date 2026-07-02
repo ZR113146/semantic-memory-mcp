@@ -17,13 +17,15 @@
 #include <yyjson/yyjson.h>
 
 #include <math.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 
 /* ── Constants ────────────────────────────────────────────────── */
 
-#define DEFAULT_MAX_NODES 50000
+#define DEFAULT_MAX_NODES 2000
+#define HARD_MAX_NODES 10000
 #define BH_THETA 1.2f
 
 /* Local optimization: gentle, preserves structure */
@@ -108,6 +110,31 @@ static uint32_t fnv1a(const char *s) {
 static float rand_float(uint32_t *seed) {
     *seed = (*seed) * 1103515245u + 12345u;
     return (float)((*seed >> 16) & 0x7FFF) / 32768.0f - 0.5f;
+}
+
+static int render_node_limit(void) {
+    const char *raw = getenv("CBM_UI_MAX_RENDER_NODES");
+    if (!raw || !raw[0]) {
+        return DEFAULT_MAX_NODES;
+    }
+    errno = 0;
+    char *end = NULL;
+    long v = strtol(raw, &end, 10);
+    if (errno != 0 || end == raw || *end != '\0' || v <= 0) {
+        return DEFAULT_MAX_NODES;
+    }
+    if (v > HARD_MAX_NODES) {
+        return HARD_MAX_NODES;
+    }
+    return (int)v;
+}
+
+static int clamp_max_nodes(int requested) {
+    int cap = render_node_limit();
+    if (requested <= 0 || requested > cap) {
+        return cap;
+    }
+    return requested;
 }
 
 /* ── Barnes-Hut Octree ────────────────────────────────────────── */
@@ -387,8 +414,7 @@ cbm_layout_result_t *cbm_layout_compute(cbm_store_t *store, const char *project,
                                         int radius, int max_nodes) {
     if (!store || !project)
         return NULL;
-    if (max_nodes <= 0)
-        max_nodes = DEFAULT_MAX_NODES;
+    max_nodes = clamp_max_nodes(max_nodes);
     (void)center_node;
     (void)radius;
     (void)level;

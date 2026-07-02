@@ -251,7 +251,7 @@ TEST(artifact_export_rename_failure_logs_specific_error) {
     create_test_db(g_db);
 
     char art_dir[1024];
-    snprintf(art_dir, sizeof(art_dir), "%s/.codebase-memory", g_repo);
+    snprintf(art_dir, sizeof(art_dir), "%s/.semantic-memory", g_repo);
     cbm_mkdir_p(art_dir, 0755);
 
     char zst[1024];
@@ -283,7 +283,7 @@ TEST(pipeline_persistence_export_failure_returns_error) {
     write_text_file(src, "int main(void) { return 0; }\n");
 
     char art_dir[1024];
-    snprintf(art_dir, sizeof(art_dir), "%s/.codebase-memory", g_repo);
+    snprintf(art_dir, sizeof(art_dir), "%s/.semantic-memory", g_repo);
     cbm_mkdir_p(art_dir, 0755);
 
     char zst[1024];
