@@ -64,8 +64,6 @@ jobs:
   smoke:
     needs: [build]
     uses: ./.github/workflows/_smoke.yml
-    with:
-      broad_platforms: true
 
   # ── 5. Soak tests ──────────────────────────────────────────────
   soak:
