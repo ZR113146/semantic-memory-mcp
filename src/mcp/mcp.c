@@ -4884,8 +4884,8 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     /* Resolve the store early so we can write the audit event even for rejected writes.
      * Write path: create-if-absent so a pure-memory project's first write builds its DB.
      * Global writes go to the cross-project store instead of the per-project one. */
-    cbm_store_t *store =
-        is_global ? resolve_global_memory_store(srv, true) : resolve_memory_store(srv, project, true);
+    cbm_store_t *store = is_global ? resolve_global_memory_store(srv, true)
+                                   : resolve_memory_store(srv, project, true);
 
     if (strcmp(policy_decision, "rejected") == 0) {
         /* Write a lightweight audit.rejected event so policy decisions are traceable
@@ -5413,8 +5413,8 @@ static char *handle_memories_inspect(cbm_mcp_server_t *srv, const char *args) {
     cbm_store_t *store = is_global ? resolve_global_memory_store(srv, false)
                                    : resolve_memory_store(srv, project, false);
     if (!store) {
-        char *_err = build_project_list_error(
-            is_global ? "no global memories yet" : "project not found or not indexed");
+        char *_err = build_project_list_error(is_global ? "no global memories yet"
+                                                        : "project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
         free(_err);
         free(project);
@@ -5676,8 +5676,8 @@ static char *handle_admin_consolidate(cbm_mcp_server_t *srv, const char *args) {
     cbm_store_t *store = is_global ? resolve_global_memory_store(srv, false)
                                    : resolve_memory_store(srv, project, false);
     if (!store) {
-        char *_err = build_project_list_error(
-            is_global ? "no global memories yet" : "project not found or not indexed");
+        char *_err = build_project_list_error(is_global ? "no global memories yet"
+                                                        : "project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
         free(_err);
         free(project);
@@ -5719,8 +5719,8 @@ static char *handle_admin_decay(cbm_mcp_server_t *srv, const char *args) {
     cbm_store_t *store = is_global ? resolve_global_memory_store(srv, false)
                                    : resolve_memory_store(srv, project, false);
     if (!store) {
-        char *_err = build_project_list_error(
-            is_global ? "no global memories yet" : "project not found or not indexed");
+        char *_err = build_project_list_error(is_global ? "no global memories yet"
+                                                        : "project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
         free(_err);
         free(project);
@@ -5753,8 +5753,8 @@ static char *handle_memory_health(cbm_mcp_server_t *srv, const char *args) {
     cbm_store_t *store = is_global ? resolve_global_memory_store(srv, false)
                                    : resolve_memory_store(srv, project, false);
     if (!store) {
-        char *_err = build_project_list_error(
-            is_global ? "no global memories yet" : "project not found or not indexed");
+        char *_err = build_project_list_error(is_global ? "no global memories yet"
+                                                        : "project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
         free(_err);
         free(project);

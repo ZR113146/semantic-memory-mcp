@@ -894,13 +894,14 @@ static void handle_memory_health(cbm_http_conn_t *c, const cbm_http_req_t *req) 
         cbm_http_replyf(c, 500, g_cors_json, "{\"error\":\"memory health failed\"}");
         return;
     }
-    cbm_http_replyf(c, 200, g_cors_json,
-                    "{\"project\":\"%s\",\"events\":%d,\"items\":%d,\"edges\":%d,"
-                    "\"candidates\":%d,\"active\":%d,\"deprecated\":%d,\"archived\":%d,"
-                    "\"retracted\":%d,\"total_hits\":%lld,\"conflicts\":%d,\"scopes\":%d,\"hit_rate\":%.3f}",
-                    name, h.event_count, h.item_count, h.edge_count, h.candidate_count,
-                    h.active_count, h.deprecated_count, h.archived_count, h.retracted_count,
-                    (long long)h.total_hits, h.conflict_count, h.scope_count, h.hit_rate);
+    cbm_http_replyf(
+        c, 200, g_cors_json,
+        "{\"project\":\"%s\",\"events\":%d,\"items\":%d,\"edges\":%d,"
+        "\"candidates\":%d,\"active\":%d,\"deprecated\":%d,\"archived\":%d,"
+        "\"retracted\":%d,\"total_hits\":%lld,\"conflicts\":%d,\"scopes\":%d,\"hit_rate\":%.3f}",
+        name, h.event_count, h.item_count, h.edge_count, h.candidate_count, h.active_count,
+        h.deprecated_count, h.archived_count, h.retracted_count, (long long)h.total_hits,
+        h.conflict_count, h.scope_count, h.hit_rate);
 }
 
 /* GET /api/project-health?name=X — checks db integrity */
