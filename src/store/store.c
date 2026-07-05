@@ -4741,7 +4741,7 @@ int cbm_store_memory_decay(cbm_store_t *s, const char *project, int limit, int *
     int lim = limit > 0 ? limit : 100;
     int64_t now = memory_now_ms();
     const char *sql =
-        "SELECT id,last_hit_at,confidence,reusability,decay FROM memory_item WHERE status='active' "
+        "SELECT id,last_hit_at,confidence,reusability,importance,decay FROM memory_item WHERE status='active' "
         "AND deleted_at IS NULL AND (?1 IS NULL OR scope_project=?1) LIMIT ?2;";
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK)
@@ -4764,12 +4764,13 @@ int cbm_store_memory_decay(cbm_store_t *s, const char *project, int limit, int *
         double confidence = sqlite3_column_double(stmt, 2);
         double reusability = sqlite3_column_double(stmt, 3);
         double old_decay = sqlite3_column_double(stmt, 4);
+        double importance = sqlite3_column_double(stmt, 5);
         int64_t age_ms = last_hit > 0 ? now - last_hit : 30LL * 24LL * 60LL * 60LL * 1000LL;
         if (age_ms < 0)
             age_ms = 0;
         double age_days = (double)age_ms / (1000.0 * 60.0 * 60.0 * 24.0);
         double next_decay =
-            old_decay + (age_days / 30.0) * (1.0 - confidence) * (1.0 - reusability);
+            old_decay + (age_days / 30.0) * (1.0 - confidence) * (1.0 - reusability) * (1.0 - importance);
         const char *status = next_decay >= 1.0 ? "archived" : "active";
         sqlite3_stmt *up = NULL;
         if (sqlite3_prepare_v2(
