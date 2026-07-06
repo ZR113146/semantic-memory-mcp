@@ -4985,6 +4985,9 @@ int cbm_store_memory_adr_list(cbm_store_t *s, const char *project, const char *k
 
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
+        store_set_error_sqlite(s, "adr_list_prepare");
+        return CBM_STORE_ERR;
+    }
 
     bind_text(stmt, 1, project);
     int bind_idx = 2;
@@ -5045,7 +5048,7 @@ int cbm_store_memory_adr_list(cbm_store_t *s, const char *project, const char *k
     {
         size_t len = 0;
         char *s = yyjson_mut_write(doc, YYJSON_WRITE_ALLOW_INVALID_UNICODE, &len);
-        *out_json = heap_strndup(s ? s : "{}", s ? (int)len : 2);
+        *out_json = heap_strdup(s ? s : "{}");
         free(s);
     }
     yyjson_mut_doc_free(doc);
