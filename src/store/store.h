@@ -563,6 +563,15 @@ int cbm_store_memory_health(cbm_store_t *s, const char *project, cbm_memory_heal
 void cbm_store_memory_item_free(cbm_memory_item_t *item);
 void cbm_store_memory_result_free(cbm_memory_result_t *out);
 
+/* P1: ADR list — structured query for decision/constraint-class memories.
+ * Returns a JSON array of matching items (projection: id, kind, layer, title,
+ * summary, entity_key, status, importance, hit_count, decay, version,
+ * supersedes, created_at, updated_at). Filters by scope_project, kind,
+ * status, and entity_key. Caller must free the returned string. */
+int cbm_store_memory_adr_list(cbm_store_t *s, const char *project, const char *kind_filter,
+                              const char *status_filter, const char *entity_key_filter,
+                              int limit, char **out_json);
+
 /* ── Search ─────────────────────────────────────────────────────── */
 
 int cbm_store_search(cbm_store_t *s, const cbm_search_params_t *params, cbm_search_output_t *out);
@@ -722,7 +731,12 @@ int cbm_store_get_architecture(cbm_store_t *s, const char *project, const char *
                                int aspect_count, cbm_architecture_info_t *out);
 void cbm_store_architecture_free(cbm_architecture_info_t *out);
 
-/* ── ADR (Architecture Decision Record) ────────────────────────── */
+/* ── ADR (Architecture Decision Record) ──────────────────────────
+ * DEPRECATED (2026-07-07): the project_summaries-based ADR store is dead code.
+ * All ADR content now lives in memory_item (kind='decision',layer='adr') via
+ * the MCP events tool. The store functions below are kept for backward
+ * compatibility with the HTTP API and Graph UI, which are also deprecated.
+ * New ADR queries should use cbm_store_memory_adr_list (below). */
 
 #define CBM_ADR_MAX_LENGTH 8000
 

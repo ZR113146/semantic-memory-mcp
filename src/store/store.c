@@ -76,6 +76,7 @@ enum {
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
+#include "yyjson/yyjson.h"
 
 /* ── SQLite bind helpers ───────────────────────────────────────── */
 
@@ -3765,12 +3766,27 @@ int cbm_store_memory_mark_hits(cbm_store_t *s, const char **ids, int count, int6
     }
     /* A successful recall is the strongest "still useful" signal (framework §6 principle 6,
      * §11.2): bump the hit counter, refresh recency, and let accumulated decay fall back so a
-     * repeatedly-recalled item climbs back from the archival threshold. */
-    const char *sql = "UPDATE memory_item SET hit_count=hit_count+1,last_hit_at=?1,"
-                      "decay=MAX(0.0,decay-0.10),updated_at=?1 WHERE id=?2;";
-    sqlite3_stmt *stmt = NULL;
-    if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
-        store_set_error_sqlite(s, "memory_hit_prepare");
+     * repeatedly-recalled item climbs back from the archival threshold.
+     *
+     * P2: ADR items (kind='decision','constraint') use a gentler decay penalty (-0.07 instead
+     * of -0.10). ADRs encode "why" knowledge whose half-life is inherently longer than general
+     * episodic entries, so a recall should not erase as much accumulated decay. The hit is
+     * still registered — only the decay-recovery gradient differs. */
+    const char *sql_adr =
+        "UPDATE memory_item SET hit_count=hit_count+1,last_hit_at=?1,"
+        "decay=MAX(0.0,decay-0.07),updated_at=?1 WHERE id=?2 AND kind IN ('decision','constraint');";
+    const char *sql_gen =
+        "UPDATE memory_item SET hit_count=hit_count+1,last_hit_at=?1,"
+        "decay=MAX(0.0,decay-0.10),updated_at=?1 WHERE id=?2;";
+    sqlite3_stmt *stmt_adr = NULL;
+    sqlite3_stmt *stmt_gen = NULL;
+    if (sqlite3_prepare_v2(s->db, sql_adr, CBM_NOT_FOUND, &stmt_adr, NULL) != SQLITE_OK) {
+        store_set_error_sqlite(s, "memory_hit_prepare_adr");
+        return CBM_STORE_ERR;
+    }
+    if (sqlite3_prepare_v2(s->db, sql_gen, CBM_NOT_FOUND, &stmt_gen, NULL) != SQLITE_OK) {
+        sqlite3_finalize(stmt_adr);
+        store_set_error_sqlite(s, "memory_hit_prepare_gen");
         return CBM_STORE_ERR;
     }
     int64_t ts = now_ms > 0 ? now_ms : memory_now_ms();
@@ -3778,13 +3794,24 @@ int cbm_store_memory_mark_hits(cbm_store_t *s, const char **ids, int count, int6
         if (!ids[i]) {
             continue;
         }
-        sqlite3_reset(stmt);
-        sqlite3_clear_bindings(stmt);
-        sqlite3_bind_int64(stmt, 1, ts);
-        bind_text(stmt, 2, ids[i]);
-        (void)sqlite3_step(stmt);
+        /* Try the ADR-preferring statement first; if it matches no row (the item is
+         * not a decision/constraint), the generic statement catches it on the next try. */
+        sqlite3_reset(stmt_adr);
+        sqlite3_clear_bindings(stmt_adr);
+        sqlite3_bind_int64(stmt_adr, 1, ts);
+        bind_text(stmt_adr, 2, ids[i]);
+        int rc = sqlite3_step(stmt_adr);
+        if (rc == SQLITE_DONE && sqlite3_changes(s->db) == 0) {
+            /* Not an ADR item — apply the generic decay penalty. */
+            sqlite3_reset(stmt_gen);
+            sqlite3_clear_bindings(stmt_gen);
+            sqlite3_bind_int64(stmt_gen, 1, ts);
+            bind_text(stmt_gen, 2, ids[i]);
+            (void)sqlite3_step(stmt_gen);
+        }
     }
-    sqlite3_finalize(stmt);
+    sqlite3_finalize(stmt_adr);
+    sqlite3_finalize(stmt_gen);
     return CBM_STORE_OK;
 }
 
@@ -4911,6 +4938,117 @@ int cbm_store_memory_maintain_if_due(cbm_store_t *s, const char *project,
         }
     }
 
+    return CBM_STORE_OK;
+}
+
+/* P1: ADR list — structured query for decision/constraint-class memories. */
+#define ADR_LIST_COLUMNS                                                                    \
+    "id,kind,layer,COALESCE(title,summary) AS title,summary,entity_key,status,"             \
+    "importance,confidence,reusability,specificity,hit_count,decay,version,"                 \
+    "supersedes,created_at,updated_at"
+#define ADR_LIST_COL_COUNT 17
+
+int cbm_store_memory_adr_list(cbm_store_t *s, const char *project, const char *kind_filter,
+                              const char *status_filter, const char *entity_key_filter, int limit,
+                              char **out_json) {
+    if (!s || !s->db || !project || !out_json) {
+        return CBM_STORE_ERR;
+    }
+    if (limit <= 0 || limit > 200) {
+        limit = 50;
+    }
+
+    /* Build the SQL with fixed string concatenation — avoids dynstr_t
+     * dependency (that type lives in the MCP/cli layer). */
+    char sql[2048];
+    int pos = 0;
+    pos += snprintf(sql + pos, sizeof(sql) - pos,
+                    "SELECT " ADR_LIST_COLUMNS " FROM memory_item "
+                    "WHERE scope_project=?1 AND deleted_at IS NULL");
+    int param_idx = 2;
+    if (kind_filter && kind_filter[0]) {
+        pos += snprintf(sql + pos, sizeof(sql) - pos, " AND kind=?%d", param_idx++);
+    } else {
+        pos += snprintf(sql + pos, sizeof(sql) - pos,
+                        " AND kind IN ('\''decision'\'','\''constraint'\'')");
+    }
+    if (status_filter && status_filter[0]) {
+        pos += snprintf(sql + pos, sizeof(sql) - pos, " AND status=?%d", param_idx++);
+    }
+    if (entity_key_filter && entity_key_filter[0]) {
+        pos += snprintf(sql + pos, sizeof(sql) - pos, " AND entity_key=?%d", param_idx++);
+    }
+    pos += snprintf(sql + pos, sizeof(sql) - pos,
+                    " ORDER BY (importance+confidence+reusability+specificity+hit_count-decay) "
+                    "DESC, updated_at DESC LIMIT ?%d;",
+                    param_idx);
+
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
+
+    bind_text(stmt, 1, project);
+    int bind_idx = 2;
+    if (kind_filter && kind_filter[0]) {
+        bind_text(stmt, bind_idx++, kind_filter);
+    }
+    if (status_filter && status_filter[0]) {
+        bind_text(stmt, bind_idx++, status_filter);
+    }
+    if (entity_key_filter && entity_key_filter[0]) {
+        bind_text(stmt, bind_idx++, entity_key_filter);
+    }
+    sqlite3_bind_int(stmt, bind_idx, limit);
+
+    /* Collect rows into a JSON array. */
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_str(doc, root, "project", project);
+    yyjson_mut_val *items = yyjson_mut_arr(doc);
+    yyjson_mut_obj_add_val(doc, root, "items", items);
+
+    int total = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        yyjson_mut_val *obj = yyjson_mut_obj(doc);
+        yyjson_mut_obj_add_strcpy(doc, obj, "id", (const char *)sqlite3_column_text(stmt, 0));
+        yyjson_mut_obj_add_strcpy(doc, obj, "kind", (const char *)sqlite3_column_text(stmt, 1));
+        yyjson_mut_obj_add_strcpy(doc, obj, "layer", (const char *)sqlite3_column_text(stmt, 2));
+        yyjson_mut_obj_add_strcpy(doc, obj, "title",
+                                   (const char *)sqlite3_column_text(stmt, 3));
+        yyjson_mut_obj_add_strcpy(doc, obj, "summary",
+                                   (const char *)sqlite3_column_text(stmt, 4));
+        yyjson_mut_obj_add_strcpy(doc, obj, "entity_key",
+                                   (const char *)sqlite3_column_text(stmt, 5));
+        yyjson_mut_obj_add_strcpy(doc, obj, "status",
+                                   (const char *)sqlite3_column_text(stmt, 6));
+        yyjson_mut_obj_add_real(doc, obj, "importance", sqlite3_column_double(stmt, 7));
+        yyjson_mut_obj_add_real(doc, obj, "confidence", sqlite3_column_double(stmt, 8));
+        yyjson_mut_obj_add_real(doc, obj, "reusability", sqlite3_column_double(stmt, 9));
+        yyjson_mut_obj_add_real(doc, obj, "specificity", sqlite3_column_double(stmt, 10));
+        yyjson_mut_obj_add_int(doc, obj, "hit_count", sqlite3_column_int(stmt, 11));
+        yyjson_mut_obj_add_real(doc, obj, "decay", sqlite3_column_double(stmt, 12));
+        yyjson_mut_obj_add_int(doc, obj, "version", sqlite3_column_int(stmt, 13));
+        {
+            const char *sup = (const char *)sqlite3_column_text(stmt, 14);
+            if (sup && sup[0]) {
+                yyjson_mut_obj_add_strcpy(doc, obj, "supersedes", sup);
+            }
+        }
+        yyjson_mut_obj_add_int(doc, obj, "created_at", (int64_t)sqlite3_column_int64(stmt, 15));
+        yyjson_mut_obj_add_int(doc, obj, "updated_at", (int64_t)sqlite3_column_int64(stmt, 16));
+        yyjson_mut_arr_append(items, obj);
+        total++;
+    }
+    sqlite3_finalize(stmt);
+
+    yyjson_mut_obj_add_int(doc, root, "total", total);
+    {
+        size_t len = 0;
+        char *s = yyjson_mut_write(doc, YYJSON_WRITE_ALLOW_INVALID_UNICODE, &len);
+        *out_json = heap_strndup(s ? s : "{}", s ? (int)len : 2);
+        free(s);
+    }
+    yyjson_mut_doc_free(doc);
     return CBM_STORE_OK;
 }
 
@@ -8378,7 +8516,12 @@ void cbm_store_architecture_free(cbm_architecture_info_t *out) {
     memset(out, 0, sizeof(*out));
 }
 
-/* ── ADR (Architecture Decision Record) ────────────────────────── */
+/* ── ADR (Architecture Decision Record) ──────────────────────────
+ * DEPRECATED (2026-07-07): the project_summaries-based ADR store is dead code.
+ * All ADR content now lives in memory_item (kind='decision',layer='adr') via
+ * the MCP events tool. Callers should use cbm_store_memory_adr_list.
+ * The functions below are kept for backward compatibility with the HTTP API
+ * and Graph UI, which are also deprecated. */
 
 static const char *canonical_sections[] = {"PURPOSE",  "STACK",     "ARCHITECTURE",
                                            "PATTERNS", "TRADEOFFS", "PHILOSOPHY"};

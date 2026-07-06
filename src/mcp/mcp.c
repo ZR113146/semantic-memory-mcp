@@ -544,6 +544,21 @@ static const tool_def_t TOOLS[] = {
      "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"}},"
      "\"required\":[\"project\"]}"},
 
+    {"adr_list",
+     "List architectural decision records (kind='decision','constraint') for a project "
+     "as a human-browsable, filterable index. Returns id, title, summary, entity_key, "
+     "layer, status, scores, hit_count, version, and supersedes chain info. "
+     "Optional filters: kind, status, entity_key, limit (default 50, max 200). "
+     "This is the ADR equivalent of MEMORY.md — a structured table of contents for "
+     "project-level architectural rationale.",
+     "{\"type\":\"object\",\"properties\":{"
+     "\"project\":{\"type\":\"string\",\"description\":\"Project name (required)\"},"
+     "\"kind\":{\"type\":\"string\",\"description\":\"Filter: decision, constraint\"},"
+     "\"status\":{\"type\":\"string\",\"description\":\"Filter: active, archived, candidate\"},"
+     "\"entity_key\":{\"type\":\"string\",\"description\":\"Exact entity_key match\"},"
+     "\"limit\":{\"type\":\"integer\",\"description\":\"Max items (1-200, default 50)\"}},"
+     "\"required\":[\"project\"]}"},
+
     {"describe_tool",
      "Return the full usage guide (complete description + parameter docs) for one of this "
      "server's tools. The tools/list payload is kept slim to save context; call this when you "
@@ -632,6 +647,7 @@ static bool is_admin_tool(const char *name) {
         "delete_project",       "index_status",    "memories_inspect",
         "memory_update_status", "memory_feedback", "memory_delete",
         "admin_consolidate",    "admin_decay",     "memory_health",
+        "adr_list",
     };
     for (size_t i = 0; i < sizeof(ADMIN_TOOLS) / sizeof(ADMIN_TOOLS[0]); i++) {
         if (strcmp(name, ADMIN_TOOLS[i]) == 0) {
@@ -4610,6 +4626,72 @@ static cbm_store_t *resolve_memory_store(cbm_mcp_server_t *srv, const char *proj
     return srv->mem_store;
 }
 
+/* P1: handle_adr_list — structured ADR index for human browsing and tool use.
+ * Mirrors the MEMORY.md concept: a browsable, filterable list of architectural
+ * decisions instead of an opaque full-text-retrieval-only store.
+ * MUST be defined after normalize_phantom_project and resolve_memory_store. */
+static char *handle_adr_list(cbm_mcp_server_t *srv, const char *args) {
+    yyjson_doc *adoc = yyjson_read(args ? args : "{}", args ? strlen(args) : 2, 0);
+    if (!adoc)
+        return cbm_mcp_text_result("invalid JSON arguments", true);
+
+    char *project = memory_arg_string_dup(adoc, "project");
+    char *kind = memory_arg_string_dup(adoc, "kind");
+    char *status = memory_arg_string_dup(adoc, "status");
+    char *entity_key = memory_arg_string_dup(adoc, "entity_key");
+    int limit = 50;
+    {
+        yyjson_val *lv = yyjson_obj_get(yyjson_doc_get_root(adoc), "limit");
+        if (lv && yyjson_is_int(lv)) {
+            int v = (int)yyjson_get_int(lv);
+            if (v > 0 && v <= 200)
+                limit = v;
+        }
+    }
+    yyjson_doc_free(adoc);
+
+    if (!project) {
+        free(kind);
+        free(status);
+        free(entity_key);
+        return cbm_mcp_text_result("project is required", true);
+    }
+    /* Normalize phantom names so adr_list works on "-memory" aliases. */
+    {
+        char *canon = normalize_phantom_project(project);
+        if (canon) {
+            free(project);
+            project = canon;
+        }
+    }
+
+    cbm_store_t *store = resolve_memory_store(srv, project, false);
+    if (!store) {
+        char *err = build_project_list_error("project not found or not indexed");
+        char *res = cbm_mcp_text_result(err, true);
+        free(err);
+        free(project);
+        free(kind);
+        free(status);
+        free(entity_key);
+        return res;
+    }
+
+    char *json = NULL;
+    int rc = cbm_store_memory_adr_list(store, project, kind, status, entity_key, limit, &json);
+    free(project);
+    free(kind);
+    free(status);
+    free(entity_key);
+
+    if (rc != CBM_STORE_OK || !json) {
+        return cbm_mcp_text_result("failed to query ADR list", true);
+    }
+    char *result = cbm_mcp_text_result(json, false);
+    free(json);
+    return result;
+}
+
 /* Resolve the global (cross-project) memory store: <cache>/__global__-memory.db.
  * Held in its own srv->global_mem_store slot, independent of the per-project
  * mem_store, so a project switch never evicts it. Union-merged with the project
@@ -5023,12 +5105,36 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     snprintf(source_ids, sizeof(source_ids), "[\"%s\"]", event_id ? event_id : "");
     cbm_memory_item_t item = {0};
     item.kind = kind ? kind : "event";
-    item.layer = layer ? layer : "episodic";
-    /* No poisoned default: if the writer gave no title, store NULL rather than
-     * the useless "memory.event" literal. Display/recall falls back to summary
-     * (which always carries the query-like conclusion). event.type keeps its
-     * "memory.event" default above — that is the event TYPE, a separate field. */
+    /* P0-a: ADR identity — decision and constraint memories default to layer "adr"
+     * instead of "episodic" so they are fetchable, rankable, and decay-tunable as a
+     * distinct class. An explicit layer argument always wins. */
+    item.layer = layer ? layer
+                       : ((kind && (strcmp(kind, "decision") == 0 ||
+                                    strcmp(kind, "constraint") == 0))
+                              ? "adr"
+                              : "episodic");
+    /* P0-b: for decision-class items without a title, derive one from the summary
+     * (first sentence, up to CBM_SZ_128 chars). Summary always carries the query-like
+     * conclusion so it makes a far better display label than a NULL fallback. */
+    char *derived_title = NULL;
     item.title = title;
+    if (!item.title && summary && summary[0] && kind &&
+        (strcmp(kind, "decision") == 0 || strcmp(kind, "constraint") == 0)) {
+        char title_buf[CBM_SZ_128];
+        int tl = 0;
+        while (summary[tl] && summary[tl] != '\n' && tl < (int)sizeof(title_buf) - 1) {
+            title_buf[tl] = summary[tl];
+            tl++;
+        }
+        /* Trim trailing punctuation so the label reads cleanly. */
+        while (tl > 0 && (title_buf[tl - 1] == '.' ||
+                          title_buf[tl - 1] == '!')) {
+            tl--;
+        }
+        title_buf[tl] = '\0';
+        derived_title = heap_strdup(title_buf);
+        item.title = derived_title;
+    }
     item.summary = summary ? summary : (content ? content : payload);
     item.content = content ? content : payload;
     item.scope_user = user;
@@ -5044,7 +5150,23 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     item.reusability = reusability;
     item.specificity = specificity;
     item.status = "candidate";
+    /* Version increment: when supersedes is set, query the superseded item's version
+     * and set this item's version = old_version + 1, giving the ADR timeline a
+     * naturally ascending sequence. If the old item is not found (deleted, different
+     * scope, etc.), start fresh at version 1. */
     item.version = 1;
+    if (supersedes && supersedes[0]) {
+        sqlite3_stmt *ver_stmt = NULL;
+        if (sqlite3_prepare_v2(cbm_store_get_db(store),
+                               "SELECT version FROM memory_item WHERE id=?1;",
+                               -1, &ver_stmt, NULL) == SQLITE_OK) {
+            sqlite3_bind_text(ver_stmt, 1, supersedes, -1, SQLITE_TRANSIENT);
+            if (sqlite3_step(ver_stmt) == SQLITE_ROW) {
+                item.version = sqlite3_column_int(ver_stmt, 0) + 1;
+            }
+            sqlite3_finalize(ver_stmt);
+        }
+    }
     item.supersedes = supersedes; /* P3-d: NULL unless this ADR replaces an earlier one */
     item.source_event_ids = source_ids;
     char *item_id = NULL;
@@ -5123,6 +5245,24 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
                     sqlite3_finalize(up);
                 }
             }
+        }
+    }
+    /* P4: ADR reusability baseline. Decision/constraint items written without
+     * about_code anchors have no graph signal to blend against — their
+     * reusability stays at the default 0.5 which undervalues architectural
+     * rationale. Bump to 0.7 as a sensible floor: an ADR about an un-indexed
+     * or low-degree symbol is still reusable knowledge. Only override an
+     * explicitly-unset (≈0.5) value, never an explicit caller-supplied one. */
+    if (item_id && kind &&
+        (strcmp(kind, "decision") == 0 || strcmp(kind, "constraint") == 0) &&
+        about_code_n == 0 && reusability > 0.49 && reusability < 0.51) {
+        sqlite3_stmt *up = NULL;
+        if (sqlite3_prepare_v2(cbm_store_get_db(store),
+                               "UPDATE memory_item SET reusability=0.7 WHERE id=?1;",
+                               -1, &up, NULL) == SQLITE_OK) {
+            sqlite3_bind_text(up, 1, item_id, -1, SQLITE_TRANSIENT);
+            (void)sqlite3_step(up);
+            sqlite3_finalize(up);
         }
     }
 
@@ -5234,6 +5374,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     free(kind);
     free(layer);
     free(title);
+    free(derived_title);
     free(summary);
     free(entity_key);
     free(predicate);
@@ -5911,6 +6052,9 @@ char *cbm_mcp_handle_tool(cbm_mcp_server_t *srv, const char *tool_name, const ch
     }
     if (strcmp(tool_name, "memory_health") == 0) {
         return handle_memory_health(srv, args_json);
+    }
+    if (strcmp(tool_name, "adr_list") == 0) {
+        return handle_adr_list(srv, args_json);
     }
     char msg[CBM_SZ_256];
     snprintf(msg, sizeof(msg), "unknown tool: %s", tool_name);

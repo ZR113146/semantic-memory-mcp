@@ -63,7 +63,10 @@ function HealthDot({ name }: { name: string }) {
   );
 }
 
-/* ── ADR button + modal ─────────────────────────────────── */
+/* ── ADR button + modal ───────────────────────────────────
+ * DEPRECATED (2026-07-07): reads/writes project_summaries (empty across all projects).
+ * ADR content now lives in memory_item via the MCP events tool.
+ * Use the adr_list MCP tool for structured ADR browsing. */
 
 function AdrButton({ project }: { project: string }) {
   const t = useUiMessages();

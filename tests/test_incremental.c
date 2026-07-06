@@ -1867,7 +1867,8 @@ TEST(tool_detect_changes_depth) {
     PASS();
 }
 
-/* ── manage_adr ────────────────────────────────────────────────── */
+/* ── manage_adr (DEPRECATED: these test a tool that no longer exists in the
+ * MCP dispatch table; adr_list replaces it.) ───────────────────── */
 
 TEST(tool_adr_get) {
     double ms;

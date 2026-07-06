@@ -472,7 +472,12 @@ static void handle_browse(cbm_http_conn_t *c, const cbm_http_req_t *req) {
     cbm_http_replyf(c, 200, g_cors_json, "%s", buf);
 }
 
-/* ── ADR endpoints ────────────────────────────────────────────── */
+/* ── ADR endpoints ──────────────────────────────────────────────
+ * DEPRECATED (2026-07-07): these HTTP endpoints read/write the project_summaries
+ * table (C-store ADR), which is empty across all known projects. ADR content now
+ * lives in memory_item via the MCP events tool. The AdrButton React component
+ * that drives these endpoints is also deprecated. Use the adr_list MCP tool
+ * for structured ADR browsing. */
 
 /* GET /api/adr?project=X — get ADR content for a project */
 static void handle_adr_get(cbm_http_conn_t *c, const cbm_http_req_t *req) {
