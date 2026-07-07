@@ -559,6 +559,21 @@ static const tool_def_t TOOLS[] = {
      "\"limit\":{\"type\":\"integer\",\"description\":\"Max items (1-200, default 50)\"}},"
      "\"required\":[\"project\"]}"},
 
+    {"adr_chain",
+     "Walk the supersedes chain of an ADR, showing the full version timeline. "
+     "Start from item_id (walk backward to root then forward to newest) or "
+     "entity_key (find root at version=1 and walk forward). Each item carries "
+     "id, kind, title, summary, entity_key, status, version, supersedes, "
+     "generation (1-based ordinal), and timestamps. Warnings include "
+     "multiple_roots, cycle_detected, truncated, and orphan_link.",
+     "{\"type\":\"object\",\"properties\":{"
+     "\"project\":{\"type\":\"string\",\"description\":\"Project name (required)\"},"
+     "\"item_id\":{\"type\":\"string\",\"description\":\"Start from this specific item_id\"},"
+     "\"entity_key\":{\"type\":\"string\",\"description\":\"Find root (version=1) for this "
+     "entity_key\"},"
+     "\"max_depth\":{\"type\":\"integer\",\"description\":\"Max chain length (1-200, default 50)\"}},"
+     "\"required\":[\"project\"]}"},
+
     {"describe_tool",
      "Return the full usage guide (complete description + parameter docs) for one of this "
      "server's tools. The tools/list payload is kept slim to save context; call this when you "
@@ -647,7 +662,7 @@ static bool is_admin_tool(const char *name) {
         "delete_project",       "index_status",    "memories_inspect",
         "memory_update_status", "memory_feedback", "memory_delete",
         "admin_consolidate",    "admin_decay",     "memory_health",
-        "adr_list",
+        "adr_list",           "adr_chain",
     };
     for (size_t i = 0; i < sizeof(ADMIN_TOOLS) / sizeof(ADMIN_TOOLS[0]); i++) {
         if (strcmp(name, ADMIN_TOOLS[i]) == 0) {
@@ -4630,6 +4645,9 @@ static cbm_store_t *resolve_memory_store(cbm_mcp_server_t *srv, const char *proj
  * Mirrors the MEMORY.md concept: a browsable, filterable list of architectural
  * decisions instead of an opaque full-text-retrieval-only store.
  * MUST be defined after normalize_phantom_project and resolve_memory_store. */
+
+static cbm_store_t *resolve_global_memory_store(cbm_mcp_server_t *srv, bool create);
+
 static char *handle_adr_list(cbm_mcp_server_t *srv, const char *args) {
     yyjson_doc *adoc = yyjson_read(args ? args : "{}", args ? strlen(args) : 2, 0);
     if (!adoc)
@@ -4679,6 +4697,168 @@ static char *handle_adr_list(cbm_mcp_server_t *srv, const char *args) {
 
     char *json = NULL;
     int rc = cbm_store_memory_adr_list(store, project, kind, status, entity_key, limit, &json);
+
+    /* Union with the global (cross-project) store — same semantics as
+     * handle_memories_retrieve. Global ADRs carry scope_project=NULL and
+     * should surface from every project's adr_list. Both result sets are
+     * parsed, merged by composite score, and truncated to limit. */
+    char *gjson = NULL;
+    cbm_store_t *gstore = resolve_global_memory_store(srv, false);
+    if (gstore && rc == CBM_STORE_OK && json) {
+        int grc = cbm_store_memory_adr_list_global(gstore, kind, status, entity_key, limit,
+                                                     &gjson);
+        if (grc == CBM_STORE_OK && gjson && gjson[0]) {
+            yyjson_doc *pdoc = yyjson_read(json, strlen(json), 0);
+            yyjson_doc *gdoc = yyjson_read(gjson, strlen(gjson), 0);
+            if (pdoc && gdoc) {
+                yyjson_val *proot = yyjson_doc_get_root(pdoc);
+                yyjson_val *groot = yyjson_doc_get_root(gdoc);
+                yyjson_val *pitems = yyjson_obj_get(proot, "items");
+                yyjson_val *gitems = yyjson_obj_get(groot, "items");
+                int ptotal = 0, gtotal = 0;
+                yyjson_val *ptv = yyjson_obj_get(proot, "total");
+                yyjson_val *gtv = yyjson_obj_get(groot, "total");
+                if (ptv && yyjson_is_int(ptv)) ptotal = (int)yyjson_get_int(ptv);
+                if (gtv && yyjson_is_int(gtv)) gtotal = (int)yyjson_get_int(gtv);
+
+                /* Collect item pointers (raw immutable values) with their
+                 * composite scores, sort, then field-copy the top-N into
+                 * a fresh mutable doc. Avoids yyjson deep-copy ownership
+                 * complications while preserving correct score ordering. */
+                struct { const yyjson_val *val; double score; } *items = NULL;
+                int nitems = 0, icap = 0;
+                if (pitems && yyjson_is_arr(pitems)) {
+                    size_t pi, pmax; yyjson_val *pv;
+                    yyjson_arr_foreach(pitems, pi, pmax, pv) {
+                        if (nitems == icap) {
+                            icap = icap ? icap * 2 : 64;
+                            items = realloc(items, (size_t)icap * sizeof(*items));
+                        }
+                        if (items) {
+                            yyjson_val *imp = yyjson_obj_get(pv, "importance");
+                            yyjson_val *con = yyjson_obj_get(pv, "confidence");
+                            yyjson_val *reu = yyjson_obj_get(pv, "reusability");
+                            yyjson_val *spe = yyjson_obj_get(pv, "specificity");
+                            yyjson_val *hc  = yyjson_obj_get(pv, "hit_count");
+                            yyjson_val *dec = yyjson_obj_get(pv, "decay");
+                            items[nitems].val = pv;
+                            items[nitems].score =
+                                (imp && yyjson_is_num(imp) ? yyjson_get_real(imp) : 0.0) +
+                                (con && yyjson_is_num(con) ? yyjson_get_real(con) : 0.0) +
+                                (reu && yyjson_is_num(reu) ? yyjson_get_real(reu) : 0.0) +
+                                (spe && yyjson_is_num(spe) ? yyjson_get_real(spe) : 0.0) +
+                                (hc  && yyjson_is_int(hc)  ? (double)yyjson_get_int(hc) : 0.0) -
+                                (dec && yyjson_is_num(dec) ? yyjson_get_real(dec) : 0.0);
+                            nitems++;
+                        }
+                    }
+                }
+                if (gitems && yyjson_is_arr(gitems)) {
+                    size_t gi, gmax; yyjson_val *gv;
+                    yyjson_arr_foreach(gitems, gi, gmax, gv) {
+                        if (nitems == icap) {
+                            icap = icap ? icap * 2 : 64;
+                            items = realloc(items, (size_t)icap * sizeof(*items));
+                        }
+                        if (items) {
+                            yyjson_val *imp = yyjson_obj_get(gv, "importance");
+                            yyjson_val *con = yyjson_obj_get(gv, "confidence");
+                            yyjson_val *reu = yyjson_obj_get(gv, "reusability");
+                            yyjson_val *spe = yyjson_obj_get(gv, "specificity");
+                            yyjson_val *hc  = yyjson_obj_get(gv, "hit_count");
+                            yyjson_val *dec = yyjson_obj_get(gv, "decay");
+                            items[nitems].val = gv;
+                            items[nitems].score =
+                                (imp && yyjson_is_num(imp) ? yyjson_get_real(imp) : 0.0) +
+                                (con && yyjson_is_num(con) ? yyjson_get_real(con) : 0.0) +
+                                (reu && yyjson_is_num(reu) ? yyjson_get_real(reu) : 0.0) +
+                                (spe && yyjson_is_num(spe) ? yyjson_get_real(spe) : 0.0) +
+                                (hc  && yyjson_is_int(hc)  ? (double)yyjson_get_int(hc) : 0.0) -
+                                (dec && yyjson_is_num(dec) ? yyjson_get_real(dec) : 0.0);
+                            nitems++;
+                        }
+                    }
+                }
+                /* Bubble sort by score descending (items list is small; limit ≤ 200). */
+                if (items) {
+                    for (int a = 0; a < nitems; a++) {
+                        for (int b = a + 1; b < nitems; b++) {
+                            if (items[b].score > items[a].score) {
+                                double ts = items[a].score;
+                                items[a].score = items[b].score;
+                                items[b].score = ts;
+                                const yyjson_val *tv = items[a].val;
+                                items[a].val = items[b].val;
+                                items[b].val = tv;
+                            }
+                        }
+                    }
+                    int out_n = nitems < limit ? nitems : limit;
+
+                    /* Field-by-field copy from the sorted immutable items into
+                     * a single mutable doc — avoids yyjson deep-copy ownership
+                     * issues while staying type-safe. */
+                    yyjson_mut_doc *mdoc = yyjson_mut_doc_new(NULL);
+                    yyjson_mut_val *mroot = yyjson_mut_obj(mdoc);
+                    yyjson_mut_doc_set_root(mdoc, mroot);
+                    yyjson_mut_obj_add_str(mdoc, mroot, "project", project);
+                    yyjson_mut_obj_add_int(mdoc, mroot, "total", ptotal + gtotal);
+                    yyjson_mut_val *marr = yyjson_mut_arr(mdoc);
+                    for (int k = 0; k < out_n; k++) {
+                        const yyjson_val *src = items[k].val;
+                        yyjson_mut_val *obj = yyjson_mut_obj(mdoc);
+#define CP_STR(mdoc, obj, key, src) do { \
+    yyjson_val *v = yyjson_obj_get((src), (key)); \
+    if (v && yyjson_is_str(v)) yyjson_mut_obj_add_strcpy((mdoc), (obj), (key), yyjson_get_str(v)); \
+} while(0)
+#define CP_REAL(mdoc, obj, key, src) do { \
+    yyjson_val *v = yyjson_obj_get((src), (key)); \
+    if (v && yyjson_is_num(v)) yyjson_mut_obj_add_real((mdoc), (obj), (key), yyjson_get_real(v)); \
+} while(0)
+#define CP_INT(mdoc, obj, key, src) do { \
+    yyjson_val *v = yyjson_obj_get((src), (key)); \
+    if (v && yyjson_is_int(v)) yyjson_mut_obj_add_int((mdoc), (obj), (key), (int64_t)yyjson_get_int(v)); \
+} while(0)
+                        CP_STR(mdoc, obj, "id", src);
+                        CP_STR(mdoc, obj, "kind", src);
+                        CP_STR(mdoc, obj, "layer", src);
+                        CP_STR(mdoc, obj, "title", src);
+                        CP_STR(mdoc, obj, "summary", src);
+                        CP_STR(mdoc, obj, "entity_key", src);
+                        CP_STR(mdoc, obj, "status", src);
+                        CP_REAL(mdoc, obj, "importance", src);
+                        CP_REAL(mdoc, obj, "confidence", src);
+                        CP_REAL(mdoc, obj, "reusability", src);
+                        CP_REAL(mdoc, obj, "specificity", src);
+                        CP_INT(mdoc, obj, "hit_count", src);
+                        CP_REAL(mdoc, obj, "decay", src);
+                        CP_INT(mdoc, obj, "version", src);
+                        CP_STR(mdoc, obj, "supersedes", src);
+                        CP_INT(mdoc, obj, "created_at", src);
+                        CP_INT(mdoc, obj, "updated_at", src);
+#undef CP_STR
+#undef CP_REAL
+#undef CP_INT
+                        yyjson_mut_arr_add_val(marr, obj);
+                    }
+                    yyjson_mut_obj_add_val(mdoc, mroot, "items", marr);
+                    size_t mlen = 0;
+                    char *ms = yyjson_mut_write(mdoc,
+                        YYJSON_WRITE_ALLOW_INVALID_UNICODE, &mlen);
+                    free(json);
+                    json = ms ? strdup(ms) : NULL;
+                    free(ms);
+                    yyjson_mut_doc_free(mdoc);
+                    free(items);
+                    rc = json ? CBM_STORE_OK : CBM_STORE_ERR;
+                }
+            }
+            if (pdoc) yyjson_doc_free(pdoc);
+            if (gdoc) yyjson_doc_free(gdoc);
+        }
+        if (gjson) free(gjson);
+    }
+
     free(project);
     free(kind);
     free(status);
@@ -4686,6 +4866,75 @@ static char *handle_adr_list(cbm_mcp_server_t *srv, const char *args) {
 
     if (rc != CBM_STORE_OK || !json) {
         return cbm_mcp_text_result("failed to query ADR list", true);
+    }
+    char *result = cbm_mcp_text_result(json, false);
+    free(json);
+    return result;
+}
+
+/* P3: handle_adr_chain — walk the supersedes chain for an ADR, showing the
+ * full version timeline. Start from item_id (walk backward to root, then
+ * forward to newest) or entity_key (find root at version=1). Does NOT union
+ * the global store — supersedes is project-scoped by design. */
+static char *handle_adr_chain(cbm_mcp_server_t *srv, const char *args) {
+    yyjson_doc *adoc = yyjson_read(args ? args : "{}", args ? strlen(args) : 2, 0);
+    if (!adoc)
+        return cbm_mcp_text_result("invalid JSON arguments", true);
+
+    char *project = memory_arg_string_dup(adoc, "project");
+    char *entity_key = memory_arg_string_dup(adoc, "entity_key");
+    char *item_id = memory_arg_string_dup(adoc, "item_id");
+    int max_depth = 50;
+    {
+        yyjson_val *dv = yyjson_obj_get(yyjson_doc_get_root(adoc), "max_depth");
+        if (dv && yyjson_is_int(dv)) {
+            int v = (int)yyjson_get_int(dv);
+            if (v > 0 && v <= 200)
+                max_depth = v;
+        }
+    }
+    yyjson_doc_free(adoc);
+
+    if (!project) {
+        free(entity_key);
+        free(item_id);
+        return cbm_mcp_text_result("project is required", true);
+    }
+    if (!entity_key && !item_id) {
+        free(project);
+        free(entity_key);
+        free(item_id);
+        return cbm_mcp_text_result("entity_key or item_id is required", true);
+    }
+    /* Normalize phantom names. */
+    {
+        char *canon = normalize_phantom_project(project);
+        if (canon) {
+            free(project);
+            project = canon;
+        }
+    }
+
+    cbm_store_t *store = resolve_memory_store(srv, project, false);
+    if (!store) {
+        char *err = build_project_list_error("project not found or not indexed");
+        char *res = cbm_mcp_text_result(err, true);
+        free(err);
+        free(project);
+        free(entity_key);
+        free(item_id);
+        return res;
+    }
+
+    char *json = NULL;
+    int rc = cbm_store_memory_adr_chain(store, project, entity_key, item_id,
+                                        max_depth, &json);
+    free(project);
+    free(entity_key);
+    free(item_id);
+
+    if (rc != CBM_STORE_OK || !json) {
+        return cbm_mcp_text_result("failed to query ADR chain", true);
     }
     char *result = cbm_mcp_text_result(json, false);
     free(json);
@@ -5153,18 +5402,27 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     /* Version increment: when supersedes is set, query the superseded item's version
      * and set this item's version = old_version + 1, giving the ADR timeline a
      * naturally ascending sequence. If the old item is not found (deleted, different
-     * scope, etc.), start fresh at version 1. */
+     * scope, etc.), start fresh at version 1 and surface a warning. */
     item.version = 1;
+    bool supersedes_found = false;
+    const char *supersedes_warning = NULL;
     if (supersedes && supersedes[0]) {
         sqlite3_stmt *ver_stmt = NULL;
         if (sqlite3_prepare_v2(cbm_store_get_db(store),
-                               "SELECT version FROM memory_item WHERE id=?1;",
+                               "SELECT version FROM memory_item WHERE id=?1 AND deleted_at IS NULL;",
                                -1, &ver_stmt, NULL) == SQLITE_OK) {
             sqlite3_bind_text(ver_stmt, 1, supersedes, -1, SQLITE_TRANSIENT);
             if (sqlite3_step(ver_stmt) == SQLITE_ROW) {
                 item.version = sqlite3_column_int(ver_stmt, 0) + 1;
+                supersedes_found = true;
             }
             sqlite3_finalize(ver_stmt);
+        }
+        if (!supersedes_found) {
+            supersedes_warning =
+                "supersedes target not found: the referenced item_id does not exist "
+                "or has been soft-deleted. Version set to 1; supersedes link recorded "
+                "but may be dangling.";
         }
     }
     item.supersedes = supersedes; /* P3-d: NULL unless this ADR replaces an earlier one */
@@ -5276,6 +5534,7 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
      * inside this handler's transaction and that helper opens its own. */
     if (supersedes && supersedes[0]) {
         sqlite3_stmt *sup = NULL;
+        int arch_changed = 0;
         if (sqlite3_prepare_v2(
                 cbm_store_get_db(store),
                 "UPDATE memory_item SET status='archived', updated_at=?1 "
@@ -5285,7 +5544,16 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
             sqlite3_bind_text(sup, 2, supersedes, -1, SQLITE_TRANSIENT);
             sqlite3_bind_text(sup, 3, project, -1, SQLITE_TRANSIENT);
             (void)sqlite3_step(sup);
+            arch_changed = sqlite3_changes(cbm_store_get_db(store));
             sqlite3_finalize(sup);
+        }
+        if (arch_changed == 0 && supersedes_found) {
+            /* Target exists but could not be archived — already archived, wrong
+             * status, or scope mismatch. Only report when the target was found
+             * above; if it was never found, the primary warning already covers it. */
+            supersedes_warning =
+                "supersedes target found but could not be archived "
+                "(status may not be active/candidate — already archived or retracted)";
         }
     }
 
@@ -5348,6 +5616,11 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
     const char *struct_advice = memory_structure_advice(kind, content);
     if (struct_advice) {
         yyjson_mut_obj_add_str(doc, root, "structure_advice", struct_advice);
+    }
+    /* Supersedes chain integrity: warn when a supersedes target is missing or
+     * could not be archived (see the version-query and archive-UPDATE blocks above). */
+    if (supersedes_warning) {
+        yyjson_mut_obj_add_str(doc, root, "supersedes_warning", supersedes_warning);
     }
     yyjson_mut_obj_add_bool(doc, root, "maintained", maint.consolidated || maint.decayed);
     if (maint.consolidated) {
@@ -6055,6 +6328,9 @@ char *cbm_mcp_handle_tool(cbm_mcp_server_t *srv, const char *tool_name, const ch
     }
     if (strcmp(tool_name, "adr_list") == 0) {
         return handle_adr_list(srv, args_json);
+    }
+    if (strcmp(tool_name, "adr_chain") == 0) {
+        return handle_adr_chain(srv, args_json);
     }
     char msg[CBM_SZ_256];
     snprintf(msg, sizeof(msg), "unknown tool: %s", tool_name);

@@ -5055,6 +5055,370 @@ int cbm_store_memory_adr_list(cbm_store_t *s, const char *project, const char *k
     return CBM_STORE_OK;
 }
 
+/* adr_list variant for the global (cross-project) store:
+ * scope_project IS NULL instead of matching a project name.
+ * Otherwise identical to cbm_store_memory_adr_list. */
+int cbm_store_memory_adr_list_global(cbm_store_t *s, const char *kind_filter,
+                                     const char *status_filter,
+                                     const char *entity_key_filter,
+                                     int limit, char **out_json) {
+    if (!s || !s->db || !out_json) {
+        return CBM_STORE_ERR;
+    }
+    if (limit <= 0 || limit > 200) {
+        limit = 50;
+    }
+
+    char sql[2048];
+    int pos = 0;
+    pos += snprintf(sql + pos, sizeof(sql) - pos,
+                    "SELECT " ADR_LIST_COLUMNS " FROM memory_item "
+                    "WHERE scope_project IS NULL AND deleted_at IS NULL");
+    int param_idx = 1;
+    if (kind_filter && kind_filter[0]) {
+        pos += snprintf(sql + pos, sizeof(sql) - pos, " AND kind=?%d", param_idx++);
+    } else {
+        pos += snprintf(sql + pos, sizeof(sql) - pos,
+                        " AND kind IN ('\''decision'\'','\''constraint'\'')");
+    }
+    if (status_filter && status_filter[0]) {
+        pos += snprintf(sql + pos, sizeof(sql) - pos, " AND status=?%d", param_idx++);
+    }
+    if (entity_key_filter && entity_key_filter[0]) {
+        pos += snprintf(sql + pos, sizeof(sql) - pos, " AND entity_key=?%d", param_idx++);
+    }
+    pos += snprintf(sql + pos, sizeof(sql) - pos,
+                    " ORDER BY (importance+confidence+reusability+specificity+hit_count-decay) "
+                    "DESC, updated_at DESC LIMIT ?%d;",
+                    param_idx);
+
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(s->db, sql, CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
+        store_set_error_sqlite(s, "adr_list_global_prepare");
+        return CBM_STORE_ERR;
+    }
+
+    int bind_idx = 1;
+    if (kind_filter && kind_filter[0]) {
+        bind_text(stmt, bind_idx++, kind_filter);
+    }
+    if (status_filter && status_filter[0]) {
+        bind_text(stmt, bind_idx++, status_filter);
+    }
+    if (entity_key_filter && entity_key_filter[0]) {
+        bind_text(stmt, bind_idx++, entity_key_filter);
+    }
+    sqlite3_bind_int(stmt, bind_idx, limit);
+
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_str(doc, root, "project", CBM_GLOBAL_MEMORY_PROJECT);
+    yyjson_mut_val *items = yyjson_mut_arr(doc);
+    yyjson_mut_obj_add_val(doc, root, "items", items);
+
+    int total = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        yyjson_mut_val *obj = yyjson_mut_obj(doc);
+        yyjson_mut_obj_add_strcpy(doc, obj, "id", (const char *)sqlite3_column_text(stmt, 0));
+        yyjson_mut_obj_add_strcpy(doc, obj, "kind", (const char *)sqlite3_column_text(stmt, 1));
+        yyjson_mut_obj_add_strcpy(doc, obj, "layer", (const char *)sqlite3_column_text(stmt, 2));
+        yyjson_mut_obj_add_strcpy(doc, obj, "title",
+                                   (const char *)sqlite3_column_text(stmt, 3));
+        yyjson_mut_obj_add_strcpy(doc, obj, "summary",
+                                   (const char *)sqlite3_column_text(stmt, 4));
+        yyjson_mut_obj_add_strcpy(doc, obj, "entity_key",
+                                   (const char *)sqlite3_column_text(stmt, 5));
+        yyjson_mut_obj_add_strcpy(doc, obj, "status",
+                                   (const char *)sqlite3_column_text(stmt, 6));
+        yyjson_mut_obj_add_real(doc, obj, "importance", sqlite3_column_double(stmt, 7));
+        yyjson_mut_obj_add_real(doc, obj, "confidence", sqlite3_column_double(stmt, 8));
+        yyjson_mut_obj_add_real(doc, obj, "reusability", sqlite3_column_double(stmt, 9));
+        yyjson_mut_obj_add_real(doc, obj, "specificity", sqlite3_column_double(stmt, 10));
+        yyjson_mut_obj_add_int(doc, obj, "hit_count", sqlite3_column_int(stmt, 11));
+        yyjson_mut_obj_add_real(doc, obj, "decay", sqlite3_column_double(stmt, 12));
+        yyjson_mut_obj_add_int(doc, obj, "version", sqlite3_column_int(stmt, 13));
+        {
+            const char *sup = (const char *)sqlite3_column_text(stmt, 14);
+            if (sup && sup[0]) {
+                yyjson_mut_obj_add_strcpy(doc, obj, "supersedes", sup);
+            }
+        }
+        yyjson_mut_obj_add_int(doc, obj, "created_at", (int64_t)sqlite3_column_int64(stmt, 15));
+        yyjson_mut_obj_add_int(doc, obj, "updated_at", (int64_t)sqlite3_column_int64(stmt, 16));
+        yyjson_mut_arr_append(items, obj);
+        total++;
+    }
+    sqlite3_finalize(stmt);
+
+    yyjson_mut_obj_add_int(doc, root, "total", total);
+    {
+        size_t len = 0;
+        char *s = yyjson_mut_write(doc, YYJSON_WRITE_ALLOW_INVALID_UNICODE, &len);
+        *out_json = heap_strdup(s ? s : "{}");
+        free(s);
+    }
+    yyjson_mut_doc_free(doc);
+    return CBM_STORE_OK;
+}
+
+/* ── adr_chain: walk the supersedes chain for an ADR ────────────────
+ *
+ * Operates in two modes:
+ *   - item_id given: look up that item, walk backward to find the root
+ *     (version=1), then walk forward from root to newest.
+ *   - entity_key given: find root directly (version=1 + oldest created_at),
+ *     then walk forward.
+ *
+ * Forward walk query: SELECT * FROM memory_item WHERE supersedes=?1
+ *   AND scope_project=?2 AND deleted_at IS NULL.
+ *
+ * Cycle detection: visited-id linear array (max_depth ≤ 50).
+ * Warning flags: multiple_roots (entity_key mode), cycle_detected,
+ *   truncated (max_depth reached), orphan_link (supersedes pointer dangling). */
+
+#define ADR_CHAIN_COLS \
+    "id,kind,layer,COALESCE(title,summary) AS title,summary,entity_key," \
+    "status,version,supersedes,created_at,updated_at"
+#define ADR_CHAIN_COL_COUNT 11
+
+int cbm_store_memory_adr_chain(cbm_store_t *s, const char *project,
+                               const char *entity_key, const char *item_id,
+                               int max_depth, char **out_json) {
+    if (!s || !s->db || !project || !out_json) return CBM_STORE_ERR;
+    if (!entity_key && !item_id) return CBM_STORE_ERR;
+    if (max_depth <= 0 || max_depth > 200) max_depth = 50;
+
+    /* Track warnings during traversal. */
+    char warnings[3][256];
+    int nwarns = 0;
+
+    /* Resolved entity key (may come from item lookup). */
+    const char *ekey = entity_key;
+    char *resolved_ekey = NULL;
+
+    /* ── Phase 1: find the root ──────────────────────────────────── */
+    char root_id[128];
+    root_id[0] = '\0';
+
+    if (item_id && item_id[0]) {
+        /* Walk backward from item_id following supersedes pointers. */
+        const char *cursor = item_id;
+        const char *visited[64];
+        int nvis = 0;
+        for (int hop = 0; hop < max_depth; hop++) {
+            /* Cycle guard. */
+            for (int v = 0; v < nvis; v++) {
+                if (visited[v] && strcmp(visited[v], cursor) == 0) {
+                    snprintf(warnings[nwarns++], sizeof(warnings[0]),
+                             "cycle detected: %s already visited", cursor);
+                    goto chain_forward;
+                }
+            }
+            if (nvis < 64) visited[nvis++] = cursor;
+
+            sqlite3_stmt *st = NULL;
+            if (sqlite3_prepare_v2(s->db,
+                    "SELECT " ADR_CHAIN_COLS ",supersedes FROM memory_item "
+                    "WHERE id=?1 AND scope_project=?2 AND deleted_at IS NULL;",
+                    -1, &st, NULL) != SQLITE_OK) {
+                break;
+            }
+            bind_text(st, 1, cursor);
+            bind_text(st, 2, project);
+            if (sqlite3_step(st) != SQLITE_ROW) {
+                sqlite3_finalize(st);
+                break; /* Dangling supersedes — stop here as root. */
+            }
+            /* Capture entity_key from the first backward stop if not provided. */
+            if (!ekey && !resolved_ekey) {
+                const char *ek = (const char *)sqlite3_column_text(st, 6);
+                if (ek && ek[0]) resolved_ekey = heap_strdup(ek);
+                ekey = resolved_ekey;
+            }
+            /* Record current as potential root. */
+            const char *rid = (const char *)sqlite3_column_text(st, 0);
+            if (rid) snprintf(root_id, sizeof(root_id), "%s", rid);
+            /* The supersedes pointer tells us where to go next (backward). */
+            const char *sup = (const char *)sqlite3_column_text(st, 8);
+            sqlite3_finalize(st);
+
+            if (!sup || !sup[0]) {
+                break; /* Reached root (no supersedes on this item). */
+            }
+            cursor = sup;
+        }
+    } else if (ekey && ekey[0]) {
+        /* Find root by entity_key: version=1, oldest created_at. */
+        sqlite3_stmt *rs = NULL;
+        if (sqlite3_prepare_v2(s->db,
+                "SELECT id FROM memory_item "
+                "WHERE entity_key=?1 AND scope_project=?2 AND version=1 "
+                "AND deleted_at IS NULL ORDER BY created_at ASC LIMIT 1;",
+                -1, &rs, NULL) == SQLITE_OK) {
+            bind_text(rs, 1, ekey);
+            bind_text(rs, 2, project);
+            if (sqlite3_step(rs) == SQLITE_ROW) {
+                const char *rid = (const char *)sqlite3_column_text(rs, 0);
+                if (rid) snprintf(root_id, sizeof(root_id), "%s", rid);
+            }
+            sqlite3_finalize(rs);
+        }
+        /* Check for multiple roots. */
+        sqlite3_stmt *mc = NULL;
+        if (sqlite3_prepare_v2(s->db,
+                "SELECT COUNT(*) FROM memory_item "
+                "WHERE entity_key=?1 AND scope_project=?2 AND version=1 "
+                "AND deleted_at IS NULL;",
+                -1, &mc, NULL) == SQLITE_OK) {
+            bind_text(mc, 1, ekey);
+            bind_text(mc, 2, project);
+            if (sqlite3_step(mc) == SQLITE_ROW) {
+                int cnt = sqlite3_column_int(mc, 0);
+                if (cnt > 1) {
+                    snprintf(warnings[nwarns++], sizeof(warnings[0]),
+                             "multiple_roots: %d version=1 items for entity_key "
+                             "%s, using oldest by created_at", cnt, ekey);
+                }
+            }
+            sqlite3_finalize(mc);
+        }
+    }
+
+chain_forward:
+    /* ── Phase 2: walk forward from root ──────────────────────────── */
+    if (!root_id[0]) {
+        free(resolved_ekey);
+        /* No root found — return empty chain. */
+        *out_json = heap_strdup("{\"project\":\"\",\"entity_key\":\"\",\"total_items\":0,\"items\":[]}");
+        return *out_json ? CBM_STORE_OK : CBM_STORE_ERR;
+    }
+    if (!ekey) ekey = "";
+
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_str(doc, root, "project", project);
+    yyjson_mut_obj_add_str(doc, root, "entity_key", ekey);
+    if (item_id && item_id[0]) {
+        yyjson_mut_obj_add_str(doc, root, "start_item_id", item_id);
+    }
+    yyjson_mut_val *items = yyjson_mut_arr(doc);
+    yyjson_mut_obj_add_val(doc, root, "items", items);
+
+    int generation = 0;
+    const char *cursor = root_id;
+    const char *vseen[64];
+    int nvseen = 0;
+    int hop = 0;
+
+    for (hop = 0; hop < max_depth; hop++) {
+        /* Cycle guard. */
+        int cycle = 0;
+        for (int v = 0; v < nvseen; v++) {
+            if (vseen[v] && strcmp(vseen[v], cursor) == 0) {
+                snprintf(warnings[nwarns++], sizeof(warnings[0]),
+                         "cycle detected at generation %d: %s revisited", generation, cursor);
+                cycle = 1;
+                break;
+            }
+        }
+        if (cycle) break;
+        if (nvseen < 64) vseen[nvseen++] = cursor;
+
+        sqlite3_stmt *st = NULL;
+        if (sqlite3_prepare_v2(s->db,
+                "SELECT " ADR_CHAIN_COLS " FROM memory_item "
+                "WHERE id=?1 AND scope_project=?2 AND deleted_at IS NULL;",
+                -1, &st, NULL) != SQLITE_OK) {
+            break;
+        }
+        bind_text(st, 1, cursor);
+        bind_text(st, 2, project);
+        if (sqlite3_step(st) != SQLITE_ROW) {
+            sqlite3_finalize(st);
+            break;
+        }
+
+        generation++;
+        yyjson_mut_val *obj = yyjson_mut_obj(doc);
+        yyjson_mut_obj_add_strcpy(doc, obj, "id",
+            (const char *)sqlite3_column_text(st, 0));
+        yyjson_mut_obj_add_strcpy(doc, obj, "kind",
+            (const char *)sqlite3_column_text(st, 1));
+        yyjson_mut_obj_add_strcpy(doc, obj, "layer",
+            (const char *)sqlite3_column_text(st, 2));
+        yyjson_mut_obj_add_strcpy(doc, obj, "title",
+            (const char *)sqlite3_column_text(st, 3));
+        yyjson_mut_obj_add_strcpy(doc, obj, "summary",
+            (const char *)sqlite3_column_text(st, 4));
+        yyjson_mut_obj_add_strcpy(doc, obj, "entity_key",
+            (const char *)sqlite3_column_text(st, 5));
+        yyjson_mut_obj_add_strcpy(doc, obj, "status",
+            (const char *)sqlite3_column_text(st, 6));
+        yyjson_mut_obj_add_int(doc, obj, "version",
+            sqlite3_column_int(st, 7));
+        {
+            const char *sup = (const char *)sqlite3_column_text(st, 8);
+            if (sup && sup[0])
+                yyjson_mut_obj_add_strcpy(doc, obj, "supersedes", sup);
+        }
+        yyjson_mut_obj_add_int(doc, obj, "created_at",
+            (int64_t)sqlite3_column_int64(st, 9));
+        yyjson_mut_obj_add_int(doc, obj, "updated_at",
+            (int64_t)sqlite3_column_int64(st, 10));
+        yyjson_mut_obj_add_int(doc, obj, "generation", generation);
+        yyjson_mut_arr_add_val(items, obj);
+
+        /* Find the next item in chain (supersedes → cursor). */
+        const char *next_id = NULL;
+        sqlite3_finalize(st);
+
+        sqlite3_stmt *ns = NULL;
+        if (sqlite3_prepare_v2(s->db,
+                "SELECT id FROM memory_item "
+                "WHERE supersedes=?1 AND scope_project=?2 AND deleted_at IS NULL LIMIT 1;",
+                -1, &ns, NULL) == SQLITE_OK) {
+            bind_text(ns, 1, cursor);
+            bind_text(ns, 2, project);
+            if (sqlite3_step(ns) == SQLITE_ROW) {
+                next_id = (const char *)sqlite3_column_text(ns, 0);
+            }
+            sqlite3_finalize(ns);
+        }
+        if (!next_id || !next_id[0]) {
+            break; /* End of chain. */
+        }
+        cursor = next_id;
+    }
+
+    if (hop >= max_depth) {
+        snprintf(warnings[nwarns++], sizeof(warnings[0]),
+                 "truncated: chain exceeded max_depth=%d", max_depth);
+    }
+
+    yyjson_mut_obj_add_int(doc, root, "total_items", generation);
+
+    if (nwarns > 0) {
+        yyjson_mut_val *warr = yyjson_mut_arr(doc);
+        for (int w = 0; w < nwarns; w++)
+            yyjson_mut_arr_add_strcpy(doc, warr, warnings[w]);
+        yyjson_mut_obj_add_val(doc, root, "warnings", warr);
+    }
+
+    {
+        size_t len = 0;
+        char *s = yyjson_mut_write(doc, YYJSON_WRITE_ALLOW_INVALID_UNICODE, &len);
+        *out_json = heap_strdup(s ? s : "{}");
+        free(s);
+    }
+    yyjson_mut_doc_free(doc);
+    free(resolved_ekey);
+    return CBM_STORE_OK;
+}
+#undef ADR_CHAIN_COLS
+#undef ADR_CHAIN_COL_COUNT
+
 int cbm_store_memory_health(cbm_store_t *s, const char *project, cbm_memory_health_t *out) {
     memset(out, 0, sizeof(*out));
     if (!s || !s->db) {

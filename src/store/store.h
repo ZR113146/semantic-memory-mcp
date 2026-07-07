@@ -572,6 +572,21 @@ int cbm_store_memory_adr_list(cbm_store_t *s, const char *project, const char *k
                               const char *status_filter, const char *entity_key_filter,
                               int limit, char **out_json);
 
+/* Same as cbm_store_memory_adr_list but queries the global (cross-project)
+ * store where scope_project IS NULL. project label in output is "__global__". */
+int cbm_store_memory_adr_list_global(cbm_store_t *s, const char *kind_filter,
+                                     const char *status_filter,
+                                     const char *entity_key_filter,
+                                     int limit, char **out_json);
+
+/* Walk the supersedes chain for an ADR. Start from item_id (walk backward to
+ * root then forward to newest) or entity_key (find root at version=1). Returns
+ * JSON with items in version order (oldest first) plus generation ordinal.
+ * Cycle detection caps at max_depth. Caller frees *out_json. */
+int cbm_store_memory_adr_chain(cbm_store_t *s, const char *project,
+                               const char *entity_key, const char *item_id,
+                               int max_depth, char **out_json);
+
 /* ── Search ─────────────────────────────────────────────────────── */
 
 int cbm_store_search(cbm_store_t *s, const cbm_search_params_t *params, cbm_search_output_t *out);
