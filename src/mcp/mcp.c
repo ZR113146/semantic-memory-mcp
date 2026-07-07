@@ -528,15 +528,6 @@ static const tool_def_t TOOLS[] = {
      "\"max_depth\":{\"type\":\"integer\",\"default\":50}},"
      "\"required\":[\"project\"]}"},
 
-    {"adr_chain",
-     "Walk the supersedes chain of an ADR, showing the full version "
-     "timeline. Returns items in version order with generation ordinal.",
-     "{\"type\":\"object\",\"properties\":{"
-     "\"project\":{\"type\":\"string\",\"description\":\"Project name (required)\"},"
-     "\"item_id\":{\"type\":\"string\",\"description\":\"Start from this ID\"},"
-     "\"entity_key\":{\"type\":\"string\",\"description\":\"Find root for this key\"},"
-     "\"max_depth\":{\"type\":\"integer\",\"default\":50}},"
-     "\"required\":[\"project\"]}"},
 };
 
 static const int TOOL_COUNT = sizeof(TOOLS) / sizeof(TOOLS[0]);
