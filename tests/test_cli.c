@@ -2,9 +2,9 @@
  * test_cli.c — Tests for CLI subcommands: install, uninstall, update, version.
  *
  * Port of Go test files:
- *   - cmd/semantic-memory-mcp/cli_test.go (11 tests)
- *   - cmd/semantic-memory-mcp/install_test.go (24 tests)
- *   - cmd/semantic-memory-mcp/update_test.go (5 tests)
+ *   - cmd/codebase-memory-mcp/cli_test.go (11 tests)
+ *   - cmd/codebase-memory-mcp/install_test.go (24 tests)
+ *   - cmd/codebase-memory-mcp/update_test.go (5 tests)
  *   - internal/selfupdate/selfupdate_test.go (7 tests)
  *
  * Total: 47 Go tests → 47 C tests
@@ -14,6 +14,7 @@
 #include "test_helpers.h"
 #include <cli/cli.h>
 #include <foundation/yaml.h>
+#include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -530,7 +531,7 @@ TEST(cli_remove_old_monolithic_skill) {
 
     /* Create old monolithic skill */
     char old_dir[1024];
-    snprintf(old_dir, sizeof(old_dir), "%s/semantic-memory-mcp", skills_dir);
+    snprintf(old_dir, sizeof(old_dir), "%s/codebase-memory-mcp", skills_dir);
     test_mkdirp(old_dir);
     char old_file[1024];
     snprintf(old_file, sizeof(old_file), "%s/SKILL.md", old_dir);
@@ -599,14 +600,14 @@ TEST(cli_editor_mcp_install) {
     char configpath[512];
     snprintf(configpath, sizeof(configpath), "%s/.cursor/mcp.json", tmpdir);
 
-    int rc = cbm_install_editor_mcp("/usr/local/bin/semantic-memory-mcp", configpath);
+    int rc = cbm_install_editor_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
     ASSERT_EQ(rc, 0);
 
     const char *data = read_test_file(configpath);
     ASSERT_NOT_NULL(data);
     ASSERT(strstr(data, "mcpServers") != NULL);
-    ASSERT(strstr(data, "semantic-memory-mcp") != NULL);
-    ASSERT(strstr(data, "/usr/local/bin/semantic-memory-mcp") != NULL);
+    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
+    ASSERT(strstr(data, "/usr/local/bin/codebase-memory-mcp") != NULL);
 
     test_rmdir_r(tmpdir);
     PASS();
@@ -622,17 +623,17 @@ TEST(cli_editor_mcp_idempotent) {
     char configpath[512];
     snprintf(configpath, sizeof(configpath), "%s/.cursor/mcp.json", tmpdir);
 
-    cbm_install_editor_mcp("/usr/local/bin/semantic-memory-mcp", configpath);
-    int rc = cbm_install_editor_mcp("/usr/local/bin/semantic-memory-mcp", configpath);
+    cbm_install_editor_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
+    int rc = cbm_install_editor_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
     ASSERT_EQ(rc, 0);
 
     /* Should still parse as valid JSON with only 1 server */
     const char *data = read_test_file(configpath);
     ASSERT_NOT_NULL(data);
-    /* Count occurrences of "semantic-memory-mcp" (should be exactly 1 in mcpServers) */
+    /* Count occurrences of "codebase-memory-mcp" (should be exactly 1 in mcpServers) */
     int count = 0;
     const char *p = data;
-    while ((p = strstr(p, "\"semantic-memory-mcp\"")) != NULL) {
+    while ((p = strstr(p, "\"codebase-memory-mcp\"")) != NULL) {
         count++;
         p += 20;
     }
@@ -661,12 +662,12 @@ TEST(cli_editor_mcp_preserves_others) {
     write_test_file(configpath,
                     "{\"mcpServers\": {\"other-server\": {\"command\": \"/usr/bin/other\"}}}");
 
-    cbm_install_editor_mcp("/usr/local/bin/semantic-memory-mcp", configpath);
+    cbm_install_editor_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
 
     const char *data = read_test_file(configpath);
     ASSERT_NOT_NULL(data);
     ASSERT(strstr(data, "other-server") != NULL);
-    ASSERT(strstr(data, "semantic-memory-mcp") != NULL);
+    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
 
     test_rmdir_r(tmpdir);
     PASS();
@@ -682,14 +683,56 @@ TEST(cli_editor_mcp_uninstall) {
     char configpath[512];
     snprintf(configpath, sizeof(configpath), "%s/.cursor/mcp.json", tmpdir);
 
-    cbm_install_editor_mcp("/usr/local/bin/semantic-memory-mcp", configpath);
+    cbm_install_editor_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
     int rc = cbm_remove_editor_mcp(configpath);
     ASSERT_EQ(rc, 0);
 
     const char *data = read_test_file(configpath);
     ASSERT_NOT_NULL(data);
-    /* semantic-memory-mcp should be removed */
-    ASSERT(strstr(data, "\"semantic-memory-mcp\"") == NULL);
+    /* codebase-memory-mcp should be removed */
+    ASSERT(strstr(data, "\"codebase-memory-mcp\"") == NULL);
+
+    test_rmdir_r(tmpdir);
+    PASS();
+}
+
+TEST(cli_junie_mcp_install_issue651) {
+    char tmpdir[256];
+    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-mcp-XXXXXX");
+    if (!cbm_mkdtemp(tmpdir))
+        FAIL("cbm_mkdtemp failed");
+
+    char configpath[512];
+    snprintf(configpath, sizeof(configpath), "%s/.junie/mcp/mcp.json", tmpdir);
+
+    int rc = cbm_upsert_junie_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
+    ASSERT_EQ(rc, 0);
+
+    const char *data = read_test_file(configpath);
+    ASSERT_NOT_NULL(data);
+    ASSERT(strstr(data, "mcpServers") != NULL);
+    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
+    ASSERT(strstr(data, "/usr/local/bin/codebase-memory-mcp") != NULL);
+
+    rc = cbm_upsert_junie_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
+    ASSERT_EQ(rc, 0);
+
+    data = read_test_file(configpath);
+    ASSERT_NOT_NULL(data);
+    int count = 0;
+    const char *p = data;
+    while ((p = strstr(p, "\"codebase-memory-mcp\"")) != NULL) {
+        count++;
+        p += 20;
+    }
+    ASSERT_EQ(count, 1);
+
+    rc = cbm_remove_junie_mcp(configpath);
+    ASSERT_EQ(rc, 0);
+
+    data = read_test_file(configpath);
+    ASSERT_NOT_NULL(data);
+    ASSERT(strstr(data, "\"codebase-memory-mcp\"") == NULL);
 
     test_rmdir_r(tmpdir);
     PASS();
@@ -706,13 +749,90 @@ TEST(cli_gemini_mcp_install) {
     snprintf(configpath, sizeof(configpath), "%s/.gemini/settings.json", tmpdir);
 
     /* Gemini uses same mcpServers format as Cursor */
-    int rc = cbm_install_editor_mcp("/usr/local/bin/semantic-memory-mcp", configpath);
+    int rc = cbm_install_editor_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
     ASSERT_EQ(rc, 0);
 
     const char *data = read_test_file(configpath);
     ASSERT_NOT_NULL(data);
     ASSERT(strstr(data, "mcpServers") != NULL);
-    ASSERT(strstr(data, "semantic-memory-mcp") != NULL);
+    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
+
+    test_rmdir_r(tmpdir);
+    PASS();
+}
+
+TEST(cli_openclaw_mcp_install_uses_nested_servers) {
+    char tmpdir[256];
+    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-openclaw-mcp-XXXXXX");
+    if (!cbm_mkdtemp(tmpdir))
+        FAIL("cbm_mkdtemp failed");
+
+    char configpath[512];
+    snprintf(configpath, sizeof(configpath), "%s/.openclaw/openclaw.json", tmpdir);
+
+    int rc = cbm_install_openclaw_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
+    ASSERT_EQ(rc, 0);
+
+    const char *data = read_test_file(configpath);
+    ASSERT_NOT_NULL(data);
+    ASSERT(strstr(data, "\"mcp\"") != NULL);
+    ASSERT(strstr(data, "\"servers\"") != NULL);
+    ASSERT(strstr(data, "\"enabled\": true") != NULL);
+    ASSERT(strstr(data, "\"command\": \"/usr/local/bin/codebase-memory-mcp\"") != NULL);
+    ASSERT(strstr(data, "\"args\": []") != NULL);
+    ASSERT(strstr(data, "\"mcpServers\"") == NULL);
+
+    test_rmdir_r(tmpdir);
+    PASS();
+}
+
+TEST(cli_openclaw_mcp_preserves_existing_config) {
+    char tmpdir[256];
+    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-openclaw-mcp-XXXXXX");
+    if (!cbm_mkdtemp(tmpdir))
+        FAIL("cbm_mkdtemp failed");
+
+    char dir[512];
+    snprintf(dir, sizeof(dir), "%s/.openclaw", tmpdir);
+    test_mkdirp(dir);
+
+    char configpath[512];
+    snprintf(configpath, sizeof(configpath), "%s/openclaw.json", dir);
+    write_test_file(configpath,
+                    "{\"theme\":\"dark\",\"mcp\":{\"servers\":{\"other\":{\"command\":\"x\"}}}}");
+
+    int rc = cbm_install_openclaw_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
+    ASSERT_EQ(rc, 0);
+
+    const char *data = read_test_file(configpath);
+    ASSERT_NOT_NULL(data);
+    ASSERT(strstr(data, "theme") != NULL);
+    ASSERT(strstr(data, "other") != NULL);
+    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
+    ASSERT(strstr(data, "\"mcpServers\"") == NULL);
+
+    test_rmdir_r(tmpdir);
+    PASS();
+}
+
+TEST(cli_openclaw_mcp_uninstall_uses_nested_servers) {
+    char tmpdir[256];
+    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-openclaw-mcp-XXXXXX");
+    if (!cbm_mkdtemp(tmpdir))
+        FAIL("cbm_mkdtemp failed");
+
+    char configpath[512];
+    snprintf(configpath, sizeof(configpath), "%s/.openclaw/openclaw.json", tmpdir);
+
+    ASSERT_EQ(cbm_install_openclaw_mcp("/usr/local/bin/codebase-memory-mcp", configpath), 0);
+    ASSERT_EQ(cbm_remove_openclaw_mcp(configpath), 0);
+
+    const char *data = read_test_file(configpath);
+    ASSERT_NOT_NULL(data);
+    ASSERT(strstr(data, "\"mcp\"") != NULL);
+    ASSERT(strstr(data, "\"servers\"") != NULL);
+    ASSERT(strstr(data, "\"codebase-memory-mcp\"") == NULL);
+    ASSERT(strstr(data, "\"mcpServers\"") == NULL);
 
     test_rmdir_r(tmpdir);
     PASS();
@@ -732,7 +852,7 @@ TEST(cli_vscode_mcp_install) {
     char configpath[512];
     snprintf(configpath, sizeof(configpath), "%s/Code/User/mcp.json", tmpdir);
 
-    int rc = cbm_install_vscode_mcp("/usr/local/bin/semantic-memory-mcp", configpath);
+    int rc = cbm_install_vscode_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
     ASSERT_EQ(rc, 0);
 
     const char *data = read_test_file(configpath);
@@ -740,8 +860,8 @@ TEST(cli_vscode_mcp_install) {
     ASSERT(strstr(data, "\"servers\"") != NULL);
     ASSERT(strstr(data, "\"type\"") != NULL);
     ASSERT(strstr(data, "\"stdio\"") != NULL);
-    ASSERT(strstr(data, "semantic-memory-mcp") != NULL);
-    ASSERT(strstr(data, "/usr/local/bin/semantic-memory-mcp") != NULL);
+    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
+    ASSERT(strstr(data, "/usr/local/bin/codebase-memory-mcp") != NULL);
 
     test_rmdir_r(tmpdir);
     PASS();
@@ -757,13 +877,13 @@ TEST(cli_vscode_mcp_uninstall) {
     char configpath[512];
     snprintf(configpath, sizeof(configpath), "%s/Code/User/mcp.json", tmpdir);
 
-    cbm_install_vscode_mcp("/usr/local/bin/semantic-memory-mcp", configpath);
+    cbm_install_vscode_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
     int rc = cbm_remove_vscode_mcp(configpath);
     ASSERT_EQ(rc, 0);
 
     const char *data = read_test_file(configpath);
     ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "\"semantic-memory-mcp\"") == NULL);
+    ASSERT(strstr(data, "\"codebase-memory-mcp\"") == NULL);
 
     test_rmdir_r(tmpdir);
     PASS();
@@ -783,7 +903,7 @@ TEST(cli_zed_mcp_install) {
     char configpath[512];
     snprintf(configpath, sizeof(configpath), "%s/.config/zed/settings.json", tmpdir);
 
-    int rc = cbm_install_zed_mcp("/usr/local/bin/semantic-memory-mcp", configpath);
+    int rc = cbm_install_zed_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
     ASSERT_EQ(rc, 0);
 
     const char *data = read_test_file(configpath);
@@ -791,8 +911,8 @@ TEST(cli_zed_mcp_install) {
     ASSERT(strstr(data, "\"context_servers\"") != NULL);
     ASSERT(strstr(data, "\"command\"") != NULL);
     ASSERT(strstr(data, "\"args\"") != NULL);
-    ASSERT(strstr(data, "semantic-memory-mcp") != NULL);
-    ASSERT(strstr(data, "/usr/local/bin/semantic-memory-mcp") != NULL);
+    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
+    ASSERT(strstr(data, "/usr/local/bin/codebase-memory-mcp") != NULL);
 
     test_rmdir_r(tmpdir);
     PASS();
@@ -814,7 +934,7 @@ TEST(cli_zed_mcp_preserves_settings) {
     /* Pre-existing Zed settings */
     write_test_file(configpath, "{\"theme\": \"One Dark\", \"vim_mode\": true}");
 
-    cbm_install_zed_mcp("/usr/local/bin/semantic-memory-mcp", configpath);
+    cbm_install_zed_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
 
     const char *data = read_test_file(configpath);
     ASSERT_NOT_NULL(data);
@@ -823,7 +943,7 @@ TEST(cli_zed_mcp_preserves_settings) {
     ASSERT(strstr(data, "vim_mode") != NULL);
     /* MCP server added */
     ASSERT(strstr(data, "context_servers") != NULL);
-    ASSERT(strstr(data, "semantic-memory-mcp") != NULL);
+    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
 
     test_rmdir_r(tmpdir);
     PASS();
@@ -839,13 +959,13 @@ TEST(cli_zed_mcp_uninstall) {
     char configpath[512];
     snprintf(configpath, sizeof(configpath), "%s/.config/zed/settings.json", tmpdir);
 
-    cbm_install_zed_mcp("/usr/local/bin/semantic-memory-mcp", configpath);
+    cbm_install_zed_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
     int rc = cbm_remove_zed_mcp(configpath);
     ASSERT_EQ(rc, 0);
 
     const char *data = read_test_file(configpath);
     ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "\"semantic-memory-mcp\"") == NULL);
+    ASSERT(strstr(data, "\"codebase-memory-mcp\"") == NULL);
 
     test_rmdir_r(tmpdir);
     PASS();
@@ -873,7 +993,7 @@ TEST(cli_zed_mcp_jsonc_comments) {
                                 "  \"vim_mode\": true,\n" /* trailing comma */
                                 "}\n");
 
-    int rc = cbm_install_zed_mcp("/usr/local/bin/semantic-memory-mcp", configpath);
+    int rc = cbm_install_zed_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
     ASSERT_EQ(rc, 0);
 
     const char *data = read_test_file(configpath);
@@ -882,7 +1002,7 @@ TEST(cli_zed_mcp_jsonc_comments) {
     ASSERT(strstr(data, "One Dark") != NULL);
     ASSERT(strstr(data, "vim_mode") != NULL);
     /* MCP server added */
-    ASSERT(strstr(data, "semantic-memory-mcp") != NULL);
+    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
     ASSERT(strstr(data, "context_servers") != NULL);
 
     test_rmdir_r(tmpdir);
@@ -1026,6 +1146,82 @@ TEST(cli_copy_file_source_not_found) {
     PASS();
 }
 
+/* #472: install --force must copy the freshly-built binary to the target and
+ * make it executable — previously it re-signed whatever was already there. */
+TEST(cli_install_copies_binary_to_target_issue472) {
+    char tmpdir[256];
+    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-binswap-XXXXXX");
+    if (!cbm_mkdtemp(tmpdir))
+        FAIL("cbm_mkdtemp failed");
+
+    char src[512], dst[512];
+    snprintf(src, sizeof(src), "%s/new-build", tmpdir);
+    snprintf(dst, sizeof(dst), "%s/installed", tmpdir);
+
+    write_test_file(src, "fresh build bytes");
+
+    /* Target does not exist yet → must be created with the source content. */
+    int rc = cbm_copy_binary_to_target(src, dst);
+    ASSERT_EQ(rc, 0);
+
+    const char *data = read_test_file(dst);
+    ASSERT_STR_EQ(data, "fresh build bytes");
+
+#ifndef _WIN32
+    /* The exec bit is set via chmod, which is POSIX-only; on Windows it is not
+     * meaningful and MinGW stat() derives it from the file extension. */
+    struct stat st;
+    ASSERT_EQ(stat(dst, &st), 0);
+    ASSERT((st.st_mode & S_IXUSR) != 0); /* executable bit set */
+#endif
+
+    /* Overwrite an existing (stale) target with new content. */
+    write_test_file(dst, "STALE");
+    write_test_file(src, "upgraded build bytes");
+    rc = cbm_copy_binary_to_target(src, dst);
+    ASSERT_EQ(rc, 0);
+    data = read_test_file(dst);
+    ASSERT_STR_EQ(data, "upgraded build bytes");
+
+    test_rmdir_r(tmpdir);
+    PASS();
+}
+
+/* #472: copying the running binary onto itself must NOT truncate it. */
+TEST(cli_install_same_file_guard_issue472) {
+    char tmpdir[256];
+    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-samefile-XXXXXX");
+    if (!cbm_mkdtemp(tmpdir))
+        FAIL("cbm_mkdtemp failed");
+
+    char path[512];
+    snprintf(path, sizeof(path), "%s/self", tmpdir);
+    write_test_file(path, "must survive self-copy");
+
+    int rc = cbm_copy_binary_to_target(path, path);
+    ASSERT_EQ(rc, 0); /* skipped, not failed */
+
+    const char *data = read_test_file(path);
+    ASSERT_STR_EQ(data, "must survive self-copy"); /* intact, not zeroed */
+
+#ifndef _WIN32
+    /* Distinct path strings resolving to the same inode (a symlink — exactly
+     * what a non-canonical cbm_detect_self_path vs the hardcoded target can
+     * produce) must also be detected as same-file and skipped, not truncated. */
+    char link[512];
+    snprintf(link, sizeof(link), "%s/self-link", tmpdir);
+    if (symlink(path, link) == 0) {
+        rc = cbm_copy_binary_to_target(link, path);
+        ASSERT_EQ(rc, 0);
+        data = read_test_file(path);
+        ASSERT_STR_EQ(data, "must survive self-copy"); /* still intact via symlink */
+    }
+#endif
+
+    test_rmdir_r(tmpdir);
+    PASS();
+}
+
 /* ═══════════════════════════════════════════════════════════════════
  *  Tar.gz extraction tests (port of update_test.go)
  * ═══════════════════════════════════════════════════════════════════ */
@@ -1035,7 +1231,7 @@ TEST(cli_extract_binary_from_targz) {
     const char *content = "fake binary content";
     int gz_len;
     unsigned char *gz =
-        create_test_targz("semantic-memory-mcp-linux-amd64", (const unsigned char *)content,
+        create_test_targz("codebase-memory-mcp-linux-amd64", (const unsigned char *)content,
                           (int)strlen(content), &gz_len);
     ASSERT_NOT_NULL(gz);
 
@@ -1158,7 +1354,7 @@ TEST(cli_extract_binary_from_zip) {
     const char *content = "#!/bin/sh\necho test\n";
     int zip_len = 0;
     unsigned char *zip = create_test_zip_stored(
-        "semantic-memory-mcp", (const unsigned char *)content, (int)strlen(content), &zip_len);
+        "codebase-memory-mcp", (const unsigned char *)content, (int)strlen(content), &zip_len);
     ASSERT_NOT_NULL(zip);
 
     int out_len = 0;
@@ -1189,7 +1385,7 @@ TEST(cli_extract_binary_from_zip_path_traversal) {
     const char *content = "malicious";
     int zip_len = 0;
     unsigned char *zip =
-        create_test_zip_stored("../../etc/semantic-memory-mcp", (const unsigned char *)content,
+        create_test_zip_stored("../../etc/codebase-memory-mcp", (const unsigned char *)content,
                                (int)strlen(content), &zip_len);
     ASSERT_NOT_NULL(zip);
 
@@ -1205,6 +1401,47 @@ TEST(cli_extract_binary_from_zip_invalid) {
     int out_len = 0;
     unsigned char *extracted = cbm_extract_binary_from_zip(bad_data, sizeof(bad_data), &out_len);
     ASSERT_NULL(extracted);
+    PASS();
+}
+
+TEST(cli_extract_binary_from_zip_rejects_truncated_deflate_size_over_int_max) {
+    const char *filename = "codebase-memory-mcp";
+    const unsigned char deflated[] = {0xAB, 0x00, 0x00}; /* raw DEFLATE for "x" */
+    size_t name_len = strlen(filename);
+    size_t zip_len = 30 + name_len + sizeof(deflated);
+    unsigned char *zip = calloc(1, zip_len);
+    ASSERT_NOT_NULL(zip);
+
+    uint32_t comp_size = 0xFFFF0000U;
+    uint32_t uncomp_size = 1U;
+    zip[0] = 0x50;
+    zip[1] = 0x4B;
+    zip[2] = 0x03;
+    zip[3] = 0x04;
+    zip[8] = 8;
+    zip[9] = 0;
+    zip[18] = (unsigned char)(comp_size & 0xFF);
+    zip[19] = (unsigned char)((comp_size >> 8) & 0xFF);
+    zip[20] = (unsigned char)((comp_size >> 16) & 0xFF);
+    zip[21] = (unsigned char)((comp_size >> 24) & 0xFF);
+    zip[22] = (unsigned char)(uncomp_size & 0xFF);
+    zip[23] = (unsigned char)((uncomp_size >> 8) & 0xFF);
+    zip[24] = (unsigned char)((uncomp_size >> 16) & 0xFF);
+    zip[25] = (unsigned char)((uncomp_size >> 24) & 0xFF);
+    zip[26] = (unsigned char)(name_len & 0xFF);
+    zip[27] = (unsigned char)((name_len >> 8) & 0xFF);
+    memcpy(zip + 30, filename, name_len);
+    memcpy(zip + 30 + name_len, deflated, sizeof(deflated));
+
+    int out_len = 0;
+    unsigned char *extracted = cbm_extract_binary_from_zip(zip, (int)zip_len, &out_len);
+    if (extracted) {
+        free(extracted);
+        free(zip);
+        FAIL("accepted a truncated deflated zip entry with a wrapped compressed size");
+    }
+    ASSERT_EQ(out_len, 0);
+    free(zip);
     PASS();
 }
 
@@ -1516,7 +1753,7 @@ TEST(cli_install_plan_receipt_no_mutation_issue388) {
     snprintf(dir, sizeof(dir), "%s/.codex", tmpdir);
     test_mkdirp(dir);
 
-    char *json = cbm_build_install_plan_json(tmpdir, "/usr/local/bin/semantic-memory-mcp");
+    char *json = cbm_build_install_plan_json(tmpdir, "/usr/local/bin/codebase-memory-mcp");
     ASSERT_NOT_NULL(json);
     ASSERT(strstr(json, "agent.install.plan.v1") != NULL);
     ASSERT(strstr(json, "writes_started") != NULL);
@@ -1573,50 +1810,6 @@ TEST(cli_codex_session_hook_issue330) {
     PASS();
 }
 
-/* Codex UserPromptSubmit long-term memory recall hook — installed alongside the
- * SessionStart reminder, idempotent, coexists with it, and cleanly removed. */
-TEST(cli_codex_recall_hook) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-codexrecall-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char cfg[512];
-    snprintf(cfg, sizeof(cfg), "%s/config.toml", tmpdir);
-    write_test_file(cfg, "[mcp_servers.other]\ncommand = \"x\"\n");
-
-    /* SessionStart + UserPromptSubmit coexist (mirrors the real install path). */
-    ASSERT_EQ(cbm_upsert_codex_hooks(cfg), 0);
-    ASSERT_EQ(cbm_upsert_codex_recall_hook(cfg, "/usr/local/bin/semantic-memory-mcp"), 0);
-    const char *d = read_test_file(cfg);
-    ASSERT_NOT_NULL(d);
-    ASSERT(strstr(d, "[[hooks.UserPromptSubmit]]") != NULL);
-    ASSERT(strstr(d, "[[hooks.UserPromptSubmit.hooks]]") != NULL);
-    ASSERT(strstr(d, "/usr/local/bin/semantic-memory-mcp memory-recall") != NULL);
-    ASSERT(strstr(d, "[[hooks.SessionStart]]") != NULL);   /* reminder still present */
-    ASSERT(strstr(d, "[mcp_servers.other]") != NULL);      /* pre-existing preserved */
-
-    /* Idempotent: re-upsert leaves exactly ONE recall block. */
-    ASSERT_EQ(cbm_upsert_codex_recall_hook(cfg, "/usr/local/bin/semantic-memory-mcp"), 0);
-    d = read_test_file(cfg);
-    const char *first = strstr(d, "[[hooks.UserPromptSubmit]]");
-    ASSERT_NOT_NULL(first);
-    ASSERT_NULL(strstr(first + 1, "[[hooks.UserPromptSubmit]]"));
-
-    /* Removing the recall hook leaves the SessionStart reminder untouched. */
-    ASSERT_EQ(cbm_remove_codex_recall_hook(cfg), 0);
-    d = read_test_file(cfg);
-    ASSERT_NULL(strstr(d, "hooks.UserPromptSubmit"));
-    ASSERT(strstr(d, "[[hooks.SessionStart]]") != NULL);
-    ASSERT(strstr(d, "[mcp_servers.other]") != NULL);
-
-    /* Remove on a config without our block is a clean no-op success. */
-    ASSERT_EQ(cbm_remove_codex_recall_hook(cfg), 1);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
 /* Gemini/Antigravity SessionStart reminder parity (settings.json JSON path). */
 TEST(cli_gemini_session_hook_parity) {
     char tmpdir[256];
@@ -1636,6 +1829,75 @@ TEST(cli_gemini_session_hook_parity) {
     ASSERT_EQ(cbm_remove_gemini_session_hooks(cfg), 0);
     d = read_test_file(cfg);
     ASSERT_NULL(strstr(d, "SessionStart"));
+
+    test_rmdir_r(tmpdir);
+    PASS();
+}
+
+/* Claude SubagentStart reminder: subagents spawned via the Agent tool do not
+ * fire SessionStart, so this hook is their code-discovery channel. Verify the
+ * install shape, idempotent re-install, and clean removal. */
+TEST(cli_claude_subagent_hook) {
+    char tmpdir[256];
+    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-subhook-XXXXXX");
+    if (!cbm_mkdtemp(tmpdir))
+        FAIL("cbm_mkdtemp failed");
+
+    char cfg[512];
+    snprintf(cfg, sizeof(cfg), "%s/settings.json", tmpdir);
+
+    ASSERT_EQ(cbm_upsert_claude_subagent_hooks(cfg), 0);
+    const char *d = read_test_file(cfg);
+    ASSERT_NOT_NULL(d);
+    ASSERT(strstr(d, "SubagentStart") != NULL);
+    ASSERT(strstr(d, "\"*\"") != NULL);                 /* match-all matcher */
+    ASSERT(strstr(d, "cbm-subagent-reminder") != NULL); /* points at the hook script */
+
+    /* Idempotent: a second upsert must not duplicate our entry. */
+    ASSERT_EQ(cbm_upsert_claude_subagent_hooks(cfg), 0);
+    d = read_test_file(cfg);
+    ASSERT_NOT_NULL(d);
+    int count = 0;
+    for (const char *p = d; (p = strstr(p, "cbm-subagent-reminder")) != NULL; p++)
+        count++;
+    ASSERT_EQ(count, 1);
+
+    ASSERT_EQ(cbm_remove_claude_subagent_hooks(cfg), 0);
+    d = read_test_file(cfg);
+    ASSERT_NULL(strstr(d, "SubagentStart"));
+
+    test_rmdir_r(tmpdir);
+    PASS();
+}
+
+/* A user's own catch-all ("*") SubagentStart hook must survive CMM install and
+ * uninstall: ownership is keyed on the command, not just the "*" matcher. */
+TEST(cli_claude_subagent_hook_preserves_user_entry) {
+    char tmpdir[256];
+    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-subuser-XXXXXX");
+    if (!cbm_mkdtemp(tmpdir))
+        FAIL("cbm_mkdtemp failed");
+
+    char cfg[512];
+    snprintf(cfg, sizeof(cfg), "%s/settings.json", tmpdir);
+    /* Pre-existing user SubagentStart hook, also matcher "*", different command. */
+    write_test_file(
+        cfg, "{\"hooks\":{\"SubagentStart\":[{\"matcher\":\"*\","
+             "\"hooks\":[{\"type\":\"command\",\"command\":\"echo user-subagent-hook\"}]}]}}");
+
+    /* Install CMM's hook: the user's "*" entry must remain, ours added alongside. */
+    ASSERT_EQ(cbm_upsert_claude_subagent_hooks(cfg), 0);
+    const char *d = read_test_file(cfg);
+    ASSERT_NOT_NULL(d);
+    ASSERT(strstr(d, "echo user-subagent-hook") != NULL); /* user's hook untouched */
+    ASSERT(strstr(d, "cbm-subagent-reminder") != NULL);   /* ours added */
+
+    /* Remove CMM's hook: the user's entry must still be intact, ours gone. */
+    ASSERT_EQ(cbm_remove_claude_subagent_hooks(cfg), 0);
+    d = read_test_file(cfg);
+    ASSERT_NOT_NULL(d);
+    ASSERT(strstr(d, "echo user-subagent-hook") != NULL); /* user's hook preserved */
+    ASSERT_NULL(strstr(d, "cbm-subagent-reminder"));      /* only ours removed */
 
     test_rmdir_r(tmpdir);
     PASS();
@@ -1742,6 +2004,22 @@ TEST(cli_detect_agents_finds_kiro) {
     PASS();
 }
 
+/* issue #651: Junie (~/.junie/) must be detected so install registers the
+ * MCP server in ~/.junie/mcp/mcp.json. */
+TEST(cli_detect_agents_finds_junie_issue651) {
+    char tmpdir[256];
+    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-detect-XXXXXX");
+    if (!cbm_mkdtemp(tmpdir))
+        FAIL("cbm_mkdtemp failed");
+    char dir[512];
+    snprintf(dir, sizeof(dir), "%s/.junie", tmpdir);
+    test_mkdirp(dir);
+    cbm_detected_agents_t agents = cbm_detect_agents(tmpdir);
+    ASSERT_TRUE(agents.junie);
+    test_rmdir_r(tmpdir);
+    PASS();
+}
+
 TEST(cli_detect_agents_none_found) {
     char tmpdir[256];
     snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-detect-XXXXXX");
@@ -1787,13 +2065,13 @@ TEST(cli_upsert_codex_mcp_fresh) {
     char configpath[512];
     snprintf(configpath, sizeof(configpath), "%s/config.toml", tmpdir);
 
-    int rc = cbm_upsert_codex_mcp("/usr/local/bin/semantic-memory-mcp", configpath);
+    int rc = cbm_upsert_codex_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
     ASSERT_EQ(rc, 0);
 
     const char *data = read_test_file(configpath);
     ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "[mcp_servers.semantic-memory-mcp]") != NULL);
-    ASSERT(strstr(data, "/usr/local/bin/semantic-memory-mcp") != NULL);
+    ASSERT(strstr(data, "[mcp_servers.codebase-memory-mcp]") != NULL);
+    ASSERT(strstr(data, "/usr/local/bin/codebase-memory-mcp") != NULL);
 
     test_rmdir_r(tmpdir);
     PASS();
@@ -1809,7 +2087,7 @@ TEST(cli_upsert_codex_mcp_existing) {
     snprintf(configpath, sizeof(configpath), "%s/config.toml", tmpdir);
     write_test_file(configpath, "model = \"gpt-4\"\n\n[other_setting]\nfoo = \"bar\"\n");
 
-    int rc = cbm_upsert_codex_mcp("/usr/local/bin/semantic-memory-mcp", configpath);
+    int rc = cbm_upsert_codex_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
     ASSERT_EQ(rc, 0);
 
     const char *data = read_test_file(configpath);
@@ -1818,7 +2096,7 @@ TEST(cli_upsert_codex_mcp_existing) {
     ASSERT(strstr(data, "model = \"gpt-4\"") != NULL);
     ASSERT(strstr(data, "[other_setting]") != NULL);
     /* Our entry added */
-    ASSERT(strstr(data, "[mcp_servers.semantic-memory-mcp]") != NULL);
+    ASSERT(strstr(data, "[mcp_servers.codebase-memory-mcp]") != NULL);
 
     test_rmdir_r(tmpdir);
     PASS();
@@ -1832,19 +2110,19 @@ TEST(cli_upsert_codex_mcp_replace) {
 
     char configpath[512];
     snprintf(configpath, sizeof(configpath), "%s/config.toml", tmpdir);
-    write_test_file(configpath, "[mcp_servers.semantic-memory-mcp]\n"
-                                "command = \"/old/path/semantic-memory-mcp\"\n"
+    write_test_file(configpath, "[mcp_servers.codebase-memory-mcp]\n"
+                                "command = \"/old/path/codebase-memory-mcp\"\n"
                                 "\n"
                                 "[other_setting]\nfoo = \"bar\"\n");
 
-    int rc = cbm_upsert_codex_mcp("/new/path/semantic-memory-mcp", configpath);
+    int rc = cbm_upsert_codex_mcp("/new/path/codebase-memory-mcp", configpath);
     ASSERT_EQ(rc, 0);
 
     const char *data = read_test_file(configpath);
     ASSERT_NOT_NULL(data);
     /* Old path replaced */
     ASSERT(strstr(data, "/old/path") == NULL);
-    ASSERT(strstr(data, "/new/path/semantic-memory-mcp") != NULL);
+    ASSERT(strstr(data, "/new/path/codebase-memory-mcp") != NULL);
     /* Other settings preserved */
     ASSERT(strstr(data, "[other_setting]") != NULL);
 
@@ -1866,7 +2144,7 @@ TEST(cli_zed_mcp_uses_args_format) {
     char configpath[512];
     snprintf(configpath, sizeof(configpath), "%s/settings.json", tmpdir);
 
-    cbm_install_zed_mcp("/usr/local/bin/semantic-memory-mcp", configpath);
+    cbm_install_zed_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
 
     const char *data = read_test_file(configpath);
     ASSERT_NOT_NULL(data);
@@ -1891,13 +2169,13 @@ TEST(cli_upsert_opencode_mcp_fresh) {
     char configpath[512];
     snprintf(configpath, sizeof(configpath), "%s/opencode.json", tmpdir);
 
-    int rc = cbm_upsert_opencode_mcp("/usr/local/bin/semantic-memory-mcp", configpath);
+    int rc = cbm_upsert_opencode_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
     ASSERT_EQ(rc, 0);
 
     const char *data = read_test_file(configpath);
     ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "semantic-memory-mcp") != NULL);
-    ASSERT(strstr(data, "/usr/local/bin/semantic-memory-mcp") != NULL);
+    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
+    ASSERT(strstr(data, "/usr/local/bin/codebase-memory-mcp") != NULL);
     ASSERT(strstr(data, "\"enabled\":true") != NULL || strstr(data, "\"enabled\": true") != NULL);
     /* command must be emitted as an array, not a string */
     ASSERT(strstr(data, "\"command\":[") != NULL || strstr(data, "\"command\": [") != NULL);
@@ -1919,13 +2197,13 @@ TEST(cli_upsert_opencode_mcp_existing) {
     snprintf(configpath, sizeof(configpath), "%s/opencode.json", tmpdir);
     write_test_file(configpath, "{\"mcp\":{\"other-server\":{\"command\":\"/usr/bin/other\"}}}");
 
-    int rc = cbm_upsert_opencode_mcp("/usr/local/bin/semantic-memory-mcp", configpath);
+    int rc = cbm_upsert_opencode_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
     ASSERT_EQ(rc, 0);
 
     const char *data = read_test_file(configpath);
     ASSERT_NOT_NULL(data);
     ASSERT(strstr(data, "other-server") != NULL);
-    ASSERT(strstr(data, "semantic-memory-mcp") != NULL);
+    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
 
     test_rmdir_r(tmpdir);
     PASS();
@@ -1944,12 +2222,12 @@ TEST(cli_upsert_antigravity_mcp_fresh) {
     char configpath[512];
     snprintf(configpath, sizeof(configpath), "%s/mcp_config.json", tmpdir);
 
-    int rc = cbm_upsert_antigravity_mcp("/usr/local/bin/semantic-memory-mcp", configpath);
+    int rc = cbm_upsert_antigravity_mcp("/usr/local/bin/codebase-memory-mcp", configpath);
     ASSERT_EQ(rc, 0);
 
     const char *data = read_test_file(configpath);
     ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "semantic-memory-mcp") != NULL);
+    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
 
     test_rmdir_r(tmpdir);
     PASS();
@@ -1964,15 +2242,15 @@ TEST(cli_upsert_antigravity_mcp_replace) {
     char configpath[512];
     snprintf(configpath, sizeof(configpath), "%s/mcp_config.json", tmpdir);
     write_test_file(configpath,
-                    "{\"mcpServers\":{\"semantic-memory-mcp\":{\"command\":\"/old/path\"}}}");
+                    "{\"mcpServers\":{\"codebase-memory-mcp\":{\"command\":\"/old/path\"}}}");
 
-    int rc = cbm_upsert_antigravity_mcp("/new/path/semantic-memory-mcp", configpath);
+    int rc = cbm_upsert_antigravity_mcp("/new/path/codebase-memory-mcp", configpath);
     ASSERT_EQ(rc, 0);
 
     const char *data = read_test_file(configpath);
     ASSERT_NOT_NULL(data);
     ASSERT(strstr(data, "/old/path") == NULL);
-    ASSERT(strstr(data, "/new/path/semantic-memory-mcp") != NULL);
+    ASSERT(strstr(data, "/new/path/codebase-memory-mcp") != NULL);
 
     test_rmdir_r(tmpdir);
     PASS();
@@ -1996,8 +2274,8 @@ TEST(cli_upsert_instructions_fresh) {
 
     const char *data = read_test_file(filepath);
     ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "<!-- semantic-memory-mcp:start -->") != NULL);
-    ASSERT(strstr(data, "<!-- semantic-memory-mcp:end -->") != NULL);
+    ASSERT(strstr(data, "<!-- codebase-memory-mcp:start -->") != NULL);
+    ASSERT(strstr(data, "<!-- codebase-memory-mcp:end -->") != NULL);
     ASSERT(strstr(data, "Hello world") != NULL);
 
     test_rmdir_r(tmpdir);
@@ -2023,7 +2301,7 @@ TEST(cli_upsert_instructions_existing) {
     ASSERT(strstr(data, "My Project Rules") != NULL);
     ASSERT(strstr(data, "Do the thing") != NULL);
     /* CMM section appended */
-    ASSERT(strstr(data, "semantic-memory-mcp:start") != NULL);
+    ASSERT(strstr(data, "codebase-memory-mcp:start") != NULL);
     ASSERT(strstr(data, "search_graph") != NULL);
 
     test_rmdir_r(tmpdir);
@@ -2039,9 +2317,9 @@ TEST(cli_upsert_instructions_replace) {
     char filepath[512];
     snprintf(filepath, sizeof(filepath), "%s/AGENTS.md", tmpdir);
     write_test_file(filepath, "# Rules\n"
-                              "<!-- semantic-memory-mcp:start -->\n"
+                              "<!-- codebase-memory-mcp:start -->\n"
                               "OLD CONTENT\n"
-                              "<!-- semantic-memory-mcp:end -->\n"
+                              "<!-- codebase-memory-mcp:end -->\n"
                               "# Other stuff\n");
 
     int rc = cbm_upsert_instructions(filepath, "NEW CONTENT\n");
@@ -2078,7 +2356,7 @@ TEST(cli_upsert_instructions_no_duplicate) {
     /* Only one start marker */
     int count = 0;
     const char *p = data;
-    while ((p = strstr(p, "semantic-memory-mcp:start")) != NULL) {
+    while ((p = strstr(p, "codebase-memory-mcp:start")) != NULL) {
         count++;
         p += 25;
     }
@@ -2100,9 +2378,9 @@ TEST(cli_remove_instructions) {
     char filepath[512];
     snprintf(filepath, sizeof(filepath), "%s/AGENTS.md", tmpdir);
     write_test_file(filepath, "# Rules\n"
-                              "<!-- semantic-memory-mcp:start -->\n"
+                              "<!-- codebase-memory-mcp:start -->\n"
                               "CMM Content\n"
-                              "<!-- semantic-memory-mcp:end -->\n"
+                              "<!-- codebase-memory-mcp:end -->\n"
                               "# Other\n");
 
     int rc = cbm_remove_instructions(filepath);
@@ -2111,7 +2389,7 @@ TEST(cli_remove_instructions) {
     const char *data = read_test_file(filepath);
     ASSERT_NOT_NULL(data);
     ASSERT(strstr(data, "CMM Content") == NULL);
-    ASSERT(strstr(data, "semantic-memory-mcp") == NULL);
+    ASSERT(strstr(data, "codebase-memory-mcp") == NULL);
     ASSERT(strstr(data, "# Rules") != NULL);
     ASSERT(strstr(data, "# Other") != NULL);
 
@@ -2167,7 +2445,7 @@ TEST(cli_hook_gate_script_no_predictable_tmp_issue384) {
     if (!cbm_mkdtemp(tmpdir))
         FAIL("cbm_mkdtemp failed");
 
-    cbm_install_hook_gate_script(tmpdir, "/usr/local/bin/semantic-memory-mcp");
+    cbm_install_hook_gate_script(tmpdir, "/usr/local/bin/codebase-memory-mcp");
 
     char script_path[512];
     snprintf(script_path, sizeof(script_path), "%s/.claude/hooks/cbm-code-discovery-gate", tmpdir);
@@ -2180,6 +2458,26 @@ TEST(cli_hook_gate_script_no_predictable_tmp_issue384) {
     ASSERT(strstr(data, "hook-augment") != NULL);
 
     test_rmdir_r(tmpdir);
+    PASS();
+}
+
+/* issue #618: hook-augment was a structural no-op on Windows because its path
+ * guards required POSIX-style '/'-prefixed absolute paths, so a drive-letter
+ * cwd (C:/repo) was rejected before any search_graph query. The predicate must
+ * accept POSIX and Windows drive roots alike (callers normalize '\\' to '/'). */
+TEST(cli_hook_augment_path_is_abs) {
+    /* POSIX absolute (unchanged behavior) */
+    ASSERT(cbm_hook_path_is_abs("/home/u/proj"));
+    /* Windows drive roots — the #618 regression */
+    ASSERT(cbm_hook_path_is_abs("C:/Users/me/proj"));
+    ASSERT(cbm_hook_path_is_abs("C:/"));
+    ASSERT(cbm_hook_path_is_abs("C:"));
+    ASSERT(cbm_hook_path_is_abs("d:/lowercase/drive"));
+    /* Not absolute → augmenter no-ops cleanly */
+    ASSERT(!cbm_hook_path_is_abs("relative/path"));
+    ASSERT(!cbm_hook_path_is_abs("proj"));
+    ASSERT(!cbm_hook_path_is_abs(""));
+    ASSERT(!cbm_hook_path_is_abs(NULL));
     PASS();
 }
 
@@ -2288,135 +2586,9 @@ TEST(cli_remove_claude_hooks) {
     PASS();
 }
 
-/* ── UserPromptSubmit recall hook (memory-recall) ───────────────── */
-
-TEST(cli_upsert_recall_hook_fresh) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-rhook-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char settingspath[512];
-    snprintf(settingspath, sizeof(settingspath), "%s/settings.json", tmpdir);
-
-    int rc = cbm_upsert_claude_recall_hook(settingspath);
-    ASSERT_EQ(rc, 0);
-
-    const char *data = read_test_file(settingspath);
-    ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "UserPromptSubmit") != NULL);
-    ASSERT(strstr(data, "cbm-memory-recall") != NULL);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-/* Idempotent upsert: a second call must not duplicate our entry, and must
- * preserve a pre-existing third-party UserPromptSubmit hook. */
-TEST(cli_upsert_recall_hook_idempotent_preserves_others) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-rhook-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char settingspath[512];
-    snprintf(settingspath, sizeof(settingspath), "%s/settings.json", tmpdir);
-    /* Pre-existing third-party UserPromptSubmit hook. */
-    write_test_file(settingspath,
-                    "{\"hooks\":{\"UserPromptSubmit\":[{\"hooks\":[{\"type\":\"command\","
-                    "\"command\":\"echo guard\"}]}]}}");
-
-    ASSERT_EQ(cbm_upsert_claude_recall_hook(settingspath), 0);
-    ASSERT_EQ(cbm_upsert_claude_recall_hook(settingspath), 0);
-
-    const char *data = read_test_file(settingspath);
-    ASSERT_NOT_NULL(data);
-    /* Third-party hook preserved. */
-    ASSERT(strstr(data, "echo guard") != NULL);
-    /* Exactly one occurrence of our shim after two upserts. */
-    const char *first = strstr(data, "cbm-memory-recall");
-    ASSERT_NOT_NULL(first);
-    ASSERT_NULL(strstr(first + 1, "cbm-memory-recall"));
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-TEST(cli_remove_recall_hook) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-rhook-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    char settingspath[512];
-    snprintf(settingspath, sizeof(settingspath), "%s/settings.json", tmpdir);
-    /* Pre-existing third-party hook must survive our removal. */
-    write_test_file(settingspath,
-                    "{\"hooks\":{\"UserPromptSubmit\":[{\"hooks\":[{\"type\":\"command\","
-                    "\"command\":\"echo guard\"}]}]}}");
-
-    cbm_upsert_claude_recall_hook(settingspath);
-    int rc = cbm_remove_claude_recall_hook(settingspath);
-    ASSERT_EQ(rc, 0);
-
-    const char *data = read_test_file(settingspath);
-    ASSERT_NOT_NULL(data);
-    /* Ours gone, third-party preserved. */
-    ASSERT(strstr(data, "cbm-memory-recall") == NULL);
-    ASSERT(strstr(data, "echo guard") != NULL);
-
-    test_rmdir_r(tmpdir);
-    PASS();
-}
-
-/* Regression: cbm_remove_indexes (install/update/uninstall cache cleanup) must
- * delete only REBUILDABLE graph indexes, never the persistent <project>-memory.db
- * long-term-memory store or _config.db. A blanket "*.db" scan here wiped every
- * project's memories on every deploy (the db-split decouples the FILE but this
- * cleanup path was never taught the distinction). */
-TEST(cli_remove_indexes_spares_memory_db) {
-    char tmpdir[256];
-    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-idxrm-XXXXXX");
-    if (!cbm_mkdtemp(tmpdir))
-        FAIL("cbm_mkdtemp failed");
-
-    /* Point the cache dir at our temp dir for the duration of the test. */
-    const char *raw = getenv("CBM_CACHE_DIR");
-    char *old_cache = raw ? strdup(raw) : NULL;
-    cbm_setenv("CBM_CACHE_DIR", tmpdir, 1);
-
-    /* Two rebuildable graph indexes + one memory store + config + a sidecar. */
-    char p_graph1[512], p_graph2[512], p_mem[512], p_cfg[512], p_wal[512];
-    snprintf(p_graph1, sizeof(p_graph1), "%s/MyProj.db", tmpdir);
-    snprintf(p_graph2, sizeof(p_graph2), "%s/Other-Repo.db", tmpdir);
-    snprintf(p_mem, sizeof(p_mem), "%s/MyProj-memory.db", tmpdir);
-    snprintf(p_cfg, sizeof(p_cfg), "%s/_config.db", tmpdir);
-    snprintf(p_wal, sizeof(p_wal), "%s/MyProj-memory.db-wal", tmpdir);
-    write_test_file(p_graph1, "graph1");
-    write_test_file(p_graph2, "graph2");
-    write_test_file(p_mem, "memories");
-    write_test_file(p_cfg, "config");
-    write_test_file(p_wal, "wal");
-
-    /* count + remove must agree, and both must exclude memory/config. */
-    int removed = cbm_remove_indexes(NULL);
-    ASSERT_EQ(removed, 2); /* only the two graph .db files */
-
-    /* Graph indexes gone; memory store, config, and sidecar all survive. */
-    ASSERT(read_test_file(p_graph1) == NULL);
-    ASSERT(read_test_file(p_graph2) == NULL);
-    ASSERT_NOT_NULL(read_test_file(p_mem));
-    ASSERT_NOT_NULL(read_test_file(p_cfg));
-    ASSERT_NOT_NULL(read_test_file(p_wal));
-
-    if (old_cache) {
-        cbm_setenv("CBM_CACHE_DIR", old_cache, 1);
-        free(old_cache);
-    } else
-        cbm_unsetenv("CBM_CACHE_DIR");
-    test_rmdir_r(tmpdir);
-    PASS();
-}
+/* ═══════════════════════════════════════════════════════════════════
+ *  Group D: Pre-Tool Hook Upsert — Gemini CLI / Antigravity
+ * ═══════════════════════════════════════════════════════════════════ */
 
 TEST(cli_upsert_gemini_hook_fresh) {
     char tmpdir[256];
@@ -2433,7 +2605,7 @@ TEST(cli_upsert_gemini_hook_fresh) {
     const char *data = read_test_file(settingspath);
     ASSERT_NOT_NULL(data);
     ASSERT(strstr(data, "BeforeTool") != NULL);
-    ASSERT(strstr(data, "semantic-memory-mcp") != NULL);
+    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
 
     test_rmdir_r(tmpdir);
     PASS();
@@ -2457,7 +2629,7 @@ TEST(cli_upsert_gemini_hook_existing) {
     const char *data = read_test_file(settingspath);
     ASSERT_NOT_NULL(data);
     /* Our hook added */
-    ASSERT(strstr(data, "semantic-memory-mcp") != NULL);
+    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
     /* Existing hook preserved */
     ASSERT(strstr(data, "shell") != NULL);
 
@@ -2484,7 +2656,7 @@ TEST(cli_upsert_gemini_hook_replace) {
     const char *data = read_test_file(settingspath);
     ASSERT_NOT_NULL(data);
     ASSERT(strstr(data, "old-cmm") == NULL);
-    ASSERT(strstr(data, "semantic-memory-mcp") != NULL);
+    ASSERT(strstr(data, "codebase-memory-mcp") != NULL);
 
     test_rmdir_r(tmpdir);
     PASS();
@@ -2505,7 +2677,7 @@ TEST(cli_remove_gemini_hooks) {
 
     const char *data = read_test_file(settingspath);
     ASSERT_NOT_NULL(data);
-    ASSERT(strstr(data, "semantic-memory-mcp") == NULL);
+    ASSERT(strstr(data, "codebase-memory-mcp") == NULL);
 
     test_rmdir_r(tmpdir);
     PASS();
@@ -2749,6 +2921,96 @@ TEST(replace_binary_creates_new_file) {
 #endif /* _WIN32 */
 
 /* ═══════════════════════════════════════════════════════════════════
+ *  CLI tool-argument flags / per-tool --help (#680)
+ * ═══════════════════════════════════════════════════════════════════ */
+
+/* A plain `--flag value` pair maps to a string property by schema type. */
+TEST(cli_build_args_json_string_flag_issue680) {
+    char *err = NULL;
+    char *argv[] = {"--repo-path", "/x"};
+    char *json = cbm_cli_build_args_json("index_repository", 2, argv, &err);
+    ASSERT_NOT_NULL(json);
+    ASSERT_NULL(err);
+    ASSERT(strstr(json, "\"repo_path\":\"/x\"") != NULL);
+    free(json);
+    PASS();
+}
+
+/* An integer-typed property serializes as a JSON NUMBER, not a quoted string. */
+TEST(cli_build_args_json_integer_flag_issue680) {
+    char *err = NULL;
+    char *argv[] = {"--limit", "100"};
+    char *json = cbm_cli_build_args_json("search_graph", 2, argv, &err);
+    ASSERT_NOT_NULL(json);
+    ASSERT(strstr(json, "\"limit\":100") != NULL);
+    ASSERT(strstr(json, "\"limit\":\"100\"") == NULL);
+    free(json);
+    PASS();
+}
+
+/* A bare boolean flag (no value) becomes true. */
+TEST(cli_build_args_json_bare_boolean_issue680) {
+    char *err = NULL;
+    char *argv[] = {"--exclude-entry-points"};
+    char *json = cbm_cli_build_args_json("search_graph", 1, argv, &err);
+    ASSERT_NOT_NULL(json);
+    ASSERT(strstr(json, "\"exclude_entry_points\":true") != NULL);
+    free(json);
+    PASS();
+}
+
+/* A repeated array-typed flag accumulates into a JSON array. */
+TEST(cli_build_args_json_repeated_array_issue680) {
+    char *err = NULL;
+    char *argv[] = {"--semantic-query", "send", "--semantic-query", "publish"};
+    char *json = cbm_cli_build_args_json("search_graph", 4, argv, &err);
+    ASSERT_NOT_NULL(json);
+    ASSERT(strstr(json, "\"semantic_query\":[\"send\",\"publish\"]") != NULL);
+    free(json);
+    PASS();
+}
+
+/* kebab-case flag names map to snake_case JSON keys. */
+TEST(cli_build_args_json_kebab_to_snake_issue680) {
+    char *err = NULL;
+    char *argv[] = {"--name-pattern", "Foo.*"};
+    char *json = cbm_cli_build_args_json("search_graph", 2, argv, &err);
+    ASSERT_NOT_NULL(json);
+    ASSERT(strstr(json, "\"name_pattern\":\"Foo.*\"") != NULL);
+    free(json);
+    PASS();
+}
+
+/* `--key=value` form splits on the FIRST `=`; value may contain spaces/dashes. */
+TEST(cli_build_args_json_key_equals_value_issue680) {
+    char *err = NULL;
+    char *argv[] = {"--repo-path=/a b"};
+    char *json = cbm_cli_build_args_json("index_repository", 1, argv, &err);
+    ASSERT_NOT_NULL(json);
+    ASSERT(strstr(json, "\"repo_path\":\"/a b\"") != NULL);
+    free(json);
+    PASS();
+}
+
+/* A non-`--` positional is an error: returns NULL and sets *err_out. */
+TEST(cli_build_args_json_bad_positional_errors_issue680) {
+    char *err = NULL;
+    char *argv[] = {"foo"};
+    char *json = cbm_cli_build_args_json("search_graph", 1, argv, &err);
+    ASSERT_NULL(json);
+    ASSERT_NOT_NULL(err);
+    free(err);
+    PASS();
+}
+
+/* Per-tool --help returns 0 for a known tool, -1 for an unknown one. */
+TEST(cli_print_tool_help_issue680) {
+    ASSERT_EQ(cbm_cli_print_tool_help("index_repository"), 0);
+    ASSERT_EQ(cbm_cli_print_tool_help("nope_not_a_tool"), -1);
+    PASS();
+}
+
+/* ═══════════════════════════════════════════════════════════════════
  *  Suite definition
  * ═══════════════════════════════════════════════════════════════════ */
 
@@ -2786,7 +3048,11 @@ SUITE(cli) {
     RUN_TEST(cli_editor_mcp_idempotent);
     RUN_TEST(cli_editor_mcp_preserves_others);
     RUN_TEST(cli_editor_mcp_uninstall);
+    RUN_TEST(cli_junie_mcp_install_issue651);
     RUN_TEST(cli_gemini_mcp_install);
+    RUN_TEST(cli_openclaw_mcp_install_uses_nested_servers);
+    RUN_TEST(cli_openclaw_mcp_preserves_existing_config);
+    RUN_TEST(cli_openclaw_mcp_uninstall_uses_nested_servers);
 
     /* VS Code MCP (2 tests — install_test.go) */
     RUN_TEST(cli_vscode_mcp_install);
@@ -2816,6 +3082,7 @@ SUITE(cli) {
     RUN_TEST(cli_extract_binary_from_zip_not_found);
     RUN_TEST(cli_extract_binary_from_zip_path_traversal);
     RUN_TEST(cli_extract_binary_from_zip_invalid);
+    RUN_TEST(cli_extract_binary_from_zip_rejects_truncated_deflate_size_over_int_max);
 
     /* Dry-run lifecycle (2 tests) */
     RUN_TEST(cli_install_dry_run);
@@ -2823,6 +3090,10 @@ SUITE(cli) {
 
     /* Full lifecycle (1 test — cli_test.go) */
     RUN_TEST(cli_install_and_uninstall);
+
+    /* Binary swap on install --force (#472) */
+    RUN_TEST(cli_install_copies_binary_to_target_issue472);
+    RUN_TEST(cli_install_same_file_guard_issue472);
 
     /* YAML parser (7 unit tests) */
     RUN_TEST(cli_yaml_parse_simple);
@@ -2840,14 +3111,15 @@ SUITE(cli) {
     RUN_TEST(cli_detect_agents_finds_cursor_issue222);
     RUN_TEST(cli_install_plan_receipt_no_mutation_issue388);
     RUN_TEST(cli_codex_session_hook_issue330);
-    RUN_TEST(cli_codex_recall_hook);
-    RUN_TEST(cli_remove_indexes_spares_memory_db);
     RUN_TEST(cli_gemini_session_hook_parity);
+    RUN_TEST(cli_claude_subagent_hook);
+    RUN_TEST(cli_claude_subagent_hook_preserves_user_entry);
     RUN_TEST(cli_detect_agents_finds_gemini);
     RUN_TEST(cli_detect_agents_finds_zed);
     RUN_TEST(cli_detect_agents_finds_antigravity);
     RUN_TEST(cli_detect_agents_finds_kilocode);
     RUN_TEST(cli_detect_agents_finds_kiro);
+    RUN_TEST(cli_detect_agents_finds_junie_issue651);
     RUN_TEST(cli_detect_agents_none_found);
 
     /* Codex MCP config upsert (3 tests — group B) */
@@ -2876,14 +3148,12 @@ SUITE(cli) {
 
     /* Claude Code hooks (5 tests — group D) */
     RUN_TEST(cli_hook_gate_script_no_predictable_tmp_issue384);
+    RUN_TEST(cli_hook_augment_path_is_abs);
     RUN_TEST(cli_upsert_claude_hook_fresh);
     RUN_TEST(cli_upsert_claude_hook_existing);
     RUN_TEST(cli_upsert_claude_hook_replace);
     RUN_TEST(cli_upsert_claude_hook_preserves_others);
     RUN_TEST(cli_remove_claude_hooks);
-    RUN_TEST(cli_upsert_recall_hook_fresh);
-    RUN_TEST(cli_upsert_recall_hook_idempotent_preserves_others);
-    RUN_TEST(cli_remove_recall_hook);
 
     /* Gemini CLI hooks (4 tests — group D) */
     RUN_TEST(cli_upsert_gemini_hook_fresh);
@@ -2907,4 +3177,14 @@ SUITE(cli) {
     RUN_TEST(replace_binary_overwrites_readonly);
     RUN_TEST(replace_binary_creates_new_file);
 #endif
+
+    /* CLI tool-argument flags / per-tool --help (#680) */
+    RUN_TEST(cli_build_args_json_string_flag_issue680);
+    RUN_TEST(cli_build_args_json_integer_flag_issue680);
+    RUN_TEST(cli_build_args_json_bare_boolean_issue680);
+    RUN_TEST(cli_build_args_json_repeated_array_issue680);
+    RUN_TEST(cli_build_args_json_kebab_to_snake_issue680);
+    RUN_TEST(cli_build_args_json_key_equals_value_issue680);
+    RUN_TEST(cli_build_args_json_bad_positional_errors_issue680);
+    RUN_TEST(cli_print_tool_help_issue680);
 }

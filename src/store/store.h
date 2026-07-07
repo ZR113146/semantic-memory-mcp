@@ -148,6 +148,9 @@ typedef struct {
     const char *to_name;
     const char *type;
     double confidence;
+    int64_t source_id; /* edge endpoints — let callers match an edge to a hop node */
+    int64_t target_id;
+    const char *properties_json; /* raw edge properties (carries CALLS arg expressions) */
 } cbm_edge_info_t;
 
 typedef struct {
@@ -198,9 +201,15 @@ cbm_store_t *cbm_store_open_memory(void);
 /* Open a file-backed database at the given path. Creates if needed. */
 cbm_store_t *cbm_store_open_path(const char *db_path);
 
-/* Open an existing file-backed database for querying only (no SQLITE_OPEN_CREATE).
- * Returns NULL if the file does not exist — never creates a new .db file. */
+/* Open an existing file-backed database for querying only. Opened READ-ONLY
+ * (no SQLITE_OPEN_CREATE, no write pragmas) so queries never mutate the DB and
+ * work on a read-only file / filesystem. Returns NULL if the file does not
+ * exist — never creates a new .db file. */
 cbm_store_t *cbm_store_open_path_query(const char *db_path);
+
+/* On-disk path of a file-backed store, or NULL for an in-memory (:memory:)
+ * store. The returned pointer is owned by the store. */
+const char *cbm_store_db_path(const cbm_store_t *s);
 
 /* Check database integrity. Returns true if the DB passes basic sanity checks
  * (projects table has correct types, no corruption indicators).
@@ -313,6 +322,22 @@ int cbm_store_find_node_ids_by_qns(cbm_store_t *s, const char *project, const ch
 
 /* Count nodes in project. Returns count or CBM_STORE_ERR. */
 int cbm_store_count_nodes(cbm_store_t *s, const char *project);
+
+int cbm_store_count_nodes_scoped(cbm_store_t *s, const char *project, const char *path);
+
+int cbm_store_count_edges_scoped(cbm_store_t *s, const char *project, const char *path);
+
+/* True when path is a non-empty scope after normalization (issue #604). */
+bool cbm_store_arch_path_scoped(const char *path);
+
+/* When scoped, writes normalized directory prefix into norm_out. Returns false if unscoped. */
+bool cbm_store_normalize_arch_path(const char *path, char *norm_out, size_t norm_sz);
+
+/* True when architecture aspect `name` belongs to the "overview" subset:
+ * every aspect EXCEPT the large per-file listing (file_tree). Shared by both
+ * aspect gates — want_aspect (store.c) and aspect_wanted (mcp.c) — so the
+ * two sites cannot drift. */
+bool cbm_store_arch_aspect_in_overview(const char *name);
 
 /* Delete all nodes for a project (cascade deletes edges). */
 int cbm_store_delete_nodes_by_project(cbm_store_t *s, const char *project);
@@ -430,6 +455,9 @@ int cbm_store_get_schema(cbm_store_t *s, const char *project, cbm_schema_info_t 
  * label/type counts, e.g. get_architecture. */
 int cbm_store_get_schema_counts(cbm_store_t *s, const char *project, cbm_schema_info_t *out);
 
+int cbm_store_get_schema_counts_scoped(cbm_store_t *s, const char *project, const char *path,
+                                       cbm_schema_info_t *out);
+
 /* Free a schema info's allocated memory. */
 void cbm_store_schema_free(cbm_schema_info_t *out);
 
@@ -528,16 +556,12 @@ typedef struct {
     int file_tree_count;
 } cbm_architecture_info_t;
 
-int cbm_store_get_architecture(cbm_store_t *s, const char *project, const char **aspects,
-                               int aspect_count, cbm_architecture_info_t *out);
+int cbm_store_get_architecture(cbm_store_t *s, const char *project, const char *path,
+                               const char **aspects, int aspect_count,
+                               cbm_architecture_info_t *out);
 void cbm_store_architecture_free(cbm_architecture_info_t *out);
 
-/* ── ADR (Architecture Decision Record) ──────────────────────────
- * DEPRECATED (2026-07-07): the project_summaries-based ADR store is dead code.
- * All ADR content now lives in memory_item (kind='decision',layer='adr') via
- * the MCP events tool. The store functions below are kept for backward
- * compatibility with the HTTP API and Graph UI, which are also deprecated.
- * New ADR queries should use cbm_store_memory_adr_list (below). */
+/* ── ADR (Architecture Decision Record) ────────────────────────── */
 
 #define CBM_ADR_MAX_LENGTH 8000
 
@@ -671,9 +695,7 @@ int cbm_store_count_vectors(cbm_store_t *s, const char *project);
  * Returns CBM_STORE_OK on success. */
 int cbm_store_exec(cbm_store_t *s, const char *sql);
 
-/* Local-fork memory/ADR extensions (extracted from this header).
- * Kept here for backward compatibility — new code should include
- * memory/memory_store.h directly. */
-#include "memory/memory_store.h"
-
 #endif /* CBM_STORE_H */
+
+/* ── Local-fork memory/ADR extensions ── */
+#include "memory/memory_store.h"
