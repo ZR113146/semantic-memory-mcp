@@ -2977,7 +2977,7 @@ int cbm_store_memory_adr_list(cbm_store_t *s, const char *project, const char *k
         pos += snprintf(sql + pos, sizeof(sql) - pos, " AND kind=?%d", param_idx++);
     } else {
         pos += snprintf(sql + pos, sizeof(sql) - pos,
-                        " AND kind IN ('\''decision'\'','\''constraint'\'')");
+                        " AND kind IN ('decision','constraint')");
     }
     if (status_filter && status_filter[0]) {
         pos += snprintf(sql + pos, sizeof(sql) - pos, " AND status=?%d", param_idx++);
@@ -3086,7 +3086,7 @@ int cbm_store_memory_adr_list_global(cbm_store_t *s, const char *kind_filter,
         pos += snprintf(sql + pos, sizeof(sql) - pos, " AND kind=?%d", param_idx++);
     } else {
         pos += snprintf(sql + pos, sizeof(sql) - pos,
-                        " AND kind IN ('\''decision'\'','\''constraint'\'')");
+                        " AND kind IN ('decision','constraint')");
     }
     if (status_filter && status_filter[0]) {
         pos += snprintf(sql + pos, sizeof(sql) - pos, " AND status=?%d", param_idx++);
