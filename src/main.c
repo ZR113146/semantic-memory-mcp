@@ -52,7 +52,7 @@ enum {
 #include <stdatomic.h>
 
 #ifndef CBM_VERSION
-#define CBM_VERSION "dev"
+#define CBM_VERSION "v0.8.1-adr"
 #endif
 
 /* ── Globals for signal handling ────────────────────────────────── */
