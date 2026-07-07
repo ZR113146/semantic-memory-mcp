@@ -4648,7 +4648,7 @@ static cbm_store_t *resolve_memory_store(cbm_mcp_server_t *srv, const char *proj
 
 static cbm_store_t *resolve_global_memory_store(cbm_mcp_server_t *srv, bool create);
 
-static char *handle_adr_list(cbm_mcp_server_t *srv, const char *args) {
+char *handle_adr_list(cbm_mcp_server_t *srv, const char *args) {
     yyjson_doc *adoc = yyjson_read(args ? args : "{}", args ? strlen(args) : 2, 0);
     if (!adoc)
         return cbm_mcp_text_result("invalid JSON arguments", true);
@@ -4876,7 +4876,7 @@ static char *handle_adr_list(cbm_mcp_server_t *srv, const char *args) {
  * full version timeline. Start from item_id (walk backward to root, then
  * forward to newest) or entity_key (find root at version=1). Does NOT union
  * the global store — supersedes is project-scoped by design. */
-static char *handle_adr_chain(cbm_mcp_server_t *srv, const char *args) {
+char *handle_adr_chain(cbm_mcp_server_t *srv, const char *args) {
     yyjson_doc *adoc = yyjson_read(args ? args : "{}", args ? strlen(args) : 2, 0);
     if (!adoc)
         return cbm_mcp_text_result("invalid JSON arguments", true);

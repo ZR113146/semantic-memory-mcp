@@ -164,7 +164,7 @@ MEMORY_SRCS = src/memory/memory_store.c
 CYPHER_SRCS = src/cypher/cypher.c
 
 # MCP server module (new)
-MCP_SRCS = src/mcp/mcp.c
+MCP_SRCS = src/mcp/mcp.c src/mcp/mcp_memory_handlers.c
 
 # Discover module (new)
 DISCOVER_SRCS = \

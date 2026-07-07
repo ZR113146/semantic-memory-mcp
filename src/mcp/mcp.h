@@ -135,6 +135,18 @@ struct cbm_pipeline; /* forward decl */
  * Returns NULL if no pipeline is running. */
 struct cbm_pipeline *cbm_mcp_server_active_pipeline(cbm_mcp_server_t *srv);
 
+/* ── Local-fork ADR handlers (defined in mcp_memory_handlers.c) ── */
+
+/* List architectural decision records for a project.
+ * Takes cbm_mcp_server_t *srv for dispatch compatibility but does NOT
+ * access its internals — opens memory stores independently. */
+char *handle_adr_list(cbm_mcp_server_t *srv, const char *args);
+
+/* Walk the supersedes chain of an ADR showing the full version timeline.
+ * Takes cbm_mcp_server_t *srv for dispatch compatibility but does NOT
+ * access its internals — opens the memory store independently. */
+char *handle_adr_chain(cbm_mcp_server_t *srv, const char *args);
+
 /* ── URI helpers ───────────────────────────────────────────────── */
 
 /* Parse a file:// URI and extract the filesystem path.
