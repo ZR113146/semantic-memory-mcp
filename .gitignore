@@ -39,8 +39,11 @@ Thumbs.db
 # MCP Registry auth tokens
 .mcpregistry_*
 
-# Local project memory (Claude Code auto-memory)
+# Local project memory (Claude Code auto-memory) — the bare "memory/" pattern
+# matches any directory named "memory", including our first-party code at
+# src/memory/. Negate that path explicitly so it IS tracked.
 memory/
+!src/memory/
 reference/
 
 # Local-only scratch / session notes (never pushed)
@@ -64,3 +67,4 @@ soak-results/
 
 # Python install-manager cache (pymanager) — not part of this project
 /Python/
+.adr-backup-20260707-143722/
