@@ -153,6 +153,13 @@ int cbm_memory_db_path(const char *project, char *buf, size_t bufsz);
  * usable. Returns CBM_STORE_OK on success/no-op, CBM_STORE_ERR on copy failure. */
 int cbm_store_migrate_memory_from_graph(cbm_store_t *mem, const char *graph_db_path);
 
+/* Versioned memory-schema migration runner. Creates the memory_* tables (v1
+ * baseline, all IF NOT EXISTS) and applies later steps (memory_meta, vector
+ * re-embeds, deleted_at soft-delete column), stamping PRAGMA user_version
+ * after each atomic step. Called from the store open path right after graph
+ * schema init; idempotent — a DB already at the current version is a no-op. */
+int cbm_memory_run_migrations(cbm_store_t *s);
+
 /* ── Memory CRUD ────────────────────────────────────────────────────── */
 
 int cbm_store_memory_append_event(cbm_store_t *s, const cbm_memory_event_t *event,

@@ -183,6 +183,281 @@ static void memory_meta_set_i64(cbm_store_t *s, const char *key, int64_t value);
 static int memory_delete_audit(cbm_store_t *s, const char *type, const char *mode, const char *id,
                                const char *project, const char *user);
 
+/* ── Memory schema + versioned migrations ─────────────────────────
+ *
+ * Owns the memory_* DDL and its migration chain so the upstream store layer
+ * (store.c init_schema) stays graph-only / zero-diff. Called from the store
+ * open path right after the graph schema init; versioning rides on
+ * PRAGMA user_version, which upstream does not use.
+ *
+ * Each step runs inside a transaction that also bumps user_version, so a
+ * step's DDL and its version stamp commit (or roll back) atomically — a crash
+ * can never leave "DDL applied but version not advanced" or vice versa.
+ *
+ * Step 0→1 is the baseline: all CREATE ... IF NOT EXISTS, so it is safe both
+ * for a truly fresh DB and for a legacy DB that already has the tables but
+ * predates versioning (user_version stays 0 until stamped here). Later steps
+ * use ALTER TABLE ADD COLUMN (instant in SQLite, no table rewrite).
+ *
+ * NOTE: PRAGMA user_version cannot be parameterized; the version number is a
+ * compile-time constant formatted into the statement, never user input. */
+
+#define CBM_MEMORY_SCHEMA_VERSION 5
+
+static int mem_exec(cbm_store_t *s, const char *sql) {
+    char *err = NULL;
+    if (sqlite3_exec(s->db, sql, NULL, NULL, &err) != SQLITE_OK) {
+        if (err) {
+            snprintf(s->errbuf, sizeof(s->errbuf), "%s", err);
+            sqlite3_free(err);
+        }
+        return CBM_STORE_ERR;
+    }
+    return CBM_STORE_OK;
+}
+
+/* Baseline memory schema (v1). Tables + FTS + indexes, all IF NOT EXISTS. */
+static int memory_init_schema(cbm_store_t *s) {
+    const char *ddl =
+        "CREATE TABLE IF NOT EXISTS memory_event ("
+        "  id TEXT PRIMARY KEY,"
+        "  type TEXT NOT NULL,"
+        "  source TEXT NOT NULL,"
+        "  timestamp INTEGER NOT NULL,"
+        "  project TEXT,"
+        "  user TEXT,"
+        "  payload TEXT NOT NULL,"
+        "  confidence REAL DEFAULT 0.5,"
+        "  context TEXT"
+        ");"
+        "CREATE TABLE IF NOT EXISTS memory_item ("
+        "  id TEXT PRIMARY KEY,"
+        "  kind TEXT NOT NULL DEFAULT 'event',"
+        "  layer TEXT NOT NULL DEFAULT 'episodic',"
+        "  title TEXT,"
+        "  summary TEXT,"
+        "  content TEXT NOT NULL,"
+        "  scope_user TEXT,"
+        "  scope_project TEXT,"
+        "  scope_task TEXT,"
+        "  entity_key TEXT,"
+        "  predicate TEXT,"
+        "  importance REAL DEFAULT 0.5,"
+        "  confidence REAL DEFAULT 0.5,"
+        "  reusability REAL DEFAULT 0.5,"
+        "  specificity REAL DEFAULT 0.5,"
+        "  hit_count INTEGER DEFAULT 0,"
+        "  last_hit_at INTEGER,"
+        "  decay REAL DEFAULT 0.0,"
+        "  status TEXT DEFAULT 'candidate',"
+        "  version INTEGER DEFAULT 1,"
+        "  supersedes TEXT,"
+        "  created_at INTEGER NOT NULL,"
+        "  updated_at INTEGER NOT NULL,"
+        "  source_event_ids TEXT"
+        ");"
+        "CREATE TABLE IF NOT EXISTS memory_edge ("
+        "  id TEXT PRIMARY KEY,"
+        "  src_id TEXT NOT NULL,"
+        "  dst_id TEXT NOT NULL,"
+        "  type TEXT NOT NULL,"
+        "  weight REAL DEFAULT 1.0,"
+        "  origin TEXT NOT NULL,"
+        "  confidence REAL DEFAULT 0.5,"
+        "  created_at INTEGER NOT NULL"
+        ");"
+        "CREATE TABLE IF NOT EXISTS memory_vec ("
+        "  item_id TEXT PRIMARY KEY,"
+        "  dim INTEGER DEFAULT 256,"
+        "  embedding BLOB,"
+        "  embedding_json TEXT,"
+        "  updated_at INTEGER"
+        ");"
+        "CREATE INDEX IF NOT EXISTS idx_memory_item_scope ON memory_item(scope_user, "
+        "scope_project, scope_task);"
+        "CREATE INDEX IF NOT EXISTS idx_memory_item_dedup ON memory_item(entity_key, predicate, "
+        "scope_project);"
+        "CREATE INDEX IF NOT EXISTS idx_memory_item_status ON memory_item(status);"
+        "CREATE INDEX IF NOT EXISTS idx_memory_edge_src ON memory_edge(src_id, type);"
+        "CREATE INDEX IF NOT EXISTS idx_memory_edge_dst ON memory_edge(dst_id, type);";
+
+    int rc = mem_exec(s, ddl);
+    if (rc != CBM_STORE_OK) {
+        return rc;
+    }
+
+    /* FTS5 contentless-style virtual table for memory BM25 search (item_id is
+     * UNINDEXED — only title/summary/content feed ranking). Tolerates a build
+     * without FTS5 compiled in: retrieval degrades to structured queries. */
+    {
+        char *fts_err = NULL;
+        int fts_rc = sqlite3_exec(s->db,
+                                  "CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5("
+                                  "  item_id UNINDEXED, title, summary, content,"
+                                  "  tokenize='unicode61 remove_diacritics 2'"
+                                  ");",
+                                  NULL, NULL, &fts_err);
+        if (fts_rc != SQLITE_OK && fts_err) {
+            sqlite3_free(fts_err);
+        }
+    }
+    return CBM_STORE_OK;
+}
+
+static int memory_read_user_version(cbm_store_t *s) {
+    sqlite3_stmt *st = NULL;
+    int ver = 0;
+    if (sqlite3_prepare_v2(s->db, "PRAGMA user_version;", -1, &st, NULL) == SQLITE_OK) {
+        if (sqlite3_step(st) == SQLITE_ROW) {
+            ver = sqlite3_column_int(st, 0);
+        }
+    }
+    sqlite3_finalize(st);
+    return ver;
+}
+
+/* Drop all stored memory vectors and re-embed every item from its content via
+ * the current embedding dispatcher. Shared by the v2→3 (256→768) and v4→5
+ * (768→1024) migrations: stored widths are incomparable across dims
+ * (cbm_cosine_i8 scores mismatched widths as 0), so a full rebuild is the only
+ * correct move. Single-user DBs hold few items; this is cheap. Collects
+ * (id, content) first — finalizing the read cursor before writing memory_vec —
+ * to avoid cursor-vs-write races. Runs inside the caller's open transaction. */
+static int memory_vec_rebuild_all(cbm_store_t *s) {
+    if (mem_exec(s, "DELETE FROM memory_vec;") != CBM_STORE_OK) {
+        return CBM_STORE_ERR;
+    }
+    char **ids = NULL;
+    char **contents = NULL;
+    int count = 0;
+    sqlite3_stmt *sel = NULL;
+    if (sqlite3_prepare_v2(s->db, "SELECT id, content FROM memory_item;", -1, &sel, NULL) ==
+        SQLITE_OK) {
+        int cap = 0;
+        while (sqlite3_step(sel) == SQLITE_ROW) {
+            const char *id = (const char *)sqlite3_column_text(sel, 0);
+            const char *content = (const char *)sqlite3_column_text(sel, 1);
+            if (!id)
+                continue;
+            if (count == cap) {
+                int ncap = cap ? cap * 2 : 16;
+                char **ni = realloc(ids, (size_t)ncap * sizeof(*ni));
+                char **nc = realloc(contents, (size_t)ncap * sizeof(*nc));
+                if (!ni || !nc) {
+                    free(ni ? ni : ids);
+                    free(nc ? nc : contents);
+                    ids = NULL;
+                    contents = NULL;
+                    break;
+                }
+                ids = ni;
+                contents = nc;
+                cap = ncap;
+            }
+            ids[count] = heap_strdup(id);
+            contents[count] = heap_strdup(content ? content : "");
+            count++;
+        }
+    }
+    sqlite3_finalize(sel);
+    int rebuild_ok = (ids != NULL || count == 0);
+    for (int i = 0; i < count && rebuild_ok; i++) {
+        if (memory_vec_upsert(s, ids[i], contents[i]) != CBM_STORE_OK) {
+            rebuild_ok = 0;
+        }
+    }
+    for (int i = 0; i < count; i++) {
+        free(ids[i]);
+        free(contents[i]);
+    }
+    free(ids);
+    free(contents);
+    return rebuild_ok ? CBM_STORE_OK : CBM_STORE_ERR;
+}
+
+/* Run one migration step: BEGIN → step SQL/callback → stamp version → COMMIT. */
+static int memory_migration_step(cbm_store_t *s, int target_ver, int (*step)(cbm_store_t *)) {
+    int rc = cbm_store_begin(s);
+    if (rc != CBM_STORE_OK) {
+        return rc;
+    }
+    rc = step(s);
+    if (rc != CBM_STORE_OK) {
+        cbm_store_rollback(s);
+        return rc;
+    }
+    char stamp[48];
+    snprintf(stamp, sizeof(stamp), "PRAGMA user_version = %d;", target_ver);
+    rc = mem_exec(s, stamp);
+    if (rc != CBM_STORE_OK) {
+        cbm_store_rollback(s);
+        return rc;
+    }
+    rc = cbm_store_commit(s);
+    if (rc != CBM_STORE_OK) {
+        cbm_store_rollback(s);
+        return rc;
+    }
+    return CBM_STORE_OK;
+}
+
+/* ver 1→2: memory_meta — a small key/value table for memory-subsystem
+ * bookkeeping (e.g. last auto-maintenance timestamps). The DB is one file per
+ * project, so meta is naturally project-scoped; no scope column needed. */
+static int memory_migrate_v2(cbm_store_t *s) {
+    return mem_exec(s, "CREATE TABLE IF NOT EXISTS memory_meta ("
+                       "  key TEXT PRIMARY KEY,"
+                       "  value TEXT"
+                       ");");
+}
+
+/* ver 3→4: soft-delete support. A nullable deleted_at timestamp marks an item
+ * as awaiting physical removal: hidden from all retrieval paths immediately,
+ * kept on disk through a grace window so a soft delete can be undone
+ * (restore). A retention sweep physically purges items past the window.
+ * NULL means "live". The index keeps the sweep's deleted_at scan cheap. */
+static int memory_migrate_v4(cbm_store_t *s) {
+    int rc = mem_exec(s, "ALTER TABLE memory_item ADD COLUMN deleted_at INTEGER;");
+    if (rc != CBM_STORE_OK) {
+        return rc;
+    }
+    return mem_exec(
+        s, "CREATE INDEX IF NOT EXISTS idx_memory_item_deleted ON memory_item(deleted_at);");
+}
+
+int cbm_memory_run_migrations(cbm_store_t *s) {
+    if (!s || !s->db) {
+        return CBM_STORE_ERR;
+    }
+    int ver = memory_read_user_version(s);
+    if (ver >= CBM_MEMORY_SCHEMA_VERSION) {
+        return CBM_STORE_OK;
+    }
+    if (ver < 1 && memory_migration_step(s, 1, memory_init_schema) != CBM_STORE_OK) {
+        return CBM_STORE_ERR;
+    }
+    if (ver < 2 && memory_migration_step(s, 2, memory_migrate_v2) != CBM_STORE_OK) {
+        return CBM_STORE_ERR;
+    }
+    /* ver 2→3: memory vectors moved from 256-d signed feature-hashing to the
+     * shared 768-d nomic space. Old BLOBs are a different dimension and
+     * geometry — incomparable — so drop and re-embed everything. */
+    if (ver < 3 && memory_migration_step(s, 3, memory_vec_rebuild_all) != CBM_STORE_OK) {
+        return CBM_STORE_ERR;
+    }
+    if (ver < 4 && memory_migration_step(s, 4, memory_migrate_v4) != CBM_STORE_OK) {
+        return CBM_STORE_ERR;
+    }
+    /* ver 4→5: memory vectors widened from CBM_SEM_DIM (768) to MEMORY_VEC_DIM
+     * (1024) so the optional bge-m3 sidecar can store its native sentence
+     * vectors. Same width-mismatch problem as v2→3: drop and re-embed via the
+     * current dispatcher (sidecar if enabled, else static zero-padded). */
+    if (ver < 5 && memory_migration_step(s, 5, memory_vec_rebuild_all) != CBM_STORE_OK) {
+        return CBM_STORE_ERR;
+    }
+    return CBM_STORE_OK;
+}
+
 /* ══ Extracted from store.c lines 1238-1256 ══ */
 
 /* Derive the per-project memory DB path: <cache>/<project>-memory.db.
