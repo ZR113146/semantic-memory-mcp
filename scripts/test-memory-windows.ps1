@@ -82,6 +82,7 @@ function Compile-C {
 
 $objects = @(
     @{ Source = "src/store/store.c"; Object = "store_clean.o"; Flags = $commonFlags },
+    @{ Source = "src/memory/memory_store.c"; Object = "memory_store.o"; Flags = $commonFlags },
     @{ Source = "vendored/sqlite3/sqlite3.c"; Object = "sqlite3_clean.o"; Flags = @("-std=c11", "-g", "-O0", "-w", "-DSQLITE_DQS=0", "-DSQLITE_THREADSAFE=1", "-DSQLITE_ENABLE_FTS5") },
     @{ Source = "vendored/tre/tre_all.c"; Object = "tre.o"; Flags = @("-std=c11", "-g", "-O0", "-w", "-Ivendored/tre") },
     @{ Source = "src/foundation/compat_regex.c"; Object = "compat_regex.o"; Flags = $commonFlags },
@@ -101,6 +102,7 @@ $objects = @(
     @{ Source = "src/pipeline/worker_pool.c"; Object = "worker_pool.o"; Flags = $commonFlags },
     @{ Source = "src/simhash/minhash.c"; Object = "minhash.o"; Flags = ($commonFlags + @("-Iinternal/cbm/vendored/ts_runtime/include")) },
     @{ Source = "src/semantic/semantic.c"; Object = "semantic.o"; Flags = ($commonFlags + @("-Iinternal/cbm/vendored/ts_runtime/include")) },
+    @{ Source = "src/semantic/rotsq.c"; Object = "rotsq.o"; Flags = ($commonFlags + @("-Iinternal/cbm/vendored/ts_runtime/include")) },
     @{ Source = "vendored/nomic/code_vectors_blob.S"; Object = "code_vectors_blob.o"; Flags = @() },
     @{ Source = "vendored/yyjson/yyjson.c"; Object = "yyjson.o"; Flags = $commonFlags },
     @{ Source = "vendored/mimalloc/src/static.c"; Object = "mimalloc_clean.o"; Flags = @("-std=c11", "-g", "-O0", "-w", "-Ivendored/mimalloc/include", "-Ivendored/mimalloc/src", "-DMI_OVERRIDE=0") },
@@ -113,6 +115,7 @@ foreach ($item in $objects) {
 
 $linkObjects = @(
     "store_clean.o",
+    "memory_store.o",
     "sqlite3_clean.o",
     "tre.o",
     "compat_regex.o",
@@ -132,6 +135,7 @@ $linkObjects = @(
     "worker_pool.o",
     "minhash.o",
     "semantic.o",
+    "rotsq.o",
     "code_vectors_blob.o",
     "yyjson.o",
     "mimalloc_clean.o",

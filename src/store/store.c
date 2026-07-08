@@ -269,6 +269,69 @@ static int init_schema(cbm_store_t *s) {
         "  source_hash TEXT NOT NULL,"
         "  created_at TEXT NOT NULL,"
         "  updated_at TEXT NOT NULL"
+        ");"
+        /* Long-term memory MVP tables. Memory and graph share one schema-init
+         * pass (the memory DB is a separate <project>-memory.db file opened by
+         * the same store_open path, so these tables exist in BOTH graph and
+         * memory DBs; graph DBs simply leave them empty). See src/memory/ for
+         * the memory/ADR storage layer that populates them. */
+        "CREATE TABLE IF NOT EXISTS memory_event ("
+        "  id TEXT PRIMARY KEY,"
+        "  type TEXT NOT NULL,"
+        "  source TEXT NOT NULL,"
+        "  timestamp INTEGER NOT NULL,"
+        "  project TEXT,"
+        "  user TEXT,"
+        "  payload TEXT NOT NULL,"
+        "  confidence REAL DEFAULT 0.5,"
+        "  context TEXT"
+        ");"
+        "CREATE TABLE IF NOT EXISTS memory_item ("
+        "  id TEXT PRIMARY KEY,"
+        "  kind TEXT NOT NULL DEFAULT 'event',"
+        "  layer TEXT NOT NULL DEFAULT 'episodic',"
+        "  title TEXT,"
+        "  summary TEXT,"
+        "  content TEXT NOT NULL,"
+        "  scope_user TEXT,"
+        "  scope_project TEXT,"
+        "  scope_task TEXT,"
+        "  entity_key TEXT,"
+        "  predicate TEXT,"
+        "  importance REAL DEFAULT 0.5,"
+        "  confidence REAL DEFAULT 0.5,"
+        "  reusability REAL DEFAULT 0.5,"
+        "  specificity REAL DEFAULT 0.5,"
+        "  hit_count INTEGER DEFAULT 0,"
+        "  last_hit_at INTEGER,"
+        "  decay REAL DEFAULT 0.0,"
+        "  status TEXT DEFAULT 'candidate',"
+        "  version INTEGER DEFAULT 1,"
+        "  supersedes TEXT,"
+        "  created_at INTEGER NOT NULL,"
+        "  updated_at INTEGER NOT NULL,"
+        "  source_event_ids TEXT"
+        ");"
+        "CREATE TABLE IF NOT EXISTS memory_edge ("
+        "  id TEXT PRIMARY KEY,"
+        "  src_id TEXT NOT NULL,"
+        "  dst_id TEXT NOT NULL,"
+        "  type TEXT NOT NULL,"
+        "  weight REAL DEFAULT 1.0,"
+        "  origin TEXT NOT NULL,"
+        "  confidence REAL DEFAULT 0.5,"
+        "  created_at INTEGER NOT NULL"
+        ");"
+        "CREATE TABLE IF NOT EXISTS memory_vec ("
+        "  item_id TEXT PRIMARY KEY,"
+        "  dim INTEGER DEFAULT 768,"
+        "  embedding BLOB,"
+        "  embedding_json TEXT,"
+        "  updated_at INTEGER"
+        ");"
+        "CREATE TABLE IF NOT EXISTS memory_meta ("
+        "  key TEXT PRIMARY KEY,"
+        "  value TEXT"
         ");";
 
     int rc = exec_sql(s, ddl);
@@ -314,6 +377,20 @@ static int init_schema(cbm_store_t *s) {
             sqlite3_free(fts_err);
         }
     }
+    /* Memory FTS5 virtual table (item_id is UNINDEXED — only title/summary/
+     * content feed BM25 ranking). Tolerates missing FTS5. */
+    {
+        char *fts_err = NULL;
+        int fts_rc = sqlite3_exec(s->db,
+                                  "CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5("
+                                  "  item_id UNINDEXED, title, summary, content,"
+                                  "  tokenize='unicode61 remove_diacritics 2'"
+                                  ");",
+                                  NULL, NULL, &fts_err);
+        if (fts_rc != SQLITE_OK && fts_err) {
+            sqlite3_free(fts_err);
+        }
+    }
     return CBM_STORE_OK;
 }
 
@@ -327,7 +404,12 @@ static int create_user_indexes(cbm_store_t *s) {
         "CREATE INDEX IF NOT EXISTS idx_edges_type ON edges(project, type);"
         "CREATE INDEX IF NOT EXISTS idx_edges_target_type ON edges(project, target_id, type);"
         "CREATE INDEX IF NOT EXISTS idx_edges_source_type ON edges(project, source_id, type);"
-        "CREATE INDEX IF NOT EXISTS idx_edges_url_path ON edges(project, url_path_gen);";
+        "CREATE INDEX IF NOT EXISTS idx_edges_url_path ON edges(project, url_path_gen);"
+        "CREATE INDEX IF NOT EXISTS idx_memory_item_scope ON memory_item(scope_user, scope_project, scope_task);"
+        "CREATE INDEX IF NOT EXISTS idx_memory_item_dedup ON memory_item(entity_key, predicate, scope_project);"
+        "CREATE INDEX IF NOT EXISTS idx_memory_item_status ON memory_item(status);"
+        "CREATE INDEX IF NOT EXISTS idx_memory_edge_src ON memory_edge(src_id, type);"
+        "CREATE INDEX IF NOT EXISTS idx_memory_edge_dst ON memory_edge(dst_id, type);";
     /* NOTE: a partial expression index on json_extract(properties,'$.is_entry_point')
      * was tried for arch_entry_points and REVERTED: json_extract in an index WHERE
      * aborts CREATE INDEX (and thus store open) on any row whose properties JSON is
