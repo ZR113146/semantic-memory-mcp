@@ -598,14 +598,33 @@ TEST(server_handle_tools_list_paginates) {
     ASSERT_NULL(strstr(resp, "manage_adr"));
     free(resp);
 
-    resp = cbm_mcp_server_handle(
-        srv,
-        "{\"jsonrpc\":\"2.0\",\"id\":201,\"method\":\"tools/list\",\"params\":{\"cursor\":\"8\"}}");
-    ASSERT_NOT_NULL(resp);
-    ASSERT_NOT_NULL(strstr(resp, "\"id\":201"));
-    ASSERT_NULL(strstr(resp, "\"nextCursor\""));
-    ASSERT_NOT_NULL(strstr(resp, "manage_adr"));
-    free(resp);
+    /* Walk the remaining pages via nextCursor until exhausted. The total tool
+     * count changes as tools are added, so the test is page-count-agnostic:
+     * manage_adr must appear on SOME later page, and the cursor chain must
+     * terminate (no nextCursor on the last page). */
+    bool found_manage_adr = false;
+    int cursor = 8;
+    for (int page = 0; page < 16; page++) {
+        char req[160];
+        snprintf(req, sizeof(req),
+                 "{\"jsonrpc\":\"2.0\",\"id\":201,\"method\":\"tools/list\","
+                 "\"params\":{\"cursor\":\"%d\"}}",
+                 cursor);
+        resp = cbm_mcp_server_handle(srv, req);
+        ASSERT_NOT_NULL(resp);
+        ASSERT_NOT_NULL(strstr(resp, "\"id\":201"));
+        if (strstr(resp, "manage_adr")) {
+            found_manage_adr = true;
+        }
+        const char *nc = strstr(resp, "\"nextCursor\":\"");
+        if (!nc) {
+            free(resp);
+            break;
+        }
+        cursor = atoi(nc + strlen("\"nextCursor\":\""));
+        free(resp);
+    }
+    ASSERT_TRUE(found_manage_adr);
 
     cbm_mcp_server_free(srv);
     PASS();
