@@ -19,6 +19,22 @@ void cbm_cli_set_version(const char *ver);
 /* Get the version string. */
 const char *cbm_cli_get_version(void);
 
+/* ── CLI tool arguments (flags / --help) ──────────────────────── */
+
+/* Convert `--flag value` / `--flag=value` / bare `--flag` argv pairs for
+ * a tool into a JSON arguments object string, using the tool's input_schema to
+ * type values (string/integer/boolean) and to collect repeated flags into
+ * array-typed properties. kebab-case flags map to snake_case keys
+ * (--repo-path -> repo_path). A bare `--` ends flag parsing. On error returns
+ * NULL and, if err_out is non-NULL, sets *err_out to a heap message the caller
+ * must free. Caller frees the returned JSON string. */
+char *cbm_cli_build_args_json(const char *tool_name, int argc, char **argv, char **err_out);
+
+/* Print per-tool help (usage + the tool's flags with type/description/required)
+ * derived from its input_schema, to stdout. Returns 0 if the tool is known,
+ * non-zero (and prints nothing) if it is not. */
+int cbm_cli_print_tool_help(const char *tool_name);
+
 /* ── Self-update: version comparison ──────────────────────────── */
 
 /* Compare two semver strings (e.g. "0.2.1" vs "0.2.0").
