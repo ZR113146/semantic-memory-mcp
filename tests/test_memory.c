@@ -1620,6 +1620,52 @@ TEST(embed_sidecar_spawn_failure_degrades_to_static) {
     return 0;
 }
 
+/* Traceability test for the consolidated 3-tier scoring (cbm_memory_score_item).
+ * Pure function — no DB/graph needed. Asserts each tier fires for its case, and
+ * that the monotonic floor stops an anchored low-degree ADR from scoring below
+ * an unanchored one. This test IS the living spec of the L1>L2>L3 design. */
+static int test_memory_score_item_tiers(void) {
+    cbm_memory_score_t s;
+
+    /* L1: anchored high-degree code ADR → graph signal drives (declared unset). */
+    s = cbm_memory_score_item("decision", 3, 0.95, 0.90, 0.5, 0.5);
+    ASSERT(s.confidence > 0.94 && s.confidence < 0.96);
+    ASSERT(s.reusability > 0.89 && s.reusability < 0.91);
+
+    /* Monotonic-floor fix: anchored but LOW-degree ADR (graph reuse 0.4) must NOT
+     * fall below the decision kind prior 0.7 — the whole point of max composition. */
+    s = cbm_memory_score_item("decision", 1, 0.5, 0.4, 0.5, 0.5);
+    ASSERT(s.reusability > 0.69 && s.reusability < 0.71); /* max(0.7, 0.4) */
+    ASSERT(s.confidence > 0.49 && s.confidence < 0.51);   /* conf has no kind prior */
+
+    /* L2: unanchored decision → kind prior 0.7 reuse, conf stays 0.5. */
+    s = cbm_memory_score_item("decision", 0, 0.0, 0.0, 0.5, 0.5);
+    ASSERT(s.reusability > 0.69 && s.reusability < 0.71);
+    ASSERT(s.confidence > 0.49 && s.confidence < 0.51);
+
+    /* L2: unanchored preference → 0.75; event → 0.4; unknown kind → 0.5. */
+    s = cbm_memory_score_item("preference", 0, 0.0, 0.0, 0.5, 0.5);
+    ASSERT(s.reusability > 0.74 && s.reusability < 0.76);
+    s = cbm_memory_score_item("event", 0, 0.0, 0.0, 0.5, 0.5);
+    ASSERT(s.reusability > 0.39 && s.reusability < 0.41);
+    s = cbm_memory_score_item("weird", 0, 0.0, 0.0, 0.5, 0.5);
+    ASSERT(s.reusability > 0.49 && s.reusability < 0.51);
+
+    /* L3: declared non-0.5 applies as a uniform offset. Unanchored decision with
+     * declared reuse 0.9 → 0.7 + 0.4 = 1.0 (clamped); with 0.3 → 0.7 - 0.2 = 0.5. */
+    s = cbm_memory_score_item("decision", 0, 0.0, 0.0, 0.5, 0.9);
+    ASSERT(s.reusability > 0.99 && s.reusability <= 1.0001);
+    s = cbm_memory_score_item("decision", 0, 0.0, 0.0, 0.5, 0.3);
+    ASSERT(s.reusability > 0.49 && s.reusability < 0.51);
+
+    /* Declared offset stacks on the L1 base too: conf base max(0.5,0.95)=0.95,
+     * + (0.9-0.5) → clamp 1.0. */
+    s = cbm_memory_score_item("decision", 3, 0.95, 0.9, 0.9, 0.5);
+    ASSERT(s.confidence > 0.99 && s.confidence <= 1.0001);
+
+    return 0;
+}
+
 int main(void) {
     fprintf(stderr, "START\n");
     fflush(stderr);
@@ -1674,6 +1720,7 @@ int main(void) {
     RUN(embed_default_backend_is_static);
     RUN(embed_sidecar_roundtrip_via_mock);
     RUN(embed_sidecar_spawn_failure_degrades_to_static);
+    RUN(memory_score_item_tiers);
     fprintf(stderr, "\n%d/%d passed\n", pass, total);
     return fail ? 1 : 0;
 }

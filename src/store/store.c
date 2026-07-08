@@ -286,13 +286,35 @@ static int init_schema(cbm_store_t *s) {
      * reindex). Read-only query opens skip init_schema and keep working. */
     {
         sqlite3_stmt *probe = NULL;
-        if (sqlite3_prepare_v2(s->db, "SELECT local_name_gen FROM edges LIMIT 0;", CBM_NOT_FOUND,
-                               &probe, NULL) != SQLITE_OK) {
-            cbm_log_warn("store.schema", "result", "incompatible", "missing",
-                         "edges.local_name_gen");
-            return CBM_STORE_ERR;
-        }
+        int prc = sqlite3_prepare_v2(s->db, "SELECT local_name_gen FROM edges LIMIT 0;",
+                                     CBM_NOT_FOUND, &probe, NULL);
         sqlite3_finalize(probe);
+        if (prc != SQLITE_OK) {
+            /* A rebuildable graph DB is deleted+rebuilt by the caller. But a
+             * <project>-memory.db carries an empty, vestigial `edges` table from
+             * the pre-split era (memory once shared the graph DB) and is NOT
+             * rebuildable — failing the open wedges every write behind a
+             * read-only handle forever. So if the stale edges table is empty,
+             * drop and recreate it at the current schema (re-running the DDL;
+             * the other CREATE ... IF NOT EXISTS statements no-op). Only fail
+             * when it holds rows — a genuine old graph DB that must be rebuilt,
+             * never silently emptied. */
+            sqlite3_int64 edge_rows = -1;
+            sqlite3_stmt *cnt = NULL;
+            if (sqlite3_prepare_v2(s->db, "SELECT count(*) FROM edges;", CBM_NOT_FOUND, &cnt,
+                                   NULL) == SQLITE_OK &&
+                sqlite3_step(cnt) == SQLITE_ROW) {
+                edge_rows = sqlite3_column_int64(cnt, 0);
+            }
+            sqlite3_finalize(cnt);
+            if (edge_rows != 0 || exec_sql(s, "DROP TABLE edges;") != CBM_STORE_OK ||
+                exec_sql(s, ddl) != CBM_STORE_OK) {
+                cbm_log_warn("store.schema", "result", "incompatible", "missing",
+                             "edges.local_name_gen");
+                return CBM_STORE_ERR;
+            }
+            cbm_log_warn("store.schema", "result", "recreated_empty_edges", "table", "edges");
+        }
     }
 
     /* FTS5 contentless virtual table for BM25 full-text search.

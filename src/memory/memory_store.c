@@ -1330,6 +1330,89 @@ int cbm_store_memory_score_from_anchors(cbm_store_t *s, sqlite3 *graph_db, const
     return resolved;
 }
 
+/* ── L2 (kind/type prior) + L3 (declared) composition ───────────────────────
+ * Reusability correlates with memory kind: ADR-class rationale and cross-project
+ * preferences are broadly reusable; episodic events are not. These priors are
+ * BASELINES — floored by the L1 graph signal when anchors resolve, and offset by
+ * the caller's declared value. Numbers are tunable; the architecture (which kind
+ * maps where, monotonic composition) is fixed. */
+#define MEMORY_L2_REUSE_DECISION 0.7    /* decision / constraint: architectural rationale */
+#define MEMORY_L2_REUSE_PREFERENCE 0.75 /* user preference: applies across every project */
+#define MEMORY_L2_REUSE_REFERENCE 0.6
+#define MEMORY_L2_REUSE_LESSON 0.55
+#define MEMORY_L2_REUSE_FACT 0.5
+#define MEMORY_L2_REUSE_EVENT 0.4    /* episodic: least reusable */
+#define MEMORY_L2_REUSE_DEFAULT 0.5  /* unknown kind: neutral, no opinion */
+#define MEMORY_L3_DECLARED_OFFSET_WEIGHT 1.0
+
+static double memory_kind_reuse_prior(const char *kind) {
+    if (!kind || !kind[0]) {
+        return MEMORY_L2_REUSE_DEFAULT;
+    }
+    if (strcmp(kind, "decision") == 0 || strcmp(kind, "constraint") == 0) {
+        return MEMORY_L2_REUSE_DECISION;
+    }
+    if (strcmp(kind, "preference") == 0) {
+        return MEMORY_L2_REUSE_PREFERENCE;
+    }
+    if (strcmp(kind, "reference") == 0) {
+        return MEMORY_L2_REUSE_REFERENCE;
+    }
+    if (strcmp(kind, "lesson") == 0) {
+        return MEMORY_L2_REUSE_LESSON;
+    }
+    if (strcmp(kind, "fact") == 0) {
+        return MEMORY_L2_REUSE_FACT;
+    }
+    if (strcmp(kind, "event") == 0) {
+        return MEMORY_L2_REUSE_EVENT;
+    }
+    return MEMORY_L2_REUSE_DEFAULT;
+}
+
+/* L3 blend: a declared value of 0.5 is the schema default ("unset") → keep the
+ * base; a non-0.5 declared value is an explicit OFFSET from 0.5 the writer sees
+ * that the tiers cannot (e.g. a low-degree symbol that is a future linchpin) →
+ * base + (declared-0.5)*weight, clamped to [0,1]. (Moved here from the MCP
+ * handler so the whole 3-tier composition lives in one place.) */
+static double memory_apply_declared(double base, double declared) {
+    double eps = 1e-9;
+    if (declared > 0.5 - eps && declared < 0.5 + eps) {
+        return base;
+    }
+    double v = base + (declared - 0.5) * MEMORY_L3_DECLARED_OFFSET_WEIGHT;
+    if (v < 0.0) {
+        v = 0.0;
+    }
+    if (v > 1.0) {
+        v = 1.0;
+    }
+    return v;
+}
+
+cbm_memory_score_t cbm_memory_score_item(const char *kind, int l1_resolved, double l1_conf,
+                                         double l1_reuse, double declared_conf,
+                                         double declared_reuse) {
+    /* reusability: L2 kind prior is the baseline; the L1 graph signal can only
+     * RAISE it (monotonic max), never sink an anchored memory below its type
+     * prior — which is what let a low-degree anchored ADR (0.4) score under an
+     * unanchored one (0.7) and decay out first. */
+    double reuse_base = memory_kind_reuse_prior(kind);
+    if (l1_resolved > 0 && l1_reuse > reuse_base) {
+        reuse_base = l1_reuse;
+    }
+    /* confidence: no kind prior (kind != correctness); 0.5 baseline raised only
+     * by L1 graph evidence, then offset by the declared value. */
+    double conf_base = MEMORY_L1_CONF_BASE;
+    if (l1_resolved > 0 && l1_conf > conf_base) {
+        conf_base = l1_conf;
+    }
+    cbm_memory_score_t out;
+    out.confidence = memory_apply_declared(conf_base, declared_conf);
+    out.reusability = memory_apply_declared(reuse_base, declared_reuse);
+    return out;
+}
+
 /* Retrieval boost added to a memory anchored (via an about_code edge) to the
  * code symbol the agent is currently looking at — or to a sibling symbol in the
  * same file. Same-symbol scores higher than same-file. The boost is added to

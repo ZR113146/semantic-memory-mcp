@@ -5947,27 +5947,9 @@ static char *memory_arg_raw_dup(yyjson_doc *doc, const char *key) {
     return yyjson_val_write(v, YYJSON_WRITE_ALLOW_INVALID_UNICODE, NULL);
 }
 
-/* P3-a blend: combine a graph-derived signal with a self-declared score.
- * Declared 0.5 is the schema default → treat as "unset" and take the signal
- * outright (this is what kills the all-0.5 disease). A declared non-0.5 is an
- * explicit OFFSET from the 0.5 baseline — value the writer sees that the graph
- * can't (e.g. a low-degree symbol that is a future linchpin) — so apply it as
- * (declared-0.5)*weight on top of the signal. Result clamped to [0,1]. */
-#define MEMORY_L1_DECLARED_OFFSET_WEIGHT 1.0
-static double memory_l1_blend(double declared, double signal) {
-    double eps = 1e-9;
-    if (declared > 0.5 - eps && declared < 0.5 + eps) {
-        return signal; /* unset → pure graph signal */
-    }
-    double blended = signal + (declared - 0.5) * MEMORY_L1_DECLARED_OFFSET_WEIGHT;
-    if (blended < 0.0) {
-        blended = 0.0;
-    }
-    if (blended > 1.0) {
-        blended = 1.0;
-    }
-    return blended;
-}
+/* Confidence/reusability scoring (formerly memory_l1_blend + the P4 reusability
+ * floor, both inline here) now lives in one place: cbm_memory_score_item in
+ * memory_store.c, which folds L1 graph signal ⊕ L2 kind prior ⊕ L3 declared. */
 
 /* Free the heap-copied about_code anchor list (see handle_events). */
 static void free_anchor_qns(char **qns, size_t n) {
@@ -6063,15 +6045,32 @@ static char *normalize_phantom_project(const char *project) {
  * On a fresh memory DB (create path), lifts any pre-existing memory rows out of
  * the legacy merged graph .db (one-time, idempotent) so the split doesn't lose
  * history. */
+/* True if a cached store handle can serve a write. The read path caches a
+ * query-only handle (opened SQLITE_OPEN_READONLY), for which sqlite3_db_readonly
+ * reports 1; a subsequent write must close and reopen it read-write, otherwise
+ * the INSERT fails with SQLITE_READONLY ("attempt to write a readonly database"). */
+static bool store_handle_writable(cbm_store_t *st) {
+    sqlite3 *db = st ? cbm_store_get_db(st) : NULL;
+    return db && sqlite3_db_readonly(db, "main") == 0;
+}
+
 static cbm_store_t *resolve_memory_store(cbm_mcp_server_t *srv, const char *project, bool create) {
     if (!srv || !project) {
         return NULL;
     }
     srv->store_last_used = time(NULL);
 
-    /* Already open for this project? */
+    /* Already open for this project? Reuse only if the cached handle can serve
+     * this request: the read path caches a query-only (read-only) handle, so a
+     * write (create) must drop it and reopen read-write below. */
     if (srv->mem_project && srv->mem_store && strcmp(srv->mem_project, project) == 0) {
-        return srv->mem_store;
+        if (!create || store_handle_writable(srv->mem_store)) {
+            return srv->mem_store;
+        }
+        cbm_store_close(srv->mem_store);
+        srv->mem_store = NULL;
+        free(srv->mem_project);
+        srv->mem_project = NULL;
     }
 
     /* Switching projects — close the previous memory handle. */
@@ -6430,7 +6429,11 @@ static cbm_store_t *resolve_global_memory_store(cbm_mcp_server_t *srv, bool crea
     srv->store_last_used = time(NULL);
 
     if (srv->global_mem_store) {
-        return srv->global_mem_store;
+        if (!create || store_handle_writable(srv->global_mem_store)) {
+            return srv->global_mem_store;
+        }
+        cbm_store_close(srv->global_mem_store);
+        srv->global_mem_store = NULL;
     }
 
     char mem_path[CBM_SZ_1K];
@@ -6943,56 +6946,36 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         }
     }
 
-    /* P3-a: graph-signal scoring. With anchors now persisted, borrow the code
-     * graph and derive confidence/reusability from symbol topology instead of
-     * trusting self-reported (often all-0.5) values. Treats a declared 0.5 as
-     * "unset" → take the graph signal outright; a declared non-0.5 as an
-     * explicit OFFSET from the 0.5 baseline (the writer encoding value the graph
-     * can't see, e.g. a small symbol that is a future refactor linchpin) → add
-     * (declared-0.5)*weight on top of the signal. No anchors resolve or no graph
-     * (pure-memory project) → keep declared values (L3 fallback), never an error.
-     * NOTE (P4 groundwork): the confidence written here must stay a LIVE value a
-     * later falsification (memory_feedback/supersede) can pull down — it is a
-     * write-time snapshot, not a frozen constant. */
-    if (item_id && about_code_n > 0) {
-        cbm_store_t *graph = resolve_store(srv, project);
-        sqlite3 *graph_db = graph ? cbm_store_get_db(graph) : NULL;
-        if (graph_db) {
-            double sig_conf = 0.0;
-            double sig_reuse = 0.0;
-            int resolved = cbm_store_memory_score_from_anchors(store, graph_db, item_id, project,
-                                                               &sig_conf, &sig_reuse);
-            if (resolved > 0) {
-                double final_conf = memory_l1_blend(confidence, sig_conf);
-                double final_reuse = memory_l1_blend(reusability, sig_reuse);
-                sqlite3_stmt *up = NULL;
-                if (sqlite3_prepare_v2(cbm_store_get_db(store),
-                                       "UPDATE memory_item SET confidence=?1,reusability=?2 "
-                                       "WHERE id=?3;",
-                                       -1, &up, NULL) == SQLITE_OK) {
-                    sqlite3_bind_double(up, 1, final_conf);
-                    sqlite3_bind_double(up, 2, final_reuse);
-                    sqlite3_bind_text(up, 3, item_id, -1, SQLITE_TRANSIENT);
-                    (void)sqlite3_step(up);
-                    sqlite3_finalize(up);
-                }
+    /* Confidence/reusability via the consolidated 3-tier composition
+     * (cbm_memory_score_item, memory_store.c): L1 graph signal from about_code
+     * anchors ⊕ L2 kind prior ⊕ L3 declared offset. Runs for EVERY write so an
+     * unanchored item still gets its kind baseline; the composition is monotonic
+     * (a tier only raises), so an anchored low-degree ADR keeps at least its kind
+     * prior instead of scoring below an unanchored one and decaying out first.
+     * The graph is borrowed only when anchors exist (NULL for pure-memory
+     * projects → no L1, never an error). The result stays a LIVE value a later
+     * falsification (memory_feedback/supersede/decay) can pull down. */
+    if (item_id) {
+        int resolved = 0;
+        double l1_conf = 0.0;
+        double l1_reuse = 0.0;
+        if (about_code_n > 0) {
+            cbm_store_t *graph = resolve_store(srv, project);
+            sqlite3 *graph_db = graph ? cbm_store_get_db(graph) : NULL;
+            if (graph_db) {
+                resolved = cbm_store_memory_score_from_anchors(store, graph_db, item_id, project,
+                                                               &l1_conf, &l1_reuse);
             }
         }
-    }
-    /* P4: ADR reusability baseline. Decision/constraint items written without
-     * about_code anchors have no graph signal to blend against — their
-     * reusability stays at the default 0.5 which undervalues architectural
-     * rationale. Bump to 0.7 as a sensible floor: an ADR about an un-indexed
-     * or low-degree symbol is still reusable knowledge. Only override an
-     * explicitly-unset (≈0.5) value, never an explicit caller-supplied one. */
-    if (item_id && kind &&
-        (strcmp(kind, "decision") == 0 || strcmp(kind, "constraint") == 0) &&
-        about_code_n == 0 && reusability > 0.49 && reusability < 0.51) {
+        cbm_memory_score_t sc = cbm_memory_score_item(kind ? kind : "event", resolved, l1_conf,
+                                                      l1_reuse, confidence, reusability);
         sqlite3_stmt *up = NULL;
         if (sqlite3_prepare_v2(cbm_store_get_db(store),
-                               "UPDATE memory_item SET reusability=0.7 WHERE id=?1;",
+                               "UPDATE memory_item SET confidence=?1,reusability=?2 WHERE id=?3;",
                                -1, &up, NULL) == SQLITE_OK) {
-            sqlite3_bind_text(up, 1, item_id, -1, SQLITE_TRANSIENT);
+            sqlite3_bind_double(up, 1, sc.confidence);
+            sqlite3_bind_double(up, 2, sc.reusability);
+            sqlite3_bind_text(up, 3, item_id, -1, SQLITE_TRANSIENT);
             (void)sqlite3_step(up);
             sqlite3_finalize(up);
         }

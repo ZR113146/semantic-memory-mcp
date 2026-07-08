@@ -182,6 +182,23 @@ int cbm_store_memory_link_code(cbm_store_t *s, const char *item_id, const char *
 int cbm_store_memory_score_from_anchors(cbm_store_t *s, struct sqlite3 *graph_db,
                                         const char *item_id, const char *project, double *out_conf,
                                         double *out_reuse);
+/* Write-time confidence/reusability produced by the 3-tier composition. */
+typedef struct {
+    double confidence;
+    double reusability;
+} cbm_memory_score_t;
+/* Compose confidence/reusability from all three signal tiers in one place:
+ *   L1 graph signal (l1_conf/l1_reuse from score_from_anchors; only when
+ *      l1_resolved > 0), L2 kind/type prior (baseline by memory kind), and
+ *   L3 the caller's declared values (applied as an OFFSET from the 0.5 default).
+ * Monotonic: a tier can only RAISE the baseline, never sink it — an anchored but
+ * low-degree ADR keeps at least its kind prior instead of scoring below an
+ * unanchored one (which would let it decay out). Confidence carries NO kind
+ * prior (kind != correctness); only reusability does. Pass l1_resolved == 0 when
+ * there is no graph signal (l1_conf/l1_reuse ignored). */
+cbm_memory_score_t cbm_memory_score_item(const char *kind, int l1_resolved, double l1_conf,
+                                         double l1_reuse, double declared_conf,
+                                         double declared_reuse);
 int cbm_store_memory_retrieve(cbm_store_t *s, const cbm_memory_query_t *query,
                               cbm_memory_result_t *out);
 int cbm_store_memory_mark_hits(cbm_store_t *s, const char **ids, int count, int64_t now_ms);

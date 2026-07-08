@@ -90,7 +90,18 @@ uint64_t cbm_now_ns(void) {
     LARGE_INTEGER freq, count;
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&count);
-    return (uint64_t)count.QuadPart * 1000000000ULL / (uint64_t)freq.QuadPart;
+    uint64_t q = (uint64_t)count.QuadPart;
+    uint64_t f = (uint64_t)freq.QuadPart;
+    if (f == 0) {
+        return 0;
+    }
+    /* Split whole/fractional seconds so (count * 1e9) can't overflow uint64.
+     * count is QPC ticks since boot; once uptime pushes it past ~1.8e10 ticks
+     * (≈30 min at a 10 MHz timer) the naive count*1e9 wraps, yielding
+     * non-monotonic, ~30-min-periodic values. Those feed memory_make_id's time
+     * component, so the wrap produced duplicate ids → memory_event PRIMARY KEY
+     * collisions → "failed to append memory event" on any long-lived process. */
+    return (q / f) * 1000000000ULL + (q % f) * 1000000000ULL / f;
 }
 
 #define CBM_USEC_PER_SEC 1000000ULL
