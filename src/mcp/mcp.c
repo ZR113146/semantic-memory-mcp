@@ -113,7 +113,7 @@ static char *heap_strdup(const char *s) {
 /* Write yyjson_mut_doc to heap-allocated JSON string.
  * ALLOW_INVALID_UNICODE: some database strings may contain non-UTF-8 bytes
  * from older indexing runs — don't fail serialization over it. */
-static char *yy_doc_to_str(yyjson_mut_doc *doc) {
+char *yy_doc_to_str(yyjson_mut_doc *doc) {
     size_t len = 0;
     char *s = yyjson_mut_write(doc, YYJSON_WRITE_ALLOW_INVALID_UNICODE, &len);
     return s;
@@ -1171,7 +1171,7 @@ static const char *cache_dir(char *buf, size_t bufsz) {
 }
 
 /* Returns full .db path for a project: <cache_dir>/<project>.db */
-static const char *project_db_path(const char *project, char *buf, size_t bufsz) {
+const char *project_db_path(const char *project, char *buf, size_t bufsz) {
     if (!cbm_validate_project_name(project)) {
         buf[0] = '\0';
         return buf;
@@ -1373,7 +1373,7 @@ static void add_git_context_json(yyjson_mut_doc *doc, yyjson_mut_val *obj, const
 }
 
 /* Build a helpful error listing available projects. Caller must free() result. */
-static char *build_project_list_error(const char *reason) {
+char *build_project_list_error(const char *reason) {
     char dir_path[CBM_SZ_1K];
     cache_dir(dir_path, sizeof(dir_path));
 

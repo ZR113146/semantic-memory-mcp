@@ -16,6 +16,7 @@
 typedef struct cbm_store cbm_store_t; /* from store/store.h */
 struct cbm_watcher;                   /* from watcher/watcher.h */
 struct cbm_config;                    /* from cli/cli.h */
+typedef struct yyjson_mut_doc yyjson_mut_doc; /* from yyjson/yyjson.h */
 
 /* ── JSON-RPC types ───────────────────────────────────────────── */
 
@@ -53,6 +54,21 @@ char *cbm_jsonrpc_format_error(int64_t id, int code, const char *message);
 
 /* Format an MCP tool result with text content. Returns heap-allocated JSON. */
 char *cbm_mcp_text_result(const char *text, bool is_error);
+
+/* ── Shared mcp.c helpers (exposed for mcp_memory_handlers.c) ──────
+ * These live in mcp.c and are shared by graph tools. Exposed (non-static)
+ * so the memory handler file can use them without duplicating impls. */
+
+/* Serialize a yyjson_mut_doc to a heap JSON string. */
+char *yy_doc_to_str(yyjson_mut_doc *doc);
+
+/* Build a "project not found / not indexed" error with the list of available
+ * indexed projects, so wrong/typo'd project names surface candidates. */
+char *build_project_list_error(const char *reason);
+
+/* Resolve the graph DB file path for a project into buf. Returns buf on
+ * success (NUL-terminated), empty buf on invalid name. */
+const char *project_db_path(const char *project, char *buf, size_t bufsz);
 
 /* Format the tools/list response. Returns heap-allocated JSON. */
 char *cbm_mcp_tools_list(void);
