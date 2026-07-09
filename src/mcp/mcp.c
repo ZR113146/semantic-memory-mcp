@@ -207,12 +207,25 @@ char *cbm_jsonrpc_format_response(const cbm_jsonrpc_response_t *resp) {
             yyjson_doc_free(err_doc);
         }
     } else if (resp->result_json) {
-        /* Parse the result JSON and embed */
-        yyjson_doc *res_doc = yyjson_read(resp->result_json, strlen(resp->result_json), 0);
+        /* Parse the result JSON and embed. ALLOW_INVALID_UNICODE: handler
+         * output can carry stray bytes from stored data (e.g. a legacy
+         * byte-truncated title); a strict parse would return NULL here and
+         * silently drop "result", producing a spec-violating response with
+         * neither result nor error — clients then wait forever. */
+        yyjson_doc *res_doc = yyjson_read(resp->result_json, strlen(resp->result_json),
+                                          YYJSON_READ_ALLOW_INVALID_UNICODE);
         if (res_doc) {
             yyjson_mut_val *res_val = yyjson_val_mut_copy(doc, yyjson_doc_get_root(res_doc));
             yyjson_mut_obj_add_val(doc, root, "result", res_val);
             yyjson_doc_free(res_doc);
+        } else {
+            /* Unparseable handler output: answer with a JSON-RPC error rather
+             * than a response missing both result and error. */
+            yyjson_mut_val *err = yyjson_mut_obj(doc);
+            yyjson_mut_obj_add_int(doc, err, "code", -32603);
+            yyjson_mut_obj_add_str(doc, err, "message",
+                                   "internal error: tool produced malformed JSON");
+            yyjson_mut_obj_add_val(doc, root, "error", err);
         }
     } else {
         /* JSON-RPC 2.0 spec: response MUST contain "result" or "error" */
@@ -259,7 +272,8 @@ char *cbm_mcp_text_result(const char *text, bool is_error) {
     yyjson_mut_obj_add_val(doc, root, "content", content);
 
     if (!is_error && text) {
-        yyjson_doc *structured_doc = yyjson_read(text, strlen(text), 0);
+        yyjson_doc *structured_doc = yyjson_read(text, strlen(text),
+                                                 YYJSON_READ_ALLOW_INVALID_UNICODE);
         if (structured_doc) {
             yyjson_val *structured_root = yyjson_doc_get_root(structured_doc);
             if (yyjson_is_obj(structured_root)) {
@@ -6948,6 +6962,24 @@ static char *handle_events(cbm_mcp_server_t *srv, const char *args) {
         while (summary[tl] && summary[tl] != '\n' && tl < (int)sizeof(title_buf) - 1) {
             title_buf[tl] = summary[tl];
             tl++;
+        }
+        /* Never cut inside a UTF-8 sequence: locate the lead byte of the final
+         * character and drop it if its sequence is incomplete. A mid-character
+         * cut leaves invalid UTF-8 in the stored title, which later makes the
+         * JSON-RPC envelope's strict re-parse drop the whole result (client
+         * hangs waiting for a response that never validates). */
+        {
+            int lead = tl;
+            while (lead > 0 && ((unsigned char)title_buf[lead - 1] & 0xC0) == 0x80) {
+                lead--;
+            }
+            if (lead > 0 && (unsigned char)title_buf[lead - 1] >= 0xC0) {
+                unsigned char lb = (unsigned char)title_buf[lead - 1];
+                int need = (lb >= 0xF0) ? 4 : (lb >= 0xE0) ? 3 : 2;
+                if (tl - (lead - 1) < need) {
+                    tl = lead - 1;
+                }
+            }
         }
         /* Trim trailing punctuation so the label reads cleanly. */
         while (tl > 0 && (title_buf[tl - 1] == '.' ||
