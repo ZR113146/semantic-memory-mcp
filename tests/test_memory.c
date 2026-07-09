@@ -617,6 +617,36 @@ TEST(memory_decay_archives_stale) {
     return 0;
 }
 
+/* Regression for the decay-pass column swap (SELECT ...,importance,decay read
+ * as ...,decay,importance): a maximum-importance item has a (1-importance)=0
+ * decay increment, so one pass must leave decay AT ZERO and status active.
+ * With the columns swapped, old_decay reads 1.0 from the importance column and
+ * the item archives on the spot — the exact prod incident of 2026-07-09. */
+TEST(memory_decay_max_importance_never_decays) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT(s != NULL);
+    cbm_memory_item_t item = {0};
+    item.content = "Maximum importance memory must not decay";
+    item.scope_project = "test-proj";
+    item.status = "active";
+    item.confidence = 0.1;  /* aggressive decay factors everywhere else... */
+    item.reusability = 0.1;
+    item.importance = 1.0;  /* ...but importance alone zeroes the increment */
+    char *id = NULL;
+    ASSERT(cbm_store_memory_append_candidate(s, &item, &id) == CBM_STORE_OK);
+    int processed = 0;
+    ASSERT(cbm_store_memory_decay(s, "test-proj", 100, &processed) == CBM_STORE_OK);
+    ASSERT(processed == 1);
+    cbm_memory_item_t out = {0};
+    ASSERT(cbm_store_memory_get_item(s, id, &out) == CBM_STORE_OK);
+    ASSERT(strcmp(out.status, "active") == 0);
+    ASSERT(out.decay < 0.000001);
+    cbm_store_memory_item_free(&out);
+    free(id);
+    cbm_store_close(s);
+    return 0;
+}
+
 /* The dedup vector must carry lexical-semantic signal: two near-identical
  * statements in the same (entity, predicate, scope) bucket should MERGE via the
  * cosine>=0.90 path during consolidation, not coexist. A whole-string hash
@@ -1692,6 +1722,7 @@ int main(void) {
     RUN(memory_feedback_useful_records_event_and_boosts_hit_signal);
     RUN(memory_feedback_wrong_retracts_from_default_retrieval);
     RUN(memory_decay_archives_stale);
+    RUN(memory_decay_max_importance_never_decays);
     RUN(memory_embedding_ranks_semantic_neighbor_higher);
     RUN(memory_embedding_dim_is_1024);
     RUN(memory_anchor_boost_raises_rank);

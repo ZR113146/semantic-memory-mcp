@@ -1588,7 +1588,7 @@ char *handle_adr_list(cbm_mcp_server_t *srv, const char *args) {
 } while(0)
 #define CP_INT(mdoc, obj, key, src) do { \
     yyjson_val *v = yyjson_obj_get((src), (key)); \
-    if (v && yyjson_is_int(v)) yyjson_mut_obj_add_int((mdoc), (obj), (key), (int64_t)yyjson_get_int(v)); \
+    if (v && yyjson_is_int(v)) yyjson_mut_obj_add_int((mdoc), (obj), (key), yyjson_get_sint(v)); \
 } while(0)
                             CP_STR(mdoc, obj, "id", src);
                             CP_STR(mdoc, obj, "kind", src);

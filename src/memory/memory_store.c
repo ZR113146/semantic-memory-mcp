@@ -3155,8 +3155,8 @@ int cbm_store_memory_decay(cbm_store_t *s, const char *project, int limit, int *
         int64_t last_hit = sqlite3_column_int64(stmt, 1);
         double confidence = sqlite3_column_double(stmt, 2);
         double reusability = sqlite3_column_double(stmt, 3);
-        double old_decay = sqlite3_column_double(stmt, 4);
-        double importance = sqlite3_column_double(stmt, 5);
+        double importance = sqlite3_column_double(stmt, 4);
+        double old_decay = sqlite3_column_double(stmt, 5);
         int64_t age_ms = last_hit > 0 ? now - last_hit : 30LL * 24LL * 60LL * 60LL * 1000LL;
         if (age_ms < 0)
             age_ms = 0;
