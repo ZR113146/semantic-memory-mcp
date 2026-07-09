@@ -183,6 +183,31 @@ char *handle_adr_list(cbm_mcp_server_t *srv, const char *args);
  * access its internals — opens the memory store independently. */
 char *handle_adr_chain(cbm_mcp_server_t *srv, const char *args);
 
+/* ── Memory tool handlers (defined in mcp_memory_handlers.c) ─────────
+ * The nine long-term-memory tools. Store access goes through the two
+ * resolver functions below — the only sanctioned touch points for the
+ * server's cached memory-store handles. */
+char *handle_events(cbm_mcp_server_t *srv, const char *args);
+char *handle_memories_retrieve(cbm_mcp_server_t *srv, const char *args);
+char *handle_memories_inspect(cbm_mcp_server_t *srv, const char *args);
+char *handle_memory_update_status(cbm_mcp_server_t *srv, const char *args);
+char *handle_memory_feedback(cbm_mcp_server_t *srv, const char *args);
+char *handle_memory_delete(cbm_mcp_server_t *srv, const char *args);
+char *handle_admin_consolidate(cbm_mcp_server_t *srv, const char *args);
+char *handle_admin_decay(cbm_mcp_server_t *srv, const char *args);
+char *handle_memory_health(cbm_mcp_server_t *srv, const char *args);
+
+/* Resolve the server-cached per-project / global memory store handles.
+ * Defined in mcp.c (they touch struct cbm_mcp_server internals); consumed
+ * by the memory handlers above. Returned handles are OWNED BY THE SERVER —
+ * never close them; lifetime is managed by server free / evict_idle. */
+cbm_store_t *resolve_memory_store(cbm_mcp_server_t *srv, const char *project, bool create);
+cbm_store_t *resolve_global_memory_store(cbm_mcp_server_t *srv, bool create);
+
+/* Resolve the server-cached GRAPH store for a project (same ownership rule:
+ * never close). Used by handle_events to compute graph-derived scores. */
+cbm_store_t *resolve_store(cbm_mcp_server_t *srv, const char *project);
+
 /* ── URI helpers ───────────────────────────────────────────────── */
 
 /* Parse a file:// URI and extract the filesystem path.
