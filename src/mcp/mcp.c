@@ -1525,50 +1525,147 @@ static cbm_store_t *resolve_store_fallback_scan(const char *project) {
     return found;
 }
 
-/* Open a .db file briefly, collect node/edge counts and root_path,
- * then append a JSON entry to arr. */
-static void build_project_json_entry(yyjson_mut_doc *doc, yyjson_mut_val *arr, const char *dir_path,
-                                     const char *name, size_t name_len, int64_t size_bytes) {
-    (void)name_len;
+/* A "<project>-memory.db" file is a memory sidecar, NOT a project of its own. */
+#define MEM_DB_SUFFIX "-memory.db"
 
-    char full_path[CBM_SZ_2K];
-    snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, name);
-
-    /* #704: key on the db's INTERNAL project name, not its filename. Node/edge
-     * rows are tagged with the internal name, so a drifted filename (copied or
-     * renamed db, legacy '.'-vs-'-' username twin) would otherwise report 0
-     * nodes/edges and be unresolvable. Skip ghost/empty/corrupt dbs entirely so
-     * they don't appear as resolvable projects. */
-    char project_name[CBM_SZ_1K];
-    cbm_store_t *pstore = NULL;
-    if (!db_internal_project_name(full_path, project_name, sizeof(project_name), &pstore)) {
-        return; /* ghost / unreadable — not a resolvable project */
+/* Read the authoritative project name from a memory DB's memory_item.scope_project:
+ * memories store the real (un-suffixed) project at write time, so the DATA — not
+ * the filename — is the source of truth. This handles projects whose own name
+ * ends in "-memory" (e.g. "D-semantic-memory-mcp": its sidecar is "...-mcp-memory.db"
+ * but scope_project holds "D-semantic-memory-mcp"), and lets pure-memory projects
+ * (no graph .db) be listed at all. Read-only open (skips init_schema / the #768
+ * probe). Caller frees; NULL when the sidecar has no memory rows. */
+static char *memory_db_scope_project(const char *full_path) {
+    cbm_store_t *st = cbm_store_open_path_query(full_path);
+    if (!st) {
+        return NULL;
     }
-
-    int nodes = cbm_store_count_nodes(pstore, project_name);
-    int edges = cbm_store_count_edges(pstore, project_name);
-    char root_path_buf[CBM_SZ_1K] = "";
-    cbm_project_t proj = {0};
-    if (cbm_store_get_project(pstore, project_name, &proj) == CBM_STORE_OK) {
-        if (proj.root_path) {
-            snprintf(root_path_buf, sizeof(root_path_buf), "%s", proj.root_path);
+    sqlite3 *db = cbm_store_get_db(st);
+    char *result = NULL;
+    sqlite3_stmt *stmt = NULL;
+    if (db && sqlite3_prepare_v2(db,
+                                 "SELECT scope_project FROM memory_item "
+                                 "WHERE scope_project IS NOT NULL AND scope_project <> '' LIMIT 1;",
+                                 CBM_NOT_FOUND, &stmt, NULL) == SQLITE_OK) {
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            const char *sp = (const char *)sqlite3_column_text(stmt, 0);
+            if (sp && sp[0]) {
+                result = heap_strdup(sp);
+            }
         }
-        cbm_project_free_fields(&proj);
+        sqlite3_finalize(stmt);
     }
-    cbm_store_close(pstore);
-
-    yyjson_mut_val *p = yyjson_mut_obj(doc);
-    yyjson_mut_obj_add_strcpy(doc, p, "name", project_name);
-    yyjson_mut_obj_add_strcpy(doc, p, "root_path", root_path_buf);
-    add_git_context_json(doc, p, root_path_buf[0] ? root_path_buf : NULL);
-    yyjson_mut_obj_add_int(doc, p, "nodes", nodes);
-    yyjson_mut_obj_add_int(doc, p, "edges", edges);
-    yyjson_mut_obj_add_int(doc, p, "size_bytes", size_bytes);
-    yyjson_mut_arr_add_val(arr, p);
+    cbm_store_close(st);
+    return result;
 }
 
-/* list_projects: scan cache directory for .db files.
- * Each project is a single .db file — no central registry needed. */
+/* Canonical project name for a cache .db file. Memory sidecar → its scope_project
+ * (authoritative), falling back to stripping "-memory.db" for an empty sidecar.
+ * Graph DB → its INTERNAL project name (#704 drift-safe); ghost/empty graph DBs
+ * return NULL (skipped). *is_mem reports whether the file was a memory sidecar.
+ * Caller frees the returned string. */
+static char *canonical_project_name(const char *dir_path, const char *name, size_t name_len,
+                                    bool *is_mem) {
+    size_t suf = SLEN(MEM_DB_SUFFIX);
+    bool mem = (name_len > suf && strcmp(name + name_len - suf, MEM_DB_SUFFIX) == 0);
+    if (is_mem) {
+        *is_mem = mem;
+    }
+    char full_path[CBM_SZ_2K];
+    snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, name);
+    if (mem) {
+        char *authoritative = memory_db_scope_project(full_path);
+        if (authoritative) {
+            return authoritative;
+        }
+        char buf[CBM_SZ_1K];
+        snprintf(buf, sizeof(buf), "%.*s", (int)(name_len - suf), name);
+        return heap_strdup(buf);
+    }
+    char iname[CBM_SZ_1K];
+    if (db_internal_project_name(full_path, iname, sizeof(iname), NULL)) {
+        return heap_strdup(iname);
+    }
+    return NULL; /* ghost / empty / unreadable graph DB — skip */
+}
+
+/* Find or create the JSON entry for a canonical project name in arr, so a graph
+ * DB and its memory sidecar collapse into ONE listed project. */
+static yyjson_mut_val *find_or_add_project(yyjson_mut_doc *doc, yyjson_mut_val *arr,
+                                           const char *cname) {
+    size_t n = yyjson_mut_arr_size(arr);
+    for (size_t i = 0; i < n; i++) {
+        yyjson_mut_val *p = yyjson_mut_arr_get(arr, i);
+        yyjson_mut_val *nm = yyjson_mut_obj_get(p, "name");
+        if (nm && yyjson_mut_is_str(nm) && strcmp(yyjson_mut_get_str(nm), cname) == 0) {
+            return p;
+        }
+    }
+    yyjson_mut_val *p = yyjson_mut_obj(doc);
+    yyjson_mut_obj_add_strcpy(doc, p, "name", cname);
+    yyjson_mut_obj_add_strcpy(doc, p, "root_path", "");
+    yyjson_mut_obj_add_int(doc, p, "nodes", 0);
+    yyjson_mut_obj_add_int(doc, p, "edges", 0);
+    yyjson_mut_obj_add_int(doc, p, "size_bytes", 0);
+    yyjson_mut_obj_add_bool(doc, p, "has_memory", false);
+    yyjson_mut_arr_add_val(arr, p);
+    return p;
+}
+
+/* Merge one cache .db file (graph or memory sidecar) into the deduped project
+ * list keyed by canonical name. Graph files contribute node/edge counts, root_path
+ * and git context; memory sidecars set has_memory. size_bytes accumulates both.
+ * All opens are read-only. */
+static void merge_project_db_entry(yyjson_mut_doc *doc, yyjson_mut_val *arr, const char *dir_path,
+                                   const char *name, size_t name_len, int64_t size_bytes) {
+    bool is_mem = false;
+    char *cname = canonical_project_name(dir_path, name, name_len, &is_mem);
+    if (!cname) {
+        return; /* ghost graph DB — not a resolvable project */
+    }
+    yyjson_mut_val *p = find_or_add_project(doc, arr, cname);
+
+    /* Accumulate size across the graph + memory files of the same project. */
+    yyjson_mut_val *sz = yyjson_mut_obj_get(p, "size_bytes");
+    int64_t prev_sz = (sz && yyjson_mut_is_int(sz)) ? yyjson_mut_get_sint(sz) : 0;
+    yyjson_mut_obj_remove_key(p, "size_bytes");
+    yyjson_mut_obj_add_int(doc, p, "size_bytes", prev_sz + (size_bytes > 0 ? size_bytes : 0));
+
+    if (is_mem) {
+        yyjson_mut_obj_remove_key(p, "has_memory");
+        yyjson_mut_obj_add_bool(doc, p, "has_memory", true);
+        free(cname);
+        return;
+    }
+
+    /* Graph DB: node/edge counts + root_path/git keyed by the canonical name. */
+    char full_path[CBM_SZ_2K];
+    snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, name);
+    cbm_store_t *pstore = cbm_store_open_path_query(full_path);
+    if (pstore) {
+        yyjson_mut_obj_remove_key(p, "nodes");
+        yyjson_mut_obj_add_int(doc, p, "nodes", cbm_store_count_nodes(pstore, cname));
+        yyjson_mut_obj_remove_key(p, "edges");
+        yyjson_mut_obj_add_int(doc, p, "edges", cbm_store_count_edges(pstore, cname));
+        cbm_project_t proj = {0};
+        if (cbm_store_get_project(pstore, cname, &proj) == CBM_STORE_OK) {
+            if (proj.root_path && proj.root_path[0]) {
+                yyjson_mut_obj_remove_key(p, "root_path");
+                yyjson_mut_obj_add_strcpy(doc, p, "root_path", proj.root_path);
+                add_git_context_json(doc, p, proj.root_path);
+            }
+            cbm_project_free_fields(&proj);
+        }
+        cbm_store_close(pstore);
+    }
+    free(cname);
+}
+
+/* list_projects: scan cache directory for .db files. A project may have a graph
+ * DB (<project>.db) and/or a memory sidecar (<project>-memory.db); both collapse
+ * into ONE entry keyed by the canonical (scope_project) name, so pure-memory
+ * projects (no graph .db) are listed too. Restored from d25f939 (lost in the
+ * 7d3d9fb upstream merge, same as the 9 memory tools / migration chain). */
 static char *handle_list_projects(cbm_mcp_server_t *srv, const char *args) {
     (void)srv;
     (void)args;
@@ -1606,7 +1703,7 @@ static char *handle_list_projects(cbm_mcp_server_t *srv, const char *args) {
         if (size_bytes < 0) {
             continue;
         }
-        build_project_json_entry(doc, arr, dir_path, name, len, size_bytes);
+        merge_project_db_entry(doc, arr, dir_path, name, len, size_bytes);
     }
     cbm_closedir(d);
 
