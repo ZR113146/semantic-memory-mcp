@@ -847,7 +847,7 @@ char *cbm_mcp_initialize_response(const char *params_json) {
     yyjson_mut_obj_add_str(doc, root, "protocolVersion", version);
 
     yyjson_mut_val *impl = yyjson_mut_obj(doc);
-    yyjson_mut_obj_add_str(doc, impl, "name", "codebase-memory-mcp");
+    yyjson_mut_obj_add_str(doc, impl, "name", "semantic-memory-mcp");
     yyjson_mut_obj_add_str(doc, impl, "version", cbm_cli_get_version());
     yyjson_mut_obj_add_val(doc, root, "serverInfo", impl);
 
@@ -3674,7 +3674,7 @@ static bool write_skip_logfile(const char *project, const cbm_file_error_t *errs
         cbm_log_warn("index.logfile_open_fail", "path", path);
         return false;
     }
-    (void)fprintf(f, "# codebase-memory-mcp index skip report\n");
+    (void)fprintf(f, "# semantic-memory-mcp index skip report\n");
     (void)fprintf(f, "# project=%s skipped=%d\n", project ? project : "", count);
     (void)fprintf(f, "# columns: phase\treason\tpath\n");
     for (int i = 0; i < count; i++) {
@@ -6427,7 +6427,7 @@ static void maybe_auto_index(cbm_mcp_server_t *srv) {
 
     if (!auto_index) {
         cbm_log_info("autoindex.skip", "reason", "disabled", "hint",
-                     "run: codebase-memory-mcp config set auto_index true");
+                     "run: semantic-memory-mcp config set auto_index true");
         return;
     }
 
@@ -6461,7 +6461,7 @@ static void maybe_auto_index(cbm_mcp_server_t *srv) {
 
 /* ── Background update check ──────────────────────────────────── */
 
-#define UPDATE_CHECK_URL "https://api.github.com/repos/DeusData/codebase-memory-mcp/releases/latest"
+#define UPDATE_CHECK_URL "https://api.github.com/repos/ZR113146/semantic-memory-mcp/releases/latest"
 
 static void *update_check_thread(void *arg) {
     cbm_mcp_server_t *srv = (cbm_mcp_server_t *)arg;
@@ -6502,9 +6502,9 @@ static void *update_check_thread(void *arg) {
         const char *current = cbm_cli_get_version();
         if (cbm_compare_versions(tag_str, current) > 0) {
             snprintf(srv->update_notice, sizeof(srv->update_notice),
-                     "Update available: %s -> %s -- run: codebase-memory-mcp update  |  "
-                     "Enjoying codebase-memory-mcp? Please leave a star: "
-                     "https://github.com/DeusData/codebase-memory-mcp",
+                     "Update available: %s -> %s -- run: semantic-memory-mcp update  |  "
+                     "Enjoying semantic-memory-mcp? Please leave a star: "
+                     "https://github.com/ZR113146/semantic-memory-mcp",
                      current, tag_str);
             cbm_log_info("update.available", "current", current, "latest", tag_str);
         }

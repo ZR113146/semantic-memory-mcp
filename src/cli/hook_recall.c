@@ -159,7 +159,7 @@ static const char *hr_memory_label(yyjson_val *m) {
  * SessionStart reminder, which gets buried as the transcript grows. Recording
  * stays the agent's judgment call (never automatic): this only reminds. */
 static const char HR_WRITE_GUIDANCE[] =
-    "\n[codebase-memory] Persisting durable knowledge is part of your job here, "
+    "\n[semantic-memory-mcp] Persisting durable knowledge is part of your job here, "
     "not an optional extra. If this turn produced a reusable decision, "
     "constraint, preference, or lesson worth recalling later, call the `events` "
     "tool now to record it — don't wait to be asked. Route user profile / "
@@ -222,7 +222,7 @@ static char *hr_format_context(const char *envelope, bool *is_error) {
         return NULL;
     }
     int off = snprintf(text, HR_CTX_CAP,
-                       "[codebase-memory] %zu long-term memory(ies) relevant to "
+                       "[semantic-memory-mcp] %zu long-term memory(ies) relevant to "
                        "this prompt (recalled context — verify before relying on "
                        "any that name a file/symbol, they reflect a past state):",
                        nres);

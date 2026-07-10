@@ -200,7 +200,7 @@ static char *ha_format_context(const char *envelope, const char *token, bool *is
         return NULL;
     }
     int off = snprintf(text, 4096,
-                       "[codebase-memory] %zu graph symbol(s) match \"%s\" "
+                       "[semantic-memory-mcp] %zu graph symbol(s) match \"%s\" "
                        "(structured context; your search results below are "
                        "unaffected):",
                        nres, token);

@@ -1593,8 +1593,8 @@ TEST(cli_codex_recall_hook) {
     ASSERT(strstr(d, "[[hooks.UserPromptSubmit]]") != NULL);
     ASSERT(strstr(d, "[[hooks.UserPromptSubmit.hooks]]") != NULL);
     ASSERT(strstr(d, "/usr/local/bin/semantic-memory-mcp memory-recall") != NULL);
-    ASSERT(strstr(d, "[[hooks.SessionStart]]") != NULL);   /* reminder still present */
-    ASSERT(strstr(d, "[mcp_servers.other]") != NULL);      /* pre-existing preserved */
+    ASSERT(strstr(d, "[[hooks.SessionStart]]") != NULL); /* reminder still present */
+    ASSERT(strstr(d, "[mcp_servers.other]") != NULL);    /* pre-existing preserved */
 
     /* Idempotent: re-upsert leaves exactly ONE recall block. */
     ASSERT_EQ(cbm_upsert_codex_recall_hook(cfg, "/usr/local/bin/semantic-memory-mcp"), 0);
@@ -2305,7 +2305,8 @@ TEST(cli_upsert_recall_hook_fresh) {
     const char *data = read_test_file(settingspath);
     ASSERT_NOT_NULL(data);
     ASSERT(strstr(data, "UserPromptSubmit") != NULL);
-    ASSERT(strstr(data, "cbm-memory-recall") != NULL);
+    ASSERT(strstr(data, "semantic-memory-recall") != NULL);
+    ASSERT(strstr(data, "cbm-memory-recall") == NULL);
 
     test_rmdir_r(tmpdir);
     PASS();
@@ -2334,9 +2335,40 @@ TEST(cli_upsert_recall_hook_idempotent_preserves_others) {
     /* Third-party hook preserved. */
     ASSERT(strstr(data, "echo guard") != NULL);
     /* Exactly one occurrence of our shim after two upserts. */
-    const char *first = strstr(data, "cbm-memory-recall");
+    const char *first = strstr(data, "semantic-memory-recall");
     ASSERT_NOT_NULL(first);
-    ASSERT_NULL(strstr(first + 1, "cbm-memory-recall"));
+    ASSERT_NULL(strstr(first + 1, "semantic-memory-recall"));
+    ASSERT(strstr(data, "cbm-memory-recall") == NULL);
+
+    test_rmdir_r(tmpdir);
+    PASS();
+}
+
+TEST(cli_upsert_recall_hook_migrates_legacy_and_duplicates) {
+    char tmpdir[256];
+    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-rhook-XXXXXX");
+    if (!cbm_mkdtemp(tmpdir))
+        FAIL("cbm_mkdtemp failed");
+
+    char settingspath[512];
+    snprintf(settingspath, sizeof(settingspath), "%s/settings.json", tmpdir);
+    write_test_file(
+        settingspath,
+        "{\"hooks\":{\"UserPromptSubmit\":["
+        "{\"hooks\":[{\"type\":\"command\",\"command\":\"~/.claude/hooks/cbm-memory-recall\"}]},"
+        "{\"hooks\":[{\"type\":\"command\",\"command\":\"~/.claude/hooks/"
+        "semantic-memory-recall\"}]},"
+        "{\"hooks\":[{\"type\":\"command\",\"command\":\"echo guard\"}]}]}}");
+
+    ASSERT_EQ(cbm_upsert_claude_recall_hook(settingspath), 0);
+
+    const char *data = read_test_file(settingspath);
+    ASSERT_NOT_NULL(data);
+    ASSERT(strstr(data, "cbm-memory-recall") == NULL);
+    ASSERT(strstr(data, "echo guard") != NULL);
+    const char *first = strstr(data, "semantic-memory-recall");
+    ASSERT_NOT_NULL(first);
+    ASSERT_NULL(strstr(first + 1, "semantic-memory-recall"));
 
     test_rmdir_r(tmpdir);
     PASS();
@@ -2362,6 +2394,7 @@ TEST(cli_remove_recall_hook) {
     const char *data = read_test_file(settingspath);
     ASSERT_NOT_NULL(data);
     /* Ours gone, third-party preserved. */
+    ASSERT(strstr(data, "semantic-memory-recall") == NULL);
     ASSERT(strstr(data, "cbm-memory-recall") == NULL);
     ASSERT(strstr(data, "echo guard") != NULL);
 
@@ -2883,6 +2916,7 @@ SUITE(cli) {
     RUN_TEST(cli_remove_claude_hooks);
     RUN_TEST(cli_upsert_recall_hook_fresh);
     RUN_TEST(cli_upsert_recall_hook_idempotent_preserves_others);
+    RUN_TEST(cli_upsert_recall_hook_migrates_legacy_and_duplicates);
     RUN_TEST(cli_remove_recall_hook);
 
     /* Gemini CLI hooks (4 tests — group D) */

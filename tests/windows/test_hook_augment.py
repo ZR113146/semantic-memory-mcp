@@ -2,7 +2,7 @@ r"""GREEN regression guard — the PreToolUse hook augmenter fires on Windows.
 
 Guards the fix for issue #618 (landed on main via #619) at the product surface.
 
-`codebase-memory-mcp hook-augment` is the non-blocking Claude Code PreToolUse
+`semantic-memory-mcp hook-augment` is the non-blocking Claude Code PreToolUse
 Grep/Glob augmenter: given a hook payload it should emit a `hookSpecificOutput`
 with `additionalContext` listing graph symbols that match the searched token.
 
@@ -22,7 +22,7 @@ Also passes on Linux/macOS (`cwd` starts with `/`).
 Exit code: 0 == augmenter fired (green), 1 == no-op (regression), 2 == setup error.
 
 Usage:
-    python test_hook_augment.py <path-to-codebase-memory-mcp[.exe]>
+    python test_hook_augment.py <path-to-semantic-memory-mcp[.exe]>
 """
 import json
 import os
@@ -94,9 +94,13 @@ def main():
         print("hook-augment rc=%d stdout=%r" % (ha.returncode, out[:200]))
 
         fired = ("hookSpecificOutput" in out) and ("additionalContext" in out)
+        renamed = "[semantic-memory-mcp]" in out and "[codebase-memory]" not in out
         if fired:
-            print("\nGREEN: PreToolUse augmenter emitted additionalContext.")
-            return 0
+            if renamed:
+                print("\nGREEN: PreToolUse augmenter emitted the semantic-memory-mcp context tag.")
+                return 0
+            print("\nREGRESSION (red): augmenter fired with a stale or missing context tag.")
+            return 1
         print("\nREGRESSION (red): hook-augment produced no hookSpecificOutput on "
               "Windows (drive-letter cwd rejected — has the #619 "
               "cbm_is_walkable_abs_path handling in hook_augment.c regressed?).")

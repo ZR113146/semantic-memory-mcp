@@ -1958,7 +1958,8 @@ int cbm_remove_claude_hooks(const char *settings_path) {
  * against), so the generic matcher-keyed upsert_hooks_json/is_cmm_hook_entry
  * path doesn't apply. These dedicated helpers identify our entry by the recall
  * shim basename embedded in its command, keeping upsert/remove idempotent. */
-#define CMM_RECALL_SCRIPT "cbm-memory-recall"
+#define CMM_RECALL_SCRIPT "semantic-memory-recall"
+#define CMM_LEGACY_RECALL_SCRIPT "cbm-memory-recall"
 #define CMM_RECALL_TIMEOUT_SEC 5
 
 /* True if a UserPromptSubmit array entry is ours: any of its hooks[].command
@@ -1975,12 +1976,27 @@ static bool is_cmm_recall_entry(yyjson_mut_val *entry) {
         yyjson_mut_val *cmd = yyjson_mut_obj_get(h, "command");
         if (cmd && yyjson_mut_is_str(cmd)) {
             const char *s = yyjson_mut_get_str(cmd);
-            if (s && strstr(s, CMM_RECALL_SCRIPT)) {
+            if (s && (strstr(s, CMM_RECALL_SCRIPT) || strstr(s, CMM_LEGACY_RECALL_SCRIPT))) {
                 return true;
             }
         }
     }
     return false;
+}
+
+static size_t remove_cmm_recall_entries(yyjson_mut_val *event_arr) {
+    size_t removed = 0;
+    size_t idx = 0;
+    while (idx < yyjson_mut_arr_size(event_arr)) {
+        yyjson_mut_val *item = yyjson_mut_arr_get(event_arr, idx);
+        if (is_cmm_recall_entry(item)) {
+            yyjson_mut_arr_remove(event_arr, idx);
+            removed++;
+            continue;
+        }
+        idx++;
+    }
+    return removed;
 }
 
 int cbm_upsert_claude_recall_hook(const char *settings_path) {
@@ -2020,15 +2036,7 @@ int cbm_upsert_claude_recall_hook(const char *settings_path) {
     }
 
     /* Drop any prior entry of ours so re-install/upgrade stays idempotent. */
-    size_t idx;
-    size_t max;
-    yyjson_mut_val *item;
-    yyjson_mut_arr_foreach(event_arr, idx, max, item) {
-        if (is_cmm_recall_entry(item)) {
-            yyjson_mut_arr_remove(event_arr, idx);
-            break;
-        }
-    }
+    remove_cmm_recall_entries(event_arr);
 
     yyjson_mut_val *entry = yyjson_mut_obj(mdoc);
     yyjson_mut_val *hooks_arr = yyjson_mut_arr(mdoc);
@@ -2072,15 +2080,7 @@ int cbm_remove_claude_recall_hook(const char *settings_path) {
         yyjson_mut_doc_free(mdoc);
         return 0;
     }
-    size_t idx;
-    size_t max;
-    yyjson_mut_val *item;
-    yyjson_mut_arr_foreach(event_arr, idx, max, item) {
-        if (is_cmm_recall_entry(item)) {
-            yyjson_mut_arr_remove(event_arr, idx);
-            break;
-        }
-    }
+    remove_cmm_recall_entries(event_arr);
     if (yyjson_mut_arr_size(event_arr) == 0) {
         yyjson_mut_obj_remove_key(hooks, "UserPromptSubmit");
     }
@@ -2132,6 +2132,13 @@ static void cbm_install_recall_script(const char *home, const char *binary_path)
 #ifdef _WIN32
     chmod(script_path, CLI_OCTAL_PERM);
 #endif
+
+    char legacy_script_path[CLI_BUF_1K];
+    snprintf(legacy_script_path, sizeof(legacy_script_path), "%s/%s", hooks_dir,
+             CMM_LEGACY_RECALL_SCRIPT);
+    if (strcmp(legacy_script_path, script_path) != 0) {
+        (void)remove(legacy_script_path);
+    }
 }
 
 /* Install the search-augmenter shim to ~/.claude/hooks/.

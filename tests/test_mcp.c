@@ -176,7 +176,7 @@ TEST(jsonrpc_format_response_string_id_issue253) {
 TEST(jsonrpc_format_response) {
     cbm_jsonrpc_response_t resp = {
         .id = 1,
-        .result_json = "{\"name\":\"codebase-memory-mcp\"}",
+        .result_json = "{\"name\":\"semantic-memory-mcp\"}",
     };
     char *json = cbm_jsonrpc_format_response(&resp);
     ASSERT_NOT_NULL(json);
@@ -209,7 +209,8 @@ TEST(mcp_initialize_response) {
     /* Default (no params): returns latest supported version */
     char *json = cbm_mcp_initialize_response(NULL);
     ASSERT_NOT_NULL(json);
-    ASSERT_NOT_NULL(strstr(json, "codebase-memory-mcp"));
+    ASSERT_NOT_NULL(strstr(json, "semantic-memory-mcp"));
+    ASSERT_NULL(strstr(json, "codebase-memory-mcp"));
     ASSERT_NOT_NULL(strstr(json, "\"version\":\"9.8.7-test\""));
     ASSERT_NOT_NULL(strstr(json, "capabilities"));
     ASSERT_NOT_NULL(strstr(json, "tools"));
@@ -551,7 +552,8 @@ TEST(server_handle_initialize) {
                                    "\"params\":{\"capabilities\":{}}}");
     ASSERT_NOT_NULL(resp);
     ASSERT_NOT_NULL(strstr(resp, "\"id\":1"));
-    ASSERT_NOT_NULL(strstr(resp, "codebase-memory-mcp"));
+    ASSERT_NOT_NULL(strstr(resp, "semantic-memory-mcp"));
+    ASSERT_NULL(strstr(resp, "codebase-memory-mcp"));
     ASSERT_NOT_NULL(strstr(resp, "capabilities"));
     free(resp);
 

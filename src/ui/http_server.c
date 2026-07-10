@@ -452,7 +452,7 @@ static void handle_logs(cbm_http_conn_t *c, const cbm_http_req_t *req) {
 #endif
 #include <signal.h>
 
-/* GET /api/processes — list codebase-memory-mcp processes via ps */
+/* GET /api/processes — list semantic-memory-mcp processes via ps */
 static void handle_processes(cbm_http_conn_t *c) {
     char buf[8192];
     int pos = 0;
@@ -937,7 +937,7 @@ static void *index_thread_fn(void *arg) {
     char self_path[1024] = {0};
     if (!bin[0]) {
         cbm_http_server_resolve_binary_path(NULL, self_path, sizeof(self_path));
-        bin = self_path[0] ? self_path : "codebase-memory-mcp";
+        bin = self_path[0] ? self_path : "semantic-memory-mcp";
     }
 
     char log_file[256];
@@ -1658,7 +1658,7 @@ static void dispatch_request(cbm_http_server_t *srv, cbm_http_conn_t *c,
         return;
     }
 
-    /* GET /api/processes → list running codebase-memory-mcp processes */
+    /* GET /api/processes → list running semantic-memory-mcp processes */
     if (is_get && cbm_http_path_match(req->path, "/api/processes")) {
         handle_processes(c);
         return;
