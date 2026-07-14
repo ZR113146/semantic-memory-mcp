@@ -170,7 +170,7 @@ SQLITE_WRITER_SRC = $(CBM_DIR)/sqlite_writer.c
 STORE_SRCS = src/store/store.c src/store/embed.c
 
 # Memory module (local-fork ADR/memory extensions, extracted from store.c)
-MEMORY_SRCS = src/memory/memory_store.c
+MEMORY_SRCS = src/memory/memory_store.c src/memory/adr_markdown.c
 
 # Cypher module (new)
 CYPHER_SRCS = src/cypher/cypher.c

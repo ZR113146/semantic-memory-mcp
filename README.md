@@ -95,6 +95,7 @@ Beyond the code graph, a **self-maintaining long-term memory** stores durable de
 - **Auto-maintenance** — consolidate, decay, conflict adjudication run lazily on the hot path
 - **Code anchoring** — `about_code` edges link memories to graph symbols; confidence/reusability derived from symbol topology
 - **ADR tools** — `adr_list` (structured index, MEMORY.md equivalent) and `adr_chain` (supersedes version timeline)
+- **Versioned ADR mirror** — `adr_export` projects decisions and constraints to deterministic Markdown while SQLite remains authoritative
 - **Lifecycle** — candidate → active → deprecated → archived; soft/hard/purge delete with audit trail
 
 See [ADR Memory System](#adr-memory-system) for details.
@@ -128,6 +129,7 @@ See [ADR Memory System](#adr-memory-system) for details.
 | `memories_retrieve` | Vector + FTS + structured recall |
 | `adr_list` ⬢ | Structured ADR index (MEMORY.md equivalent) |
 | `adr_chain` ⬢ | Walk supersedes version chain |
+| `adr_export` ⬢ | Plan, write, or check the generated ADR Markdown mirror |
 | `memories_inspect` | List items for review |
 | `memory_update_status` | Mark item status |
 | `memory_feedback` | Record feedback, adjust health |
@@ -170,6 +172,7 @@ decay / retention      →  stale archived; deleted swept after grace period
 src/memory/
   memory_store.h        All memory types and declarations (252 lines)
   memory_store.c        Full memory/ADR implementation (3,479 lines)
+  adr_markdown.c        Deterministic SQLite-to-Markdown ADR projection
 src/mcp/
   mcp_memory_handlers.c ADR MCP handlers: adr_list, adr_chain (437 lines)
   mcp.c                 Upstream + ~30 ADR injection lines
@@ -190,6 +193,24 @@ The `events` tool enforces an ADR-style format for code decisions:
 ```
 
 Use `about_code` to anchor memories to code symbols. The server derives confidence/reusability scores from the symbol's graph topology — you get objective signal instead of self-reported defaults.
+
+### Versioned ADR Markdown mirror
+
+V1 keeps SQLite as the only write authority and exports project-scoped, non-deleted
+`decision` and `constraint` items to `<repo>/.semantic-memory/adr/`. It preserves
+historical lifecycle states and stored content, excludes global/runtime-only data,
+and has no Markdown import path.
+
+```bash
+# Read-only drift report; creates no mirror files.
+semantic-memory-mcp cli adr_export '{"project":"D-my-repo","repo_path":"/path/to/repo","mode":"plan"}'
+
+# Apply managed changes. Refuses to overwrite unmanaged files.
+semantic-memory-mcp cli adr_export '{"project":"D-my-repo","repo_path":"/path/to/repo","mode":"write"}'
+
+# CI verification; returns a tool error when the mirror has drifted.
+semantic-memory-mcp cli adr_export '{"project":"D-my-repo","repo_path":"/path/to/repo","mode":"check"}'
+```
 
 ## Upstream Alignment
 

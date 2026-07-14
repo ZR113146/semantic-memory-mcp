@@ -542,6 +542,16 @@ static const tool_def_t TOOLS[] = {
      "\"max_depth\":{\"type\":\"integer\",\"default\":50}},"
      "\"required\":[\"project\"]}"},
 
+    {"adr_export", "ADR Markdown export",
+     "Plan, write, or verify the deterministic project-local ADR Markdown mirror. "
+     "SQLite remains authoritative; V1 exports project-scoped decision and constraint "
+     "memories only and never imports Markdown or unions global memory.",
+     "{\"type\":\"object\",\"properties\":{"
+     "\"project\":{\"type\":\"string\",\"description\":\"Project name (required)\"},"
+     "\"repo_path\":{\"type\":\"string\",\"description\":\"Existing repository root\"},"
+     "\"mode\":{\"type\":\"string\",\"enum\":[\"plan\",\"write\",\"check\"],"
+     "\"default\":\"plan\"}},\"required\":[\"project\",\"repo_path\"]}"},
+
     {"events", "Events / write memory",
      "Write one long-term memory item. For a CODE DECISION (why a change was made), set "
      "kind=decision and write content in four labelled sections: [Decision] what was "
@@ -6250,6 +6260,9 @@ char *cbm_mcp_handle_tool(cbm_mcp_server_t *srv, const char *tool_name, const ch
     }
     if (strcmp(tool_name, "adr_chain") == 0) {
         return handle_adr_chain(srv, args_json);
+    }
+    if (strcmp(tool_name, "adr_export") == 0) {
+        return handle_adr_export(srv, args_json);
     }
     /* ── Local-fork memory tools (restored after 7d3d9fb merge regression) ── */
     if (strcmp(tool_name, "events") == 0) {

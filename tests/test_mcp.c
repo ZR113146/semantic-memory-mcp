@@ -7,6 +7,7 @@
 #include "../src/foundation/compat_fs.h" /* cbm_unlink / cbm_rmdir */
 #include "../src/foundation/constants.h"
 #include "../src/foundation/log.h"
+#include "../src/foundation/platform.h"
 #include "test_framework.h"
 #include "test_helpers.h"
 #include <cli/cli.h>
@@ -16,6 +17,7 @@
 #include <store/store.h>
 #include <watcher/watcher.h>
 #include <yyjson/yyjson.h>
+#include <sqlite3.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -2179,6 +2181,373 @@ TEST(memory_status_cold_start_reopens_existing_stores_writable) {
     free(saved_copy);
     cbm_unlink(project_db);
     cbm_unlink(global_db);
+    cbm_rmdir(cache);
+    PASS();
+}
+
+static char *adr_export_test_args(const char *project, const char *repo_path, const char *mode) {
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_str(doc, root, "project", project);
+    yyjson_mut_obj_add_str(doc, root, "repo_path", repo_path);
+    yyjson_mut_obj_add_str(doc, root, "mode", mode);
+    size_t len = 0;
+    char *json = yyjson_mut_write(doc, 0, &len);
+    yyjson_mut_doc_free(doc);
+    return json;
+}
+
+static char *adr_export_test_read(const char *path, size_t *out_len) {
+    if (out_len)
+        *out_len = 0;
+    FILE *fp = cbm_fopen(path, "rb");
+    if (!fp)
+        return NULL;
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        return NULL;
+    }
+    long size = ftell(fp);
+    if (size < 0 || fseek(fp, 0, SEEK_SET) != 0) {
+        fclose(fp);
+        return NULL;
+    }
+    char *data = malloc((size_t)size + 1);
+    if (!data) {
+        fclose(fp);
+        return NULL;
+    }
+    size_t got = fread(data, 1, (size_t)size, fp);
+    fclose(fp);
+    if (got != (size_t)size) {
+        free(data);
+        return NULL;
+    }
+    data[got] = '\0';
+    if (out_len)
+        *out_len = got;
+    return data;
+}
+
+static const char *adr_export_manifest_path_for_id(yyjson_doc *doc, const char *id) {
+    yyjson_val *files = yyjson_obj_get(yyjson_doc_get_root(doc), "files");
+    size_t idx, max;
+    yyjson_val *entry;
+    yyjson_arr_foreach(files, idx, max, entry) {
+        yyjson_val *eid = yyjson_obj_get(entry, "id");
+        yyjson_val *path = yyjson_obj_get(entry, "path");
+        if (yyjson_is_str(eid) && yyjson_is_str(path) && strcmp(yyjson_get_str(eid), id) == 0)
+            return yyjson_get_str(path);
+    }
+    return NULL;
+}
+
+TEST(adr_export_v1_is_deterministic_readonly_and_managed) {
+    char cache[256];
+    snprintf(cache, sizeof(cache), "/tmp/cbm-adr-export-cache-XXXXXX");
+    if (!cbm_mkdtemp(cache))
+        PASS();
+    char repo[256];
+    snprintf(repo, sizeof(repo), "/tmp/cbm-adr-export-repo-XXXXXX");
+    if (!cbm_mkdtemp(repo)) {
+        cbm_rmdir(cache);
+        PASS();
+    }
+
+    const char *saved = getenv("CBM_CACHE_DIR");
+    char *saved_copy = saved ? strdup(saved) : NULL;
+    cbm_setenv("CBM_CACHE_DIR", cache, 1);
+    const char *project = "adr-export-v1";
+    char db_path[512];
+    snprintf(db_path, sizeof(db_path), "%s/%s-memory.db", cache, project);
+    cbm_store_t *setup = cbm_store_open_path(db_path);
+    ASSERT_NOT_NULL(setup);
+
+    cbm_memory_item_t first = {
+        .id = "itm-export-first",
+        .kind = "decision",
+        .layer = "adr",
+        .title = "Title: quoted \"ADR\"",
+        .summary = "Summary with colon: value and a newline\nkept exactly.",
+        .content = "abc",
+        .scope_user = "codex",
+        .scope_project = project,
+        .scope_task = "mirror-test",
+        .entity_key = "unsafe/entity:key",
+        .predicate = "decides",
+        .status = "active",
+        .version = 1,
+        .created_at = 123456789,
+    };
+    ASSERT_EQ(cbm_store_memory_append_candidate(setup, &first, NULL), CBM_STORE_OK);
+    ASSERT_EQ(cbm_store_memory_link_code(setup, first.id, "code.zeta", "user"), CBM_STORE_OK);
+    ASSERT_EQ(cbm_store_memory_link_code(setup, first.id, "code.alpha", "user"), CBM_STORE_OK);
+
+    cbm_memory_item_t second = {
+        .id = "itm-export-second",
+        .kind = "constraint",
+        .layer = "adr",
+        .title = "Memory 与 Graph 物理解耦",
+        .summary = "中文标题、摘要和正文必须以 UTF-8 原样导出。",
+        .content = "[决策] Memory DB 与 Graph DB 分别存储。\n"
+                   "[背景] Git 需要可读的 ADR 投影。\n"
+                   "[放弃方案] 不用 Markdown 取代 SQLite。\n"
+                   "[锚点] src/memory/adr_markdown.c",
+        .scope_project = project,
+        .entity_key = "记忆-图谱-物理解耦",
+        .predicate = "forbids",
+        .status = "archived",
+        .version = 2,
+        .supersedes = "itm-export-first",
+        .created_at = 123456790,
+    };
+    ASSERT_EQ(cbm_store_memory_append_candidate(setup, &second, NULL), CBM_STORE_OK);
+
+    cbm_memory_item_t lesson = {.id = "itm-export-lesson",
+                                .kind = "lesson",
+                                .title = "Excluded lesson",
+                                .content = "not an ADR export item",
+                                .scope_project = project,
+                                .status = "active"};
+    cbm_memory_item_t reference = {.id = "itm-export-reference",
+                                   .kind = "reference",
+                                   .title = "Excluded reference",
+                                   .content = "audit only",
+                                   .scope_project = project,
+                                   .status = "active"};
+    ASSERT_EQ(cbm_store_memory_append_candidate(setup, &lesson, NULL), CBM_STORE_OK);
+    ASSERT_EQ(cbm_store_memory_append_candidate(setup, &reference, NULL), CBM_STORE_OK);
+    cbm_store_close(setup);
+
+    char global_path[512];
+    snprintf(global_path, sizeof(global_path), "%s/%s-memory.db", cache, CBM_GLOBAL_MEMORY_PROJECT);
+    setup = cbm_store_open_path(global_path);
+    ASSERT_NOT_NULL(setup);
+    cbm_memory_item_t global = {.id = "itm-export-global",
+                                .kind = "decision",
+                                .title = "Excluded global ADR",
+                                .content = "global is deferred in V1",
+                                .status = "active"};
+    ASSERT_EQ(cbm_store_memory_append_candidate(setup, &global, NULL), CBM_STORE_OK);
+    cbm_store_close(setup);
+
+    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
+    ASSERT_NOT_NULL(srv);
+    char *args = adr_export_test_args(project, repo, "plan");
+    ASSERT_NOT_NULL(args);
+    char *resp = cbm_mcp_handle_tool(srv, "adr_export", args);
+    free(args);
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "\"status\":\"planned\""));
+    ASSERT_NOT_NULL(strstr(resp, "\"count\":2"));
+    ASSERT_NOT_NULL(strstr(resp, "\"create\":2"));
+    ASSERT_NULL(strstr(resp, "\"isError\":true"));
+    free(resp);
+
+    char manifest_path[1024];
+    snprintf(manifest_path, sizeof(manifest_path), "%s/.semantic-memory/adr/manifest.json", repo);
+    ASSERT_FALSE(cbm_file_exists(manifest_path));
+
+    args = adr_export_test_args(project, repo, "write");
+    resp = cbm_mcp_handle_tool(srv, "adr_export", args);
+    free(args);
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "\"status\":\"written\""));
+    ASSERT_NULL(strstr(resp, "\"isError\":true"));
+    free(resp);
+
+    size_t manifest_len = 0;
+    char *manifest = adr_export_test_read(manifest_path, &manifest_len);
+    ASSERT_NOT_NULL(manifest);
+    ASSERT_NULL(strstr(manifest, "generated_at"));
+    ASSERT_NULL(strstr(manifest, "itm-export-lesson"));
+    ASSERT_NULL(strstr(manifest, "itm-export-reference"));
+    ASSERT_NULL(strstr(manifest, "itm-export-global"));
+    yyjson_doc *mdoc = yyjson_read(manifest, manifest_len, 0);
+    ASSERT_NOT_NULL(mdoc);
+    ASSERT_EQ(yyjson_get_int(yyjson_obj_get(yyjson_doc_get_root(mdoc), "count")), 2);
+    const char *first_rel = adr_export_manifest_path_for_id(mdoc, first.id);
+    ASSERT_NOT_NULL(first_rel);
+    char *first_rel_copy = strdup(first_rel);
+    ASSERT_NOT_NULL(first_rel_copy);
+    ASSERT_NULL(strstr(first_rel_copy, "unsafe/entity"));
+    char first_path[1536];
+    snprintf(first_path, sizeof(first_path), "%s/.semantic-memory/adr/%s", repo, first_rel_copy);
+    yyjson_doc_free(mdoc);
+
+    mdoc = yyjson_read(manifest, manifest_len, 0);
+    ASSERT_NOT_NULL(mdoc);
+    const char *second_rel = adr_export_manifest_path_for_id(mdoc, second.id);
+    ASSERT_NOT_NULL(second_rel);
+    char second_path[1536];
+    snprintf(second_path, sizeof(second_path), "%s/.semantic-memory/adr/%s", repo, second_rel);
+    yyjson_doc_free(mdoc);
+
+    char *markdown = adr_export_test_read(first_path, NULL);
+    ASSERT_NOT_NULL(markdown);
+    ASSERT_NOT_NULL(strstr(markdown, "authority: \"sqlite\""));
+    ASSERT_NOT_NULL(strstr(
+        markdown,
+        "content_sha256: \"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\""));
+    ASSERT_NOT_NULL(strstr(markdown, "## Content\n\nabc\n"));
+    ASSERT_NULL(strstr(markdown, "hit_count"));
+    ASSERT_NULL(strstr(markdown, "decay:"));
+    ASSERT_NULL(strstr(markdown, "confidence:"));
+    ASSERT_NULL(strstr(markdown, "updated_at"));
+    char *alpha = strstr(markdown, "code.alpha");
+    char *zeta = strstr(markdown, "code.zeta");
+    ASSERT_NOT_NULL(alpha);
+    ASSERT_NOT_NULL(zeta);
+    ASSERT_TRUE(alpha < zeta);
+    free(markdown);
+
+    markdown = adr_export_test_read(second_path, NULL);
+    ASSERT_NOT_NULL(markdown);
+    ASSERT_NOT_NULL(strstr(markdown, "# Memory 与 Graph 物理解耦"));
+    ASSERT_NOT_NULL(strstr(markdown, "[决策] Memory DB 与 Graph DB 分别存储。"));
+    ASSERT_NOT_NULL(strstr(markdown, "entity_key: \"记忆-图谱-物理解耦\""));
+    free(markdown);
+
+    /* A second write is byte-identical and check reports a clean mirror. */
+    args = adr_export_test_args(project, repo, "write");
+    resp = cbm_mcp_handle_tool(srv, "adr_export", args);
+    free(args);
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "\"status\":\"unchanged\""));
+    free(resp);
+    size_t manifest_len_2 = 0;
+    char *manifest_2 = adr_export_test_read(manifest_path, &manifest_len_2);
+    ASSERT_NOT_NULL(manifest_2);
+    ASSERT_EQ(manifest_len, manifest_len_2);
+    ASSERT_EQ(memcmp(manifest, manifest_2, manifest_len), 0);
+    free(manifest_2);
+
+    args = adr_export_test_args(project, repo, "check");
+    resp = cbm_mcp_handle_tool(srv, "adr_export", args);
+    free(args);
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "\"status\":\"clean\""));
+    ASSERT_NULL(strstr(resp, "\"isError\":true"));
+    free(resp);
+
+    /* Runtime-only fields do not change the projection. */
+    cbm_mcp_server_free(srv);
+    setup = cbm_store_open_path(db_path);
+    ASSERT_NOT_NULL(setup);
+    ASSERT_EQ(sqlite3_exec(cbm_store_get_db(setup),
+                           "UPDATE memory_item SET hit_count=99,decay=0.75,confidence=0.1,"
+                           "updated_at=999999 WHERE id='itm-export-first';",
+                           NULL, NULL, NULL),
+              SQLITE_OK);
+    cbm_store_close(setup);
+    srv = cbm_mcp_server_new(NULL);
+    ASSERT_NOT_NULL(srv);
+    args = adr_export_test_args(project, repo, "check");
+    resp = cbm_mcp_handle_tool(srv, "adr_export", args);
+    free(args);
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "\"status\":\"clean\""));
+    ASSERT_NULL(strstr(resp, "\"isError\":true"));
+    free(resp);
+
+    /* Manual drift is detected; plan/check never overwrite it and write repairs it. */
+    ASSERT_EQ(th_append_file(first_path, "MANUAL-DRIFT\n"), 0);
+    args = adr_export_test_args(project, repo, "check");
+    resp = cbm_mcp_handle_tool(srv, "adr_export", args);
+    free(args);
+    ASSERT_NOT_NULL(resp);
+    ASSERT_TRUE(response_contains_json_fragment(resp, "\"status\":\"drift\""));
+    ASSERT_TRUE(response_contains_json_fragment(resp, "\"update\":1"));
+    ASSERT_NOT_NULL(strstr(resp, "\"isError\":true"));
+    free(resp);
+    args = adr_export_test_args(project, repo, "write");
+    resp = cbm_mcp_handle_tool(srv, "adr_export", args);
+    free(args);
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "\"status\":\"written\""));
+    ASSERT_NULL(strstr(resp, "\"isError\":true"));
+    free(resp);
+    markdown = adr_export_test_read(first_path, NULL);
+    ASSERT_NOT_NULL(markdown);
+    ASSERT_NULL(strstr(markdown, "MANUAL-DRIFT"));
+    free(markdown);
+
+    /* Unknown files are never deleted or overwritten by write mode. */
+    char manual_path[1024];
+    snprintf(manual_path, sizeof(manual_path), "%s/.semantic-memory/adr/manual.md", repo);
+    ASSERT_EQ(th_write_file(manual_path, "human-owned\n"), 0);
+    args = adr_export_test_args(project, repo, "write");
+    resp = cbm_mcp_handle_tool(srv, "adr_export", args);
+    free(args);
+    ASSERT_NOT_NULL(resp);
+    ASSERT_TRUE(response_contains_json_fragment(resp, "\"unmanaged\":1"));
+    ASSERT_NOT_NULL(strstr(resp, "\"isError\":true"));
+    free(resp);
+    markdown = adr_export_test_read(manual_path, NULL);
+    ASSERT_NOT_NULL(markdown);
+    ASSERT_NOT_NULL(strstr(markdown, "human-owned"));
+    free(markdown);
+    cbm_unlink(manual_path);
+
+    /* Lifecycle status is projected, while soft-deleted ADRs become stale managed files. */
+    resp = cbm_mcp_handle_tool(srv, "memory_update_status",
+                               "{\"project\":\"adr-export-v1\",\"id\":\"itm-export-first\","
+                               "\"status\":\"archived\"}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NULL(strstr(resp, "\"isError\":true"));
+    free(resp);
+    args = adr_export_test_args(project, repo, "plan");
+    resp = cbm_mcp_handle_tool(srv, "adr_export", args);
+    free(args);
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "\"update\":1"));
+    free(resp);
+    args = adr_export_test_args(project, repo, "write");
+    resp = cbm_mcp_handle_tool(srv, "adr_export", args);
+    free(args);
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NULL(strstr(resp, "\"isError\":true"));
+    free(resp);
+
+    resp = cbm_mcp_handle_tool(srv, "memory_delete",
+                               "{\"project\":\"adr-export-v1\",\"id\":\"itm-export-first\","
+                               "\"mode\":\"soft\"}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NULL(strstr(resp, "\"isError\":true"));
+    free(resp);
+    args = adr_export_test_args(project, repo, "plan");
+    resp = cbm_mcp_handle_tool(srv, "adr_export", args);
+    free(args);
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "\"delete\":1"));
+    ASSERT_NOT_NULL(strstr(resp, "\"count\":1"));
+    free(resp);
+    args = adr_export_test_args(project, repo, "write");
+    resp = cbm_mcp_handle_tool(srv, "adr_export", args);
+    free(args);
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NULL(strstr(resp, "\"isError\":true"));
+    free(resp);
+    ASSERT_FALSE(cbm_file_exists(first_path));
+
+    cbm_mcp_server_free(srv);
+    free(first_rel_copy);
+    free(manifest);
+    restore_cache_dir(saved_copy);
+    free(saved_copy);
+    th_rmtree(repo);
+    cbm_unlink(db_path);
+    char sidecar[640];
+    snprintf(sidecar, sizeof(sidecar), "%s-wal", db_path);
+    cbm_unlink(sidecar);
+    snprintf(sidecar, sizeof(sidecar), "%s-shm", db_path);
+    cbm_unlink(sidecar);
+    cbm_unlink(global_path);
+    snprintf(sidecar, sizeof(sidecar), "%s-wal", global_path);
+    cbm_unlink(sidecar);
+    snprintf(sidecar, sizeof(sidecar), "%s-shm", global_path);
+    cbm_unlink(sidecar);
     cbm_rmdir(cache);
     PASS();
 }
@@ -5097,6 +5466,7 @@ SUITE(mcp) {
     RUN_TEST(tool_manage_adr_no_project);
     RUN_TEST(tool_manage_adr_get_with_existing_adr);
     RUN_TEST(memory_status_cold_start_reopens_existing_stores_writable);
+    RUN_TEST(adr_export_v1_is_deterministic_readonly_and_managed);
     RUN_TEST(tool_manage_adr_unified_backend_issue256);
     RUN_TEST(tool_index_repository_reports_store_backed_adr);
     RUN_TEST(tool_index_repository_dot_uses_absolute_project_key_and_preserves_adr);

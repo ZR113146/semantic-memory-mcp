@@ -183,6 +183,9 @@ char *handle_adr_list(cbm_mcp_server_t *srv, const char *args);
  * access its internals — opens the memory store independently. */
 char *handle_adr_chain(cbm_mcp_server_t *srv, const char *args);
 
+/* Generate or verify the deterministic project-local ADR Markdown mirror. */
+char *handle_adr_export(cbm_mcp_server_t *srv, const char *args);
+
 /* ── Memory tool handlers (defined in mcp_memory_handlers.c) ─────────
  * The nine long-term-memory tools. Store access goes through the two
  * resolver functions below — the only sanctioned touch points for the

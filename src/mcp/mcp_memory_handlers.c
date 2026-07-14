@@ -11,6 +11,7 @@
 #include "mcp/mcp.h"
 #include "store/store.h"
 #include "memory/memory_store.h"
+#include "memory/adr_markdown.h"
 #include "foundation/constants.h"
 #include "foundation/platform.h"
 #include "foundation/compat.h"
@@ -1740,5 +1741,64 @@ char *handle_adr_chain(cbm_mcp_server_t *srv, const char *args) {
     }
     char *result = cbm_mcp_text_result(json, false);
     free(json);
+    return result;
+}
+
+char *handle_adr_export(cbm_mcp_server_t *srv, const char *args) {
+    yyjson_doc *adoc = yyjson_read(args ? args : "{}", args ? strlen(args) : CBM_SZ_2, 0);
+    if (!adoc)
+        return cbm_mcp_text_result("invalid JSON arguments", true);
+
+    char *project = memory_arg_string_dup(adoc, "project");
+    char *repo_path = memory_arg_string_dup(adoc, "repo_path");
+    char *mode = memory_arg_string_dup(adoc, "mode");
+    yyjson_doc_free(adoc);
+
+    if (!project || !repo_path) {
+        free(project);
+        free(repo_path);
+        free(mode);
+        return cbm_mcp_text_result("project and repo_path are required", true);
+    }
+    char *canon = normalize_phantom_project(project);
+    if (canon) {
+        free(project);
+        project = canon;
+    }
+
+    cbm_adr_export_mode_t export_mode = CBM_ADR_EXPORT_PLAN;
+    if (mode && mode[0]) {
+        if (strcmp(mode, "write") == 0)
+            export_mode = CBM_ADR_EXPORT_WRITE;
+        else if (strcmp(mode, "check") == 0)
+            export_mode = CBM_ADR_EXPORT_CHECK;
+        else if (strcmp(mode, "plan") != 0) {
+            free(project);
+            free(repo_path);
+            free(mode);
+            return cbm_mcp_text_result("mode must be plan, write, or check", true);
+        }
+    }
+
+    cbm_store_t *store = resolve_memory_store(srv, project, false);
+    if (!store) {
+        char *err = build_project_list_error("project has no memory database");
+        char *result = cbm_mcp_text_result(err, true);
+        free(err);
+        free(project);
+        free(repo_path);
+        free(mode);
+        return result;
+    }
+
+    char *report = NULL;
+    bool clean = false;
+    int rc = cbm_store_memory_adr_export(store, project, repo_path, export_mode, &report, &clean);
+    bool is_error = rc != CBM_STORE_OK || (export_mode == CBM_ADR_EXPORT_CHECK && !clean);
+    char *result = cbm_mcp_text_result(report ? report : "ADR export failed", is_error);
+    free(report);
+    free(project);
+    free(repo_path);
+    free(mode);
     return result;
 }
