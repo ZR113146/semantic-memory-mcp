@@ -162,6 +162,26 @@ static cbm_store_t *open_memory_store_for_project(const char *project) {
     return cbm_store_open_path_query(mem_path);
 }
 
+/* Mutation handlers must not write through the query-only handle returned by
+ * resolve_*_memory_store(..., false). Resolve once in read mode to preserve the
+ * "existing DB only" guard, then ask the resolver to reopen that cached handle
+ * read-write. This avoids both SQLITE_READONLY on a cold server and accidental
+ * creation of a memory DB for a misspelled project. */
+static cbm_store_t *open_existing_memory_store_for_write(cbm_mcp_server_t *srv,
+                                                         const char *project) {
+    if (!resolve_memory_store(srv, project, false)) {
+        return NULL;
+    }
+    return resolve_memory_store(srv, project, true);
+}
+
+static cbm_store_t *open_existing_global_memory_store_for_write(cbm_mcp_server_t *srv) {
+    if (!resolve_global_memory_store(srv, false)) {
+        return NULL;
+    }
+    return resolve_global_memory_store(srv, true);
+}
+
 /* ═════════════════════════════════════════════════════════════════════
  *  Public handlers (declared in mcp.h, called from mcp.c dispatch)
  * ═════════════════════════════════════════════════════════════════════ */
@@ -1115,7 +1135,7 @@ char *handle_memory_update_status(cbm_mcp_server_t *srv, const char *args) {
         free(status);
         return cbm_mcp_text_result("project, id, and status are required", true);
     }
-    cbm_store_t *store = resolve_memory_store(srv, project, false);
+    cbm_store_t *store = open_existing_memory_store_for_write(srv, project);
     if (!store) {
         char *_err = build_project_list_error("project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
@@ -1130,7 +1150,7 @@ char *handle_memory_update_status(cbm_mcp_server_t *srv, const char *args) {
      * =NULL) is NOT_FOUND in the project store. Fall back to the global store
      * with project=NULL, which its (?4 IS NULL OR scope_project=?4) clause accepts. */
     if (rc == CBM_STORE_NOT_FOUND) {
-        cbm_store_t *gstore = resolve_global_memory_store(srv, false);
+        cbm_store_t *gstore = open_existing_global_memory_store_for_write(srv);
         if (gstore)
             rc = cbm_store_memory_update_status(gstore, id, NULL, status);
     }
@@ -1167,7 +1187,7 @@ char *handle_memory_feedback(cbm_mcp_server_t *srv, const char *args) {
         free(user);
         return cbm_mcp_text_result("project, id, and feedback are required", true);
     }
-    cbm_store_t *store = resolve_memory_store(srv, project, false);
+    cbm_store_t *store = open_existing_memory_store_for_write(srv, project);
     if (!store) {
         char *_err = build_project_list_error("project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
@@ -1184,7 +1204,7 @@ char *handle_memory_feedback(cbm_mcp_server_t *srv, const char *args) {
     /* Global-memory fallback: by-id feedback is scope-guarded, retry the global
      * store with project=NULL when the project store reports NOT_FOUND. */
     if (rc == CBM_STORE_NOT_FOUND) {
-        cbm_store_t *gstore = resolve_global_memory_store(srv, false);
+        cbm_store_t *gstore = open_existing_global_memory_store_for_write(srv);
         if (gstore)
             rc = cbm_store_memory_feedback(gstore, id, NULL, feedback, note, user, &event_id);
     }
@@ -1224,7 +1244,7 @@ char *handle_memory_delete(cbm_mcp_server_t *srv, const char *args) {
         return cbm_mcp_text_result("project and id are required", true);
     }
     const char *m = (mode && mode[0]) ? mode : "soft";
-    cbm_store_t *store = resolve_memory_store(srv, project, false);
+    cbm_store_t *store = open_existing_memory_store_for_write(srv, project);
     if (!store) {
         char *_err = build_project_list_error("project not found or not indexed");
         char *_res = cbm_mcp_text_result(_err, true);
@@ -1251,7 +1271,7 @@ char *handle_memory_delete(cbm_mcp_server_t *srv, const char *args) {
     /* Global-memory fallback: by-id delete/restore is scope-guarded on project,
      * so retry the global store with project=NULL on NOT_FOUND. */
     if (rc == CBM_STORE_NOT_FOUND) {
-        cbm_store_t *gstore = resolve_global_memory_store(srv, false);
+        cbm_store_t *gstore = open_existing_global_memory_store_for_write(srv);
         if (gstore) {
             if (strcmp(m, "restore") == 0)
                 rc = cbm_store_memory_restore(gstore, id, NULL, user);
@@ -1289,8 +1309,8 @@ char *handle_admin_consolidate(cbm_mcp_server_t *srv, const char *args) {
     /* scope='global' consolidates the cross-project store; pass project=NULL so
      * the store-level filter covers all of its (scope_project=NULL) rows. */
     const char *scope_arg = is_global ? NULL : project;
-    cbm_store_t *store = is_global ? resolve_global_memory_store(srv, false)
-                                   : resolve_memory_store(srv, project, false);
+    cbm_store_t *store = is_global ? open_existing_global_memory_store_for_write(srv)
+                                   : open_existing_memory_store_for_write(srv, project);
     if (!store) {
         char *_err = build_project_list_error(is_global ? "no global memories yet"
                                                         : "project not found or not indexed");
@@ -1332,8 +1352,8 @@ char *handle_admin_decay(cbm_mcp_server_t *srv, const char *args) {
     bool is_global = scope && strcmp(scope, "global") == 0;
     free(scope);
     const char *scope_arg = is_global ? NULL : project;
-    cbm_store_t *store = is_global ? resolve_global_memory_store(srv, false)
-                                   : resolve_memory_store(srv, project, false);
+    cbm_store_t *store = is_global ? open_existing_global_memory_store_for_write(srv)
+                                   : open_existing_memory_store_for_write(srv, project);
     if (!store) {
         char *_err = build_project_list_error(is_global ? "no global memories yet"
                                                         : "project not found or not indexed");

@@ -2101,6 +2101,88 @@ TEST(tool_manage_adr_get_with_existing_adr) {
     PASS();
 }
 
+TEST(memory_status_cold_start_reopens_existing_stores_writable) {
+    char cache[256];
+    snprintf(cache, sizeof(cache), "/tmp/cbm-memory-status-XXXXXX");
+    if (!cbm_mkdtemp(cache)) {
+        PASS();
+    }
+
+    const char *saved = getenv("CBM_CACHE_DIR");
+    char *saved_copy = saved ? strdup(saved) : NULL;
+    cbm_setenv("CBM_CACHE_DIR", cache, 1);
+
+    const char *project = "cold-status-project";
+    char project_db[512];
+    snprintf(project_db, sizeof(project_db), "%s/%s-memory.db", cache, project);
+    cbm_store_t *setup = cbm_store_open_path(project_db);
+    ASSERT_NOT_NULL(setup);
+    cbm_memory_item_t project_item = {.id = "itm-cold-project",
+                                      .kind = "decision",
+                                      .content = "cold project item",
+                                      .scope_project = project,
+                                      .status = "active"};
+    ASSERT_EQ(cbm_store_memory_append_candidate(setup, &project_item, NULL), CBM_STORE_OK);
+    cbm_store_close(setup);
+
+    char global_db[512];
+    snprintf(global_db, sizeof(global_db), "%s/%s-memory.db", cache,
+             CBM_GLOBAL_MEMORY_PROJECT);
+    setup = cbm_store_open_path(global_db);
+    ASSERT_NOT_NULL(setup);
+    cbm_memory_item_t global_item = {.id = "itm-cold-global",
+                                     .kind = "decision",
+                                     .content = "cold global item",
+                                     .status = "candidate"};
+    ASSERT_EQ(cbm_store_memory_append_candidate(setup, &global_item, NULL), CBM_STORE_OK);
+    cbm_store_close(setup);
+
+    /* A new server has no writable memory handle cached. Both calls failed with
+     * SQLITE_READONLY before mutation handlers reopened existing DBs read-write. */
+    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
+    ASSERT_NOT_NULL(srv);
+    char *resp = cbm_mcp_handle_tool(
+        srv, "memory_update_status",
+        "{\"project\":\"cold-status-project\",\"id\":\"itm-cold-project\","
+        "\"status\":\"retracted\"}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "\"status\":\"updated\""));
+    ASSERT_NULL(strstr(resp, "\"isError\":true"));
+    free(resp);
+
+    resp = cbm_mcp_handle_tool(
+        srv, "memory_update_status",
+        "{\"project\":\"cold-status-project\",\"id\":\"itm-cold-global\","
+        "\"status\":\"archived\"}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "\"status\":\"updated\""));
+    ASSERT_NULL(strstr(resp, "\"isError\":true"));
+    free(resp);
+    cbm_mcp_server_free(srv);
+
+    cbm_memory_item_t out = {0};
+    cbm_store_t *verify = cbm_store_open_path_query(project_db);
+    ASSERT_NOT_NULL(verify);
+    ASSERT_EQ(cbm_store_memory_get_item(verify, "itm-cold-project", &out), CBM_STORE_OK);
+    ASSERT_STR_EQ(out.status, "retracted");
+    cbm_store_memory_item_free(&out);
+    cbm_store_close(verify);
+
+    verify = cbm_store_open_path_query(global_db);
+    ASSERT_NOT_NULL(verify);
+    ASSERT_EQ(cbm_store_memory_get_item(verify, "itm-cold-global", &out), CBM_STORE_OK);
+    ASSERT_STR_EQ(out.status, "archived");
+    cbm_store_memory_item_free(&out);
+    cbm_store_close(verify);
+
+    restore_cache_dir(saved_copy);
+    free(saved_copy);
+    cbm_unlink(project_db);
+    cbm_unlink(global_db);
+    cbm_rmdir(cache);
+    PASS();
+}
+
 /* issue #256: manage_adr (MCP) and the UI /api/adr endpoints must share ONE
  * backend. A manage_adr(update) write must be readable via cbm_store_adr_get
  * (the exact API the UI's /api/adr GET uses). */
@@ -5014,6 +5096,7 @@ SUITE(mcp) {
     RUN_TEST(tool_detect_changes_no_project);
     RUN_TEST(tool_manage_adr_no_project);
     RUN_TEST(tool_manage_adr_get_with_existing_adr);
+    RUN_TEST(memory_status_cold_start_reopens_existing_stores_writable);
     RUN_TEST(tool_manage_adr_unified_backend_issue256);
     RUN_TEST(tool_index_repository_reports_store_backed_adr);
     RUN_TEST(tool_index_repository_dot_uses_absolute_project_key_and_preserves_adr);
