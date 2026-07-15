@@ -243,7 +243,7 @@ TEST(mcp_initialize_response) {
 TEST(mcp_tools_list) {
     char *json = cbm_mcp_tools_list();
     ASSERT_NOT_NULL(json);
-    /* Should contain all 14 tools */
+    /* The slim startup catalog must still expose every callable tool. */
     ASSERT_NOT_NULL(strstr(json, "index_repository"));
     ASSERT_NOT_NULL(strstr(json, "search_graph"));
     ASSERT_NOT_NULL(strstr(json, "query_graph"));
@@ -258,6 +258,9 @@ TEST(mcp_tools_list) {
     ASSERT_NOT_NULL(strstr(json, "detect_changes"));
     ASSERT_NOT_NULL(strstr(json, "manage_adr"));
     ASSERT_NOT_NULL(strstr(json, "ingest_traces"));
+    ASSERT_NOT_NULL(strstr(json, "adr_export"));
+    ASSERT_NOT_NULL(strstr(json, "events"));
+    ASSERT_NOT_NULL(strstr(json, "describe_tool"));
     free(json);
     PASS();
 }
@@ -274,12 +277,27 @@ TEST(mcp_tools_list_latest_metadata) {
 }
 
 TEST(mcp_index_repository_declares_name_override_issue571) {
+    const char *schema = cbm_mcp_tool_input_schema("index_repository");
+    ASSERT_NOT_NULL(schema);
+    ASSERT_NOT_NULL(strstr(schema, "\"name\":{\"type\":\"string\""));
+    ASSERT_NOT_NULL(strstr(schema, "Non-ASCII bytes are encoded"));
+    PASS();
+}
+
+TEST(mcp_tools_list_is_slim_with_on_demand_full_guide) {
     char *json = cbm_mcp_tools_list();
     ASSERT_NOT_NULL(json);
-    ASSERT_NOT_NULL(strstr(json, "\"index_repository\""));
-    ASSERT_NOT_NULL(strstr(json, "\"name\":{\"type\":\"string\""));
-    ASSERT_NOT_NULL(strstr(json, "Non-ASCII bytes are encoded"));
+    ASSERT_NULL(strstr(json, "Special mode 'cross-repo-intelligence'"));
+    ASSERT_NULL(strstr(json, "Non-ASCII bytes are encoded"));
     free(json);
+
+    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
+    char *full = cbm_mcp_handle_tool(srv, "describe_tool", "{\"name\":\"index_repository\"}");
+    ASSERT_NOT_NULL(full);
+    ASSERT_NOT_NULL(strstr(full, "Special mode 'cross-repo-intelligence'"));
+    ASSERT_NOT_NULL(strstr(full, "Non-ASCII bytes are encoded"));
+    free(full);
+    cbm_mcp_server_free(srv);
     PASS();
 }
 
@@ -590,45 +608,20 @@ TEST(server_handle_tools_list) {
     PASS();
 }
 
-TEST(server_handle_tools_list_paginates) {
+TEST(server_handle_tools_list_returns_complete_slim_catalog) {
     cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
 
     char *resp =
         cbm_mcp_server_handle(srv, "{\"jsonrpc\":\"2.0\",\"id\":200,\"method\":\"tools/list\"}");
     ASSERT_NOT_NULL(resp);
     ASSERT_NOT_NULL(strstr(resp, "\"id\":200"));
-    ASSERT_NOT_NULL(strstr(resp, "\"nextCursor\":\"8\""));
+    ASSERT_NULL(strstr(resp, "\"nextCursor\""));
     ASSERT_NOT_NULL(strstr(resp, "index_repository"));
-    ASSERT_NULL(strstr(resp, "manage_adr"));
+    ASSERT_NOT_NULL(strstr(resp, "adr_export"));
+    ASSERT_NOT_NULL(strstr(resp, "events"));
+    ASSERT_NOT_NULL(strstr(resp, "describe_tool"));
+    ASSERT_NULL(strstr(resp, "Special mode 'cross-repo-intelligence'"));
     free(resp);
-
-    /* Walk the remaining pages via nextCursor until exhausted. The total tool
-     * count changes as tools are added, so the test is page-count-agnostic:
-     * manage_adr must appear on SOME later page, and the cursor chain must
-     * terminate (no nextCursor on the last page). */
-    bool found_manage_adr = false;
-    int cursor = 8;
-    for (int page = 0; page < 16; page++) {
-        char req[160];
-        snprintf(req, sizeof(req),
-                 "{\"jsonrpc\":\"2.0\",\"id\":201,\"method\":\"tools/list\","
-                 "\"params\":{\"cursor\":\"%d\"}}",
-                 cursor);
-        resp = cbm_mcp_server_handle(srv, req);
-        ASSERT_NOT_NULL(resp);
-        ASSERT_NOT_NULL(strstr(resp, "\"id\":201"));
-        if (strstr(resp, "manage_adr")) {
-            found_manage_adr = true;
-        }
-        const char *nc = strstr(resp, "\"nextCursor\":\"");
-        if (!nc) {
-            free(resp);
-            break;
-        }
-        cursor = atoi(nc + strlen("\"nextCursor\":\""));
-        free(resp);
-    }
-    ASSERT_TRUE(found_manage_adr);
 
     cbm_mcp_server_free(srv);
     PASS();
@@ -5377,6 +5370,7 @@ SUITE(mcp) {
     RUN_TEST(mcp_tools_list);
     RUN_TEST(mcp_tools_list_latest_metadata);
     RUN_TEST(mcp_index_repository_declares_name_override_issue571);
+    RUN_TEST(mcp_tools_list_is_slim_with_on_demand_full_guide);
     RUN_TEST(mcp_tools_array_schemas_have_items);
     RUN_TEST(mcp_ingest_traces_items_disallow_additional_properties_issue731);
     RUN_TEST(mcp_get_architecture_aspects_schema_enum_pr560);
@@ -5411,7 +5405,7 @@ SUITE(mcp) {
     RUN_TEST(server_handle_initialize);
     RUN_TEST(server_handle_initialized_notification);
     RUN_TEST(server_handle_tools_list);
-    RUN_TEST(server_handle_tools_list_paginates);
+    RUN_TEST(server_handle_tools_list_returns_complete_slim_catalog);
     RUN_TEST(server_handle_logs_request_without_params);
     RUN_TEST(server_handle_unknown_method);
 

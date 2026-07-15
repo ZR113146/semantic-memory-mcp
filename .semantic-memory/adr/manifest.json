@@ -2,8 +2,8 @@
   "schema": "semantic-memory-adr-manifest/v1",
   "authority": "sqlite",
   "project": "D-semantic-memory-mcp",
-  "count": 51,
-  "projection_sha256": "e62a4973c9b326807cbb76f911fc43763661f37a4ef2acb93d2777d7ec747b60",
+  "count": 52,
+  "projection_sha256": "3d5e17400c12c89ea5c0dbd09f8eac144f9d1cb2279c9ce653a35de3a0c90728",
   "files": [
     {"id": "itm-704259499620-5", "path": "items/adr-layer-identity-5b6a05e722a1/v0001-itm-704259499620-5-e611876b.md", "sha256": "36e363bddbf09ea365b2609cc8db93682243e732645842ee58944fc310db6d68"},
     {"id": "itm-58766901192100-101", "path": "items/adr-layer-identity-5b6a05e722a1/v0002-itm-58766901192100-101-dc919dbe.md", "sha256": "8cf4aad6b0bf0b5ddef5edfdeaea0249de0a5a88da320d4bd66ad37b6b9e3cd7"},
@@ -30,6 +30,7 @@
     {"id": "itm-845065141338-9", "path": "items/list-projects-naming-f05a210681bd/v0001-itm-845065141338-9-f5a00cee.md", "sha256": "981034e33a374f3d67046f3def1ae54e9887bed7810a949a4c58ab0c826b1b6c"},
     {"id": "itm-56231600772300-54", "path": "items/list-projects-naming-f05a210681bd/v0002-itm-56231600772300-54-2622f634.md", "sha256": "9a72f04392a910370d5536816879bc6da1c608579e98c3e84d01507d0bcc14ff"},
     {"id": "itm-24077472701300-2", "path": "items/mcp-memory-handlers-extraction-09b419c7be4e/v0001-itm-24077472701300-2-c54e63be.md", "sha256": "ae88ebb087343faaebe0844d81e952e853afc1946e3eedc7f521a0a5624f5be9"},
+    {"id": "itm-228833113843400-2", "path": "items/mcp-tool-catalog-context-budget-262376a9ed4e/v0001-itm-228833113843400-2-9d44b231.md", "sha256": "e49e43f387504ed79b6ae198223ff740bfb617d5db5b4df229583468e2823b61"},
     {"id": "itm-60973779166300-143", "path": "items/memory-db-empty-edges-selfheal-3a72621a3764/v0001-itm-60973779166300-143-7468844e.md", "sha256": "aa2c2e956ca15a980fa2341334c40da87eb8d1e18cc9030f28e40cd62b6f8c2a"},
     {"id": "itm-746750614267-60", "path": "items/memory-db-split-e140328fa939/v0001-itm-746750614267-60-06575b7f.md", "sha256": "eef9254957f2e9cc23ac66998de07851fe85104af1ce058bed2ffa956daaa8b0"},
     {"id": "itm-798853838238-2", "path": "items/memory-db-split-e140328fa939/v0001-itm-798853838238-2-98526c48.md", "sha256": "99b06b70e6bd938fa38e0e867753ec55a3c4ffcc17a0f13215a2d27e4ab38f6d"},
